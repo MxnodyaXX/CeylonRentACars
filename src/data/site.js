@@ -14,26 +14,12 @@ export const NAV_LINKS = [
    flares = headlight centres as fractions of the original image [x, y]
    pos    = CSS object-position of the photo
    night  = true for night photos; daytime photos get graded towards night */
-export const HERO_SLIDES = [
-  {
-    name: 'Toyota Aqua', tag: 'Eco Favourite', meta: 'Hybrid • Automatic • 5 Seats', rating: '4.8', price: 10500,
-    img: '/img/hero-aqua.jpg', alt: 'White Toyota Aqua hybrid on a wet city street at night',
-    night: true, pos: '50% 50%', flares: [[0.629, 0.53], [0.822, 0.524]],
-  },
-  { name: 'Toyota Prius 2019', tag: 'Popular Choice', meta: 'Hybrid • Automatic • 5 Seats', rating: '4.9', price: 12500, img: '/img/prius.jpg', alt: 'Silver Toyota Prius 2019 hybrid' },
-  { name: 'Suzuki Wagon R', tag: 'Best Value', meta: 'Economy • Automatic • 4 Seats', rating: '4.7', price: 8500, img: '/img/wagonr.jpg', alt: 'White Suzuki Wagon R' },
-  { name: 'Honda Vezel', tag: 'Family SUV', meta: 'SUV • Hybrid • 5 Seats', rating: '4.8', price: 15500, img: '/img/vezel.jpg', alt: 'White Honda Vezel SUV' },
-  { name: 'Toyota KDH', tag: 'Group Travel', meta: 'Van • Diesel • 14 Seats', rating: '4.9', price: 18500, img: '/img/kdh.jpg', alt: 'White Toyota KDH van' },
-];
-
-export const VEHICLES = [
-  { id: 'wagonr', name: 'Suzuki Wagon R', cat: 'economy', catLabel: 'Economy', img: '/img/wagonr.jpg', rating: 4.7, reviews: 212, location: 'Colombo', transmission: 'Automatic', fuel: 'Petrol', fuelIcon: 'fuel', seats: 4, price: 8500 },
-  { id: 'aqua', name: 'Toyota Aqua', cat: 'hybrid', catLabel: 'Hybrid', img: '/img/aqua.jpg', rating: 4.8, reviews: 186, location: 'Negombo', transmission: 'Automatic', fuel: 'Hybrid', fuelIcon: 'leaf', seats: 5, price: 10500 },
-  { id: 'prius', name: 'Toyota Prius', cat: 'hybrid', catLabel: 'Hybrid', img: '/img/prius.jpg', rating: 4.9, reviews: 324, location: 'Katunayake Airport', transmission: 'Automatic', fuel: 'Hybrid', fuelIcon: 'leaf', seats: 5, price: 12500, badge: 'Most booked' },
-  { id: 'vezel', name: 'Honda Vezel', cat: 'suv', catLabel: 'SUV', img: '/img/vezel.jpg', rating: 4.8, reviews: 147, location: 'Kandy', transmission: 'Automatic', fuel: 'Hybrid', fuelIcon: 'leaf', seats: 5, price: 15500 },
-  { id: 'kdh', name: 'Toyota KDH', cat: 'van', catLabel: 'Van', img: '/img/kdh.jpg', rating: 4.9, reviews: 98, location: 'Negombo', transmission: 'Manual', fuel: 'Diesel', fuelIcon: 'fuel', seats: 14, price: 18500 },
-  { id: 'prado', name: 'Toyota Prado', cat: 'suv', catLabel: 'Premium SUV', img: '/img/prado.jpg', rating: 5.0, reviews: 64, location: 'Colombo', transmission: 'Automatic', fuel: 'Diesel', fuelIcon: 'fuel', seats: 7, price: 30000, badge: 'Premium', badgeLight: true },
-];
+// Hero background art, used only when no vehicles are listed in the admin panel.
+// (Hero slides themselves come from the admin's Website page — see lib/fleet.js.)
+export const HERO_ART = {
+  img: '/img/hero-aqua.jpg', alt: 'Car on a wet city street at night',
+  night: true, pos: '50% 50%', flares: [[0.629, 0.53], [0.822, 0.524]],
+};
 
 export const VEHICLE_FILTERS = [
   { id: 'all', label: 'All' },

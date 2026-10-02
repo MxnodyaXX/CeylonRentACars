@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import SearchPanel from './SearchPanel';
-import { HERO_SLIDES } from '../data/site';
+import { HERO_ART } from '../data/site';
+import { PHONE_QUERY, useFleet } from '../lib/fleet';
+import { openVehicle } from './VehicleModal';
 import { Price } from '../context/AppContext';
 import { useReducedMotion } from '../hooks/useMotion';
 
@@ -48,7 +50,7 @@ function Slide({ slide, index, isActive, isLeaving, isPrep, vars }) {
 
   const classes = [
     'showcase__slide',
-    slide.night ? 'is-night' : 'is-day',
+    slide.cutout ? 'is-cutout' : slide.night ? 'is-night' : 'is-day',
     isActive && 'is-active',
     isLeaving && 'is-leaving',
     isPrep && 'is-prep',
@@ -56,7 +58,9 @@ function Slide({ slide, index, isActive, isLeaving, isPrep, vars }) {
 
   return (
     <figure className={classes} style={{ ...vars, ...(slide.pos && { '--pos': slide.pos }) }}>
-      <div className="showcase__amb" style={{ backgroundImage: `url(${slide.img})` }} />
+      {slide.cutout
+        ? <div className="showcase__spot" />
+        : <div className="showcase__amb" style={{ backgroundImage: `url(${slide.img})` }} />}
       <div className="showcase__shot">
         <div className="showcase__kb">
           <img
@@ -65,6 +69,7 @@ function Slide({ slide, index, isActive, isLeaving, isPrep, vars }) {
             alt={slide.alt}
             {...(index === 0 ? { fetchPriority: 'high' } : { loading: 'lazy' })}
           />
+          {slide.cutout && <img className="showcase__reflect" src={slide.img} alt="" aria-hidden="true" />}
           {flares.map((f, i) => (
             <i
               key={i}
@@ -73,13 +78,56 @@ function Slide({ slide, index, isActive, isLeaving, isPrep, vars }) {
             />
           ))}
         </div>
+        {slide.cutout && <span className="showcase__floor" aria-hidden="true" />}
       </div>
     </figure>
   );
 }
 
+/* Admin-listed vehicles become hero slides (photos may be cut-outs or full shots) */
+function useIsPhone() {
+  const [phone, setPhone] = useState(() => window.matchMedia(PHONE_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(PHONE_QUERY);
+    const onChange = () => setPhone(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return phone;
+}
+
+function useHeroSlides() {
+  const { vehicles, status } = useFleet();
+  const phone = useIsPhone();
+  return useMemo(() => {
+    const listed = vehicles.filter(v => v.heroSrc).map(v => ({
+      id: v.id,
+      name: v.name,
+      tag: v.badge || v.catLabel,
+      meta: [v.catLabel, v.transmission, `${v.seats} Seats`].join(' • '),
+      rating: v.rating,
+      price: v.price,
+      // Phones: the admin cut-out on the lit stage; larger screens: the hero photo
+      img: phone && v.phoneSrc ? v.phoneSrc : v.heroSrc,
+      alt: v.name,
+      // Cut-outs go on the lit stage; full photos blend into the scene like the original hero art
+      cutout: phone && v.phoneSrc ? true : v.cutout,
+      night: !v.bright,
+      pos: '50% 55%',
+    }));
+    if (listed.length) return { slides: listed, art: false, loading: false };
+    // Nothing listed (yet): background art only, no vehicle card
+    return { slides: status === 'loading' ? [] : [{ ...HERO_ART, id: 'art' }], art: true, loading: status === 'loading' };
+  }, [vehicles, status, phone]);
+}
+
 export default function Hero({ revealed = true }) {
   const reduced = useReducedMotion();
+  const { slides, art } = useHeroSlides();
+  const count = slides.length;
+  const countRef = useRef(count);
+  countRef.current = count;
+  const multi = !art && count > 1;
   const sectionRef = useRef(null);
   const sceneRef = useRef(null);
 
@@ -101,7 +149,9 @@ export default function Hero({ revealed = true }) {
   const go = useCallback((target, dir) => {
     const from = activeRef.current;
     if (from < 0 || pending.current) return;
-    const next = (target + HERO_SLIDES.length) % HERO_SLIDES.length;
+    const n = countRef.current;
+    if (n < 2) return;
+    const next = (target + n) % n;
     if (next === from) return;
     if (dir === undefined) dir = next > from ? 1 : -1;
 
@@ -145,21 +195,24 @@ export default function Hero({ revealed = true }) {
   }, [active, shown]);
 
   /* ---------- Intro: once the loader splits, CSS reveals the page; then the first car wipes in ---------- */
+  const revealedAt = useRef(0);
+  useEffect(() => { if (revealed) revealedAt.current = performance.now(); }, [revealed]);
   useEffect(() => {
-    if (!revealed) return;
+    if (!revealed || count === 0 || activeRef.current >= 0) return;
+    const wait = Math.max(0, INTRO_CAR_DELAY - (performance.now() - revealedAt.current));
     const t = setTimeout(() => {
       setActive(0);
       setSweep(s => ({ id: s.id + 1, run: true, rev: false }));
-    }, INTRO_CAR_DELAY);
+    }, wait);
     return () => clearTimeout(t);
-  }, [revealed]);
+  }, [revealed, count]);
 
   /* ---------- Autoplay ---------- */
   useEffect(() => {
-    if (paused || active < 0) return;
+    if (paused || active < 0 || !multi) return;
     const t = setTimeout(() => go(activeRef.current + 1, 1), AUTOPLAY_MS);
     return () => clearTimeout(t);
-  }, [active, paused, tick, go]);
+  }, [active, paused, tick, go, multi]);
 
   useEffect(() => {
     const onVis = () => setPaused(document.hidden);
@@ -202,7 +255,7 @@ export default function Hero({ revealed = true }) {
   };
 
   const current = Math.max(active, 0);
-  const v = HERO_SLIDES[shown];
+  const v = slides[shown] ?? slides[0];
 
   return (
     <section
@@ -217,10 +270,11 @@ export default function Hero({ revealed = true }) {
       <div className="hero__bg" aria-hidden="true">
         <div className="hero__glow" />
         <div className="hero__grid" />
-        <div className="hero__lion" />
       </div>
 
       <div className="container hero__inner" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        {/* Sri Lankan lion, behind the headline. Sits above the vehicle scene so it stays visible. */}
+        <div className="hero__lion" aria-hidden="true" />
         <div className="hero__copy">
           <span className="pill cr"><Icon name="badge" size="sm" />Verified Vehicle Rentals Across Sri Lanka</span>
           <h1 className="hero__title">
@@ -244,9 +298,9 @@ export default function Hero({ revealed = true }) {
 
         {/* Full-bleed featured vehicle scenes */}
         <div className="hero__scene" ref={sceneRef}>
-          {HERO_SLIDES.map((slide, i) => (
+          {slides.map((slide, i) => (
             <Slide
-              key={slide.img}
+              key={slide.id}
               slide={slide}
               index={i}
               isActive={i === active}
@@ -279,10 +333,11 @@ export default function Hero({ revealed = true }) {
           <div className="showcase__stage">
             <div className="support-badge cr" aria-hidden="true"><strong>24/7</strong><span>Support</span></div>
 
+            {v && !art && (
             <article className={`vcard glass cr${swapping ? ' is-swapping' : ''}`} aria-live="polite">
               <div className="vcard__top">
                 <span className="vcard__tag">{v.tag}</span>
-                <span className="vcard__rating"><Icon name="star" size="sm" /><span>{v.rating}</span></span>
+                {v.rating && <span className="vcard__rating"><Icon name="star" size="sm" /><span>{v.rating}</span></span>}
               </div>
               <h3 className="vcard__name">{v.name}</h3>
               <p className="vcard__meta">{v.meta}</p>
@@ -291,20 +346,22 @@ export default function Hero({ revealed = true }) {
                 <strong><Price lkr={v.price} /></strong><span className="per">/ day</span>
               </div>
               <div className="vcard__btns">
-                <a href="#vehicles" className="btn btn--ghost btn--sm">View Vehicle</a>
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => openVehicle(v.id)}>View Vehicle</button>
                 <a href="#search" className="btn btn--red btn--sm">Book Now</a>
               </div>
             </article>
+            )}
           </div>
 
+          {multi && (
           <div className="showcase__controls cr">
             <button className="round-btn" aria-label="Previous vehicle" onClick={() => manual(current - 1, -1)}>
               <Icon name="left" />
             </button>
             <div className={`dots${paused ? ' is-paused' : ''}`} role="tablist" aria-label="Choose featured vehicle">
-              {HERO_SLIDES.map((s, i) => (
+              {slides.map((s, i) => (
                 <button
-                  key={s.name}
+                  key={s.id}
                   className={`dot${i === current ? ' is-active' : ''}`}
                   role="tab"
                   aria-selected={i === current}
@@ -318,8 +375,9 @@ export default function Hero({ revealed = true }) {
             <button className="round-btn" aria-label="Next vehicle" onClick={() => manual(current + 1, 1)}>
               <Icon name="right" />
             </button>
-            <span className="showcase__count"><b>{pad(current)}</b> / {pad(HERO_SLIDES.length - 1)}</span>
+            <span className="showcase__count"><b>{pad(current)}</b> / {pad(count - 1)}</span>
           </div>
+          )}
         </div>
       </div>
 

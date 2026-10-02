@@ -1,0 +1,353 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-pop {
+  0%   { opacity: 0; transform: scale(0.78) translateY(8px); }
+  72%  { transform: scale(1.04) translateY(0); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes medal-float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-7px); }
+}
+@keyframes bar-grow {
+  from { transform: scaleX(0); }
+}
+@keyframes pulse-gold {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px #FBBF24,
+      0 0 0 6px rgba(255,255,255,0.88),
+      0 0 22px rgba(251,191,36,0.45),
+      0 12px 28px rgba(0,0,0,0.28);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px #FCD34D,
+      0 0 0 8px rgba(255,255,255,0.82),
+      0 0 38px rgba(251,191,36,0.65),
+      0 12px 28px rgba(0,0,0,0.28);
+  }
+}
+
+@keyframes cloud-drift {
+  0%, 100% { transform: translateX(0px);   }
+  50%       { transform: translateX(18px);  }
+}
+.anim-cloud-drift { animation: cloud-drift var(--cd, 28s) ease-in-out infinite; }
+
+.anim-fade-up     { animation: fade-up   0.60s cubic-bezier(0.16,1,0.3,1) both; }
+.anim-scale-pop   { animation: scale-pop 0.70s cubic-bezier(0.16,1,0.3,1) both; }
+.anim-medal-float { animation: medal-float 3.2s ease-in-out infinite; }
+.anim-bar-grow    { animation: bar-grow   1.2s cubic-bezier(0.16,1,0.3,1) both; transform-origin: left; }
+.anim-pulse-gold  { animation: pulse-gold 2.5s ease-in-out infinite; }
+
+@keyframes fade-in    { from { opacity: 0; } to { opacity: 1; } }
+@keyframes panel-in   { from { opacity: 0; transform: translateY(14px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes acc-in     { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.anim-fade-in   { animation: fade-in  0.25s ease both; }
+.anim-panel-in  { animation: panel-in 0.34s cubic-bezier(0.16,1,0.3,1) both; }
+.anim-acc-in    { animation: acc-in   0.30s ease both; }
+
+/* Toast slide-in from the right */
+@keyframes toast-in  { from { opacity: 0; transform: translateX(24px) scale(0.96); } to { opacity: 1; transform: translateX(0) scale(1); } }
+@keyframes toast-bar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.anim-toast-in  { animation: toast-in 0.32s cubic-bezier(0.16,1,0.3,1) both; }
+
+/* Loader: car glides + shimmer sweep + progress bar */
+@keyframes loader-car   { 0% { transform: translateX(-10px); } 50% { transform: translateX(10px); } 100% { transform: translateX(-10px); } }
+@keyframes loader-bar    { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+@keyframes loader-ring   { to { transform: rotate(360deg); } }
+.anim-loader-car  { animation: loader-car  2.2s ease-in-out infinite; }
+.anim-loader-bar  { animation: loader-bar  1.3s cubic-bezier(0.65,0,0.35,1) infinite; }
+.anim-loader-ring { animation: loader-ring 0.9s linear infinite; }
+
+/* Skeleton shimmer — shown while dashboard analytics settle */
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.anim-shimmer {
+  background: linear-gradient(90deg, #F1F1F3 25%, #E7E7EA 37%, #F1F1F3 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* Accordion height reveal — animates from 0fr to 1fr (auto) smoothly */
+.acc-grid       { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.3s cubic-bezier(0.16,1,0.3,1); }
+.acc-grid.open  { grid-template-rows: 1fr; }
+.acc-grid > div { overflow: hidden; }
+
+/* Hide scrollbar but keep scroll */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ── react-datepicker navy theme ───────────────────────────── */
+.emrac-datepicker {
+  border: 1px solid #F4F4F5 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 8px 32px rgba(17,17,20,0.12), 0 2px 8px rgba(17,17,20,0.06) !important;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif !important;
+  overflow: hidden;
+}
+.emrac-datepicker .react-datepicker__header {
+  background: #111114 !important;
+  border-bottom: none !important;
+  padding: 12px 8px 8px !important;
+  border-radius: 0 !important;
+}
+.emrac-datepicker .react-datepicker__current-month,
+.emrac-datepicker .react-datepicker__day-name,
+.emrac-datepicker .react-datepicker-time__header {
+  color: #fff !important;
+  font-weight: 600;
+  font-size: 12px;
+}
+.emrac-datepicker .react-datepicker__navigation-icon::before {
+  border-color: rgba(255,255,255,0.7) !important;
+}
+.emrac-datepicker .react-datepicker__navigation:hover .react-datepicker__navigation-icon::before {
+  border-color: #fff !important;
+}
+.emrac-datepicker .react-datepicker__month-select,
+.emrac-datepicker .react-datepicker__year-select {
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.emrac-datepicker .react-datepicker__month-select option,
+.emrac-datepicker .react-datepicker__year-select option {
+  background: #111114; color: #fff;
+}
+.emrac-datepicker .react-datepicker__day {
+  color: #111114;
+  font-size: 12px;
+  border-radius: 8px !important;
+  width: 32px; height: 32px; line-height: 32px;
+  margin: 2px !important;
+  transition: background 0.15s, color 0.15s;
+}
+.emrac-datepicker .react-datepicker__day:hover:not(.react-datepicker__day--disabled) {
+  background: #F4F4F5 !important;
+  color: #111114 !important;
+}
+.emrac-datepicker .react-datepicker__day--selected,
+.emrac-datepicker .react-datepicker__day--keyboard-selected {
+  background: #E11D2A !important;
+  color: #fff !important;
+  font-weight: 700;
+}
+.emrac-datepicker .react-datepicker__day--today {
+  font-weight: 700;
+  color: #E11D2A;
+}
+.emrac-datepicker .react-datepicker__day--today.react-datepicker__day--selected {
+  color: #fff !important;
+}
+/* Blocked / disabled dates — red tint with strikethrough */
+.emrac-datepicker .react-datepicker__day--disabled {
+  color: #EF4444 !important;
+  background: #FEF2F2 !important;
+  text-decoration: line-through;
+  opacity: 0.75;
+  cursor: not-allowed !important;
+}
+.emrac-datepicker .react-datepicker__day--outside-month {
+  color: #C4C4CC !important;
+  background: transparent !important;
+  text-decoration: none !important;
+}
+.emrac-datepicker .react-datepicker__triangle { display: none; }
+
+@layer base {
+  body {
+    background-color: #EEEFF2;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    color: #111114;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: #E11D2A; color: #fff; }
+
+  /* Set by the sidebar (72px collapsed / 256px expanded) */
+  :root { --sidebar-w: 72px; }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #D4D4D8;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #A1A1AA;
+  }
+}
+
+@layer components {
+  /* ── Sidebar: collapses to a 72px icon rail, expands to 256px with labels ──
+     Items are always full width, so in the rail they are exactly the 40px icon tile
+     and simply grow when the sidebar widens. Labels fade in after the width settles. */
+  .sidebar {
+    @apply fixed left-0 top-0 h-full bg-surface border-r border-navy-200/70 flex-col py-5 z-40;
+    transition: width .32s cubic-bezier(.16,1,.3,1);
+  }
+  .sidebar__brand {
+    @apply flex items-center gap-3 px-[13px] mb-4 overflow-hidden;
+  }
+  .sidebar__toggle {
+    @apply absolute top-[30px] -right-3 w-6 h-6 rounded-full bg-white border border-navy-100 shadow-md
+           flex items-center justify-center text-navy-500 hover:bg-navy-700 hover:text-white hover:border-navy-700
+           transition-colors duration-200 z-10;
+  }
+  .sidebar__nav {
+    @apply flex-1 flex flex-col gap-1 px-4 overflow-y-auto overflow-x-hidden;
+  }
+  /* Section heading — an accordion toggle when expanded, a thin divider in the rail */
+  .sidebar__group {
+    @apply relative w-full h-8 flex items-end px-3 pb-1.5 text-left text-[10px] font-bold uppercase tracking-[0.16em]
+           text-navy-300 whitespace-nowrap rounded-lg transition-colors duration-200 cursor-default;
+  }
+  .sidebar:not(.is-expanded) .sidebar__group { @apply h-4 pb-0; }   /* compact divider in the rail */
+  .sidebar.is-expanded .sidebar__group { @apply cursor-pointer hover:text-navy-700; }
+  .sidebar__nav > :first-child > .sidebar__group { @apply h-1 pb-0; }
+  .sidebar.is-expanded .sidebar__nav > :first-child > .sidebar__group { @apply h-7 pb-1.5; }
+  /* The fold clips its content; widen the clip box so the active marker and badges still show */
+  .sidebar__acc > div { margin: 0 -16px; padding: 0 16px; }
+  .sidebar__divider {
+    @apply absolute left-2 right-2 top-1/2 h-px bg-navy-100 transition-opacity duration-200;
+  }
+  .sidebar.is-expanded .sidebar__divider { @apply opacity-0; }
+  .sidebar__foot {
+    @apply flex flex-col gap-2 px-4 pt-3 mt-2 border-t border-navy-100 overflow-hidden;
+  }
+  .sidebar__user {
+    @apply flex items-center gap-3 px-1 py-1;
+  }
+
+  .side-item {
+    @apply relative flex items-center w-full h-10 rounded-xl text-navy-400 cursor-pointer
+           transition-colors duration-200 hover:bg-navy-100/80 hover:text-navy-700;
+  }
+  .side-item__icon {
+    @apply relative w-10 h-10 flex-shrink-0 flex items-center justify-center;
+  }
+  .side-item__label {
+    @apply text-sm font-semibold whitespace-nowrap pl-1;
+  }
+  /* Active page: black tile + red marker on the sidebar edge (like the site's nav pill) */
+  .side-item.active {
+    @apply bg-navy-700 text-white shadow-md hover:bg-navy-700 hover:text-white;
+  }
+  .side-item.active::before {
+    content: "";
+    @apply absolute -left-[16px] top-2 bottom-2 w-[3px] rounded-r-full bg-brand-500;
+  }
+
+  /* Text that only shows when expanded */
+  .side-fade, .side-item__label {
+    opacity: 0;
+    transition: opacity .12s ease;
+  }
+  .sidebar.is-expanded .side-fade,
+  .sidebar.is-expanded .side-item__label {
+    opacity: 1;
+    transition: opacity .25s ease .12s;
+  }
+
+  .card {
+    @apply bg-white rounded-xl2 shadow-card border border-navy-200/60 p-5;
+  }
+
+  .stat-card {
+    @apply bg-white rounded-xl2 shadow-card border border-navy-200/60 p-5 flex flex-col gap-2;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-available {
+    @apply bg-emerald-50 text-emerald-700;
+  }
+
+  .badge-reserved {
+    @apply bg-blue-50 text-blue-700;
+  }
+
+  .badge-ongoing {
+    @apply bg-amber-50 text-amber-700;
+  }
+
+  .badge-maintenance {
+    @apply bg-red-50 text-red-700;
+  }
+
+  /* Main action: brand red, same as the site's red CTA buttons */
+  .btn-primary {
+    @apply bg-brand-500 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-brand-600 shadow-[0_6px_16px_rgba(225,29,42,0.22)] transition-colors duration-200;
+  }
+
+  /* Secondary: solid black (the site's "dark" button) */
+  .btn-dark {
+    @apply bg-navy-700 text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-navy-600 transition-colors duration-200;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-navy-700 border border-navy-100 px-4 py-2 rounded-xl text-sm font-semibold hover:bg-navy-50 hover:border-navy-200 transition-colors duration-200;
+  }
+
+  .btn-danger {
+    @apply bg-red-50 text-red-600 px-4 py-2 rounded-xl text-sm font-medium hover:bg-red-100 transition-colors duration-200;
+  }
+
+  .input {
+    @apply w-full px-3 py-2 rounded-xl border border-navy-100 text-sm text-navy-800 placeholder-navy-300 bg-white focus:outline-none focus:border-navy-700 focus:ring-4 focus:ring-brand-500/10 transition-all duration-200;
+  }
+
+  .label {
+    @apply text-xs font-medium text-navy-500 uppercase tracking-wide mb-1;
+  }
+
+  .table-head {
+    @apply text-xs font-semibold text-navy-400 uppercase tracking-wider;
+  }
+
+  .table-row {
+    @apply border-t border-navy-50 hover:bg-navy-50/50 transition-colors duration-150;
+  }
+
+  .section-title {
+    @apply text-base font-semibold text-navy-800 tracking-tight;
+  }
+
+  .page-title {
+    @apply text-xl md:text-2xl font-extrabold text-navy-800 tracking-tight;
+  }
+
+  /* Small red eyebrow label above page titles, as on the site's section heads */
+  .eyebrow {
+    @apply inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-brand-500;
+  }
+  .eyebrow::before {
+    content: "";
+    @apply w-5 h-[2px] bg-brand-500 rounded-full;
+  }
+}
+

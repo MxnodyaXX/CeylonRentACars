@@ -24,7 +24,7 @@ function loadImage(src) {
  * the site. `onReveal` fires the moment the split starts so the page can start
  * its own entrance animations in sync.
  */
-export default function PageLoader({ heroImage, onReveal }) {
+export default function PageLoader({ heroReady, onReveal }) {
   const [phase, setPhase] = useState('loading'); // loading → ready → split → done
   const [logoShown, setLogoShown] = useState(false);
 
@@ -34,7 +34,7 @@ export default function PageLoader({ heroImage, onReveal }) {
 
     const ready = Promise.all([
       document.fonts?.ready ?? Promise.resolve(),
-      loadImage(heroImage),
+      Promise.resolve(heroReady).catch(() => {}), // first hero car (or fallback art) loaded
       loadImage(LOGO).then(() => wait(LOGO_HOLD_MS)),
       wait(MIN_SHOW_MS),
     ]);

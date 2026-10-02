@@ -16,21 +16,16 @@ export function useReducedMotion() {
 /**
  * Fades/slides in every [data-reveal] element as it scrolls into view.
  * Siblings are staggered automatically. Waits until `enabled` (the page loader has opened).
+ * Elements rendered later (e.g. vehicles fetched from the admin database) are picked up too.
  */
 export function useScrollReveal(enabled = true) {
   useEffect(() => {
     if (!enabled) return;
-    const els = [...document.querySelectorAll('[data-reveal]')];
     // Reveals still run with reduced motion; CSS just drops the sliding for those visitors
     if (!('IntersectionObserver' in window)) {
-      els.forEach(el => el.classList.add('is-in'));
+      document.querySelectorAll('[data-reveal]').forEach(el => el.classList.add('is-in'));
       return;
     }
-    els.forEach(el => {
-      const sibs = [...el.parentElement.children].filter(c => c.hasAttribute('data-reveal'));
-      const i = sibs.indexOf(el);
-      if (i > 0) el.style.setProperty('--d', `${Math.min(i, 6) * 0.07}s`);
-    });
     const obs = new IntersectionObserver(entries => {
       entries.forEach(e => {
         if (e.isIntersecting) {
@@ -39,8 +34,28 @@ export function useScrollReveal(enabled = true) {
         }
       });
     }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
-    els.forEach(el => obs.observe(el));
-    return () => obs.disconnect();
+
+    const watch = els => els.forEach(el => {
+      if (el.classList.contains('is-in')) return;
+      const sibs = [...el.parentElement.children].filter(c => c.hasAttribute('data-reveal'));
+      const i = sibs.indexOf(el);
+      if (i > 0) el.style.setProperty('--d', `${Math.min(i, 6) * 0.07}s`);
+      obs.observe(el);
+    });
+    watch([...document.querySelectorAll('[data-reveal]')]);
+
+    const mo = new MutationObserver(records => {
+      const added = [];
+      records.forEach(r => r.addedNodes.forEach(n => {
+        if (n.nodeType !== 1) return;
+        if (n.hasAttribute('data-reveal')) added.push(n);
+        added.push(...n.querySelectorAll('[data-reveal]'));
+      }));
+      if (added.length) watch(added);
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+
+    return () => { obs.disconnect(); mo.disconnect(); };
   }, [enabled]);
 }
 

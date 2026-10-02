@@ -93,7 +93,8 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   border: 1px solid var(--line-2); background: rgba(255,255,255,.04); color: var(--text);
   transition: background .25s, border-color .25s, transform .25s var(--ease);
 }
-.round-btn:hover { background: var(--red); border-color: var(--red); transform: scale(1.05); }
+@media (hover: hover) { .round-btn:hover { background: var(--red); border-color: var(--red); transform: scale(1.05); } }
+.round-btn:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
 .icon-btn { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--text); }
 
 .pill {
@@ -177,10 +178,13 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   -webkit-mask-image: radial-gradient(70% 60% at 50% 40%, #000, transparent 80%);
   mask-image: radial-gradient(70% 60% at 50% 40%, #000, transparent 80%);
 }
+/* Lives in .hero__inner (above the vehicle scene, below the copy) on the left, facing the car */
 .hero__lion {
-  position: absolute; right: -60px; bottom: 40px; width: 620px; aspect-ratio: 49/40;
-  background: url(/img/lion.svg) center / contain no-repeat; opacity: .035; transform: scaleX(-1);
+  position: absolute; z-index: 1; left: 400px; bottom: 90px; width: 500px; aspect-ratio: 49/40; pointer-events: none;
+  /* background: url(/img/lion.svg) center / contain no-repeat; opacity: .06; transform: scaleX(-1); */
 }
+.js .hero__lion { animation: lion-in 2.2s var(--soft) .5s backwards; }
+@keyframes lion-in { from { opacity: 0; transform: scaleX(-1) translateY(30px) scale(.96); } }
 .hero[data-glow="1"] { --glow: rgba(255, 70, 70, .32); }
 .hero[data-glow="2"] { --glow: rgba(255, 255, 255, .16); }
 .hero[data-glow="3"] { --glow: rgba(190, 18, 60, .40); }
@@ -221,15 +225,15 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 /* The sharp photo, on the right, feathered into the scene */
 .showcase__shot {
   /* Box keeps the photo's own 2:1 shape so the whole car is visible */
-  --w: 64vw;
-  position: absolute; right: 0; width: var(--w); height: calc(var(--w) * .5); top: calc(41% - var(--w) * .25);
+  --w: 54vw;
+  position: absolute; right: 2vw; width: var(--w); height: calc(var(--w) * .5); top: calc(41% - var(--w) * .25);
   transform: translate3d(var(--from, 60px), 0, 0);
   /* Light-wipe transition: the incoming photo is revealed behind a sweeping light band */
   clip-path: var(--clip, inset(0 0 0 100%));
   transition: transform 1.8s var(--soft), clip-path 1.4s var(--cine), filter 1.3s var(--soft);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 30%), linear-gradient(180deg, transparent 0%, #000 8%, #000 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 30%, #000 88%, transparent 100%), linear-gradient(180deg, transparent 0%, #000 8%, #000 80%, transparent 100%);
   -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(90deg, transparent 0%, #000 30%), linear-gradient(180deg, transparent 0%, #000 8%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0%, #000 30%, #000 88%, transparent 100%), linear-gradient(180deg, transparent 0%, #000 8%, #000 80%, transparent 100%);
   mask-composite: intersect;
 }
 /* Incoming slide is staged at its start position with transitions off for one frame */
@@ -239,7 +243,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 
 /* Light band that travels across the car area during a change */
 .hero__sweep {
-  position: absolute; z-index: 3; top: 0; bottom: 0; right: 0; width: 64vw; overflow: hidden; pointer-events: none;
+  position: absolute; z-index: 3; top: 0; bottom: 0; right: 2vw; width: 54vw; overflow: hidden; pointer-events: none;
   -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 80%, transparent 100%);
   mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 80%, transparent 100%);
 }
@@ -260,9 +264,43 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .is-night img { filter: contrast(1.05) brightness(1.06) saturate(1.05); }
 .is-night .showcase__amb { filter: blur(60px) brightness(.55) saturate(1.5); }
 /* Daytime photos are graded towards night so they sit in the dark theme */
-.is-day .showcase__shot { --w: 54vw; }
+.is-day .showcase__shot { --w: 48vw; }
 .is-day img { filter: brightness(.62) contrast(1.15) saturate(.72); }
 .is-day .showcase__kb::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(25, 40, 90, .45), rgba(7, 7, 8, .3)); mix-blend-mode: multiply; }
+
+/* ---- Admin-listed vehicles: transparent cut-out photos on a lit showroom stage ----
+   The box is 1.5x the car's height: car on top, reflection + floor shadow below. */
+.showcase__spot {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 30% 40% at 70% 40%, rgba(255, 255, 255, .13), transparent 70%),
+    radial-gradient(ellipse 42% 22% at 70% 60%, rgba(225, 29, 42, .32), transparent 72%),
+    radial-gradient(ellipse 70% 60% at 70% 45%, rgba(40, 40, 48, .55), transparent 80%);
+}
+.is-cutout .showcase__shot {
+  --w: min(50vw, 1000px);
+  right: 5vw; width: var(--w); height: calc(var(--w) * .69); top: calc(40% - var(--w) * .23);
+  -webkit-mask-image: none; mask-image: none;
+}
+.is-cutout .showcase__kb { z-index: 1; }
+.is-cutout .showcase__kb img {
+  position: absolute; left: 0; top: 0; height: 66.6%;
+  object-fit: contain; object-position: 50% 100%;
+  filter: drop-shadow(0 18px 18px rgba(0, 0, 0, .6)) drop-shadow(0 0 1px rgba(255, 255, 255, .25));
+}
+.is-cutout .showcase__kb img.showcase__reflect {
+  top: 66.6%; transform: scaleY(-1); opacity: .22; filter: blur(1px);
+  -webkit-mask-image: linear-gradient(0deg, #000 0%, transparent 42%);
+  mask-image: linear-gradient(0deg, #000 0%, transparent 42%);
+}
+.showcase__floor {
+  position: absolute; left: 6%; right: 6%; top: calc(66.6% - 22px); height: 44px; z-index: 0;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, .9), transparent);
+}
+.showcase__floor::after {
+  content: ""; position: absolute; left: -10%; right: -10%; top: 30%; height: 70%;
+  background: radial-gradient(closest-side, rgba(225, 29, 42, .45), transparent); filter: blur(14px);
+}
 
 /* Headlight flares (placed by JS from data-flares) */
 .flare {
@@ -409,6 +447,89 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .car__media { position: relative; aspect-ratio: 16 / 10; overflow: hidden; background: #0f0f12; }
 .car__media img { width: 100%; height: 100%; object-fit: cover; transition: transform .8s var(--ease); }
 .car:hover .car__media img { transform: scale(1.06); }
+/* ---- Vehicle details window (real photos from the admin) ---- */
+.vmodal {
+  position: fixed; inset: 0; z-index: 150; display: grid; place-items: center; padding: 24px;
+  background: rgba(4, 4, 6, .78); backdrop-filter: blur(8px);
+  animation: vm-fade .3s ease both;
+}
+.vmodal__panel {
+  position: relative; width: min(1120px, 100%); max-height: calc(100vh - 48px); overflow: auto;
+  display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface)); border: 1px solid var(--line);
+  border-radius: var(--r-lg); box-shadow: 0 40px 120px rgba(0, 0, 0, .6);
+  animation: vm-rise .45s var(--soft, ease) both;
+}
+@keyframes vm-fade { from { opacity: 0; } }
+@keyframes vm-rise { from { opacity: 0; transform: translateY(24px) scale(.98); } }
+.vmodal__close { position: absolute; top: 14px; right: 14px; z-index: 3; background: rgba(0, 0, 0, .5); border: 1px solid var(--line); }
+.vmodal__close:hover { background: var(--red); }
+
+.vmodal__gallery { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.vmodal__main { position: relative; aspect-ratio: 4 / 3; border-radius: 16px; overflow: hidden; background: #0b0b0d; }
+.vmodal__main img { width: 100%; height: 100%; object-fit: cover; animation: vm-fade .35s ease both; }
+.vmodal__main.is-cutout { background: radial-gradient(60% 55% at 50% 45%, rgba(255, 255, 255, .1), transparent 70%), radial-gradient(55% 20% at 50% 72%, var(--red-soft), transparent), #0b0b0d; }
+.vmodal__main.is-cutout img { object-fit: contain; padding: 8% 6%; filter: drop-shadow(0 18px 18px rgba(0, 0, 0, .6)); }
+.vmodal__nav {
+  position: absolute; top: 50%; translate: 0 -50%; width: 42px; height: 42px; border-radius: 50%;
+  display: grid; place-items: center; color: #fff; background: rgba(0, 0, 0, .5); border: 1px solid rgba(255, 255, 255, .15);
+  transition: background .2s;
+}
+.vmodal__nav:hover { background: var(--red); }
+.vmodal__nav--prev { left: 12px; }
+.vmodal__nav--next { right: 12px; }
+.vmodal__count { position: absolute; bottom: 12px; right: 12px; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: rgba(0, 0, 0, .6); }
+.vmodal__thumbs { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+.vmodal__thumb { flex: 0 0 88px; aspect-ratio: 4 / 3; border-radius: 10px; overflow: hidden; opacity: .55; border: 2px solid transparent; transition: opacity .2s, border-color .2s; }
+.vmodal__thumb img { width: 100%; height: 100%; object-fit: cover; }
+.vmodal__thumb:hover { opacity: .85; }
+.vmodal__thumb.is-active { opacity: 1; border-color: var(--red); }
+
+.vmodal__info { padding: 34px 30px 30px; display: flex; flex-direction: column; gap: 12px; }
+.vmodal__tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.vmodal__tags .verified { position: static; }
+.vmodal__badge { font-size: 12px; font-weight: 700; color: #fff; background: var(--red); padding: 4px 10px; border-radius: 6px; }
+.vmodal__name { font-size: clamp(26px, 3vw, 36px); line-height: 1.1; letter-spacing: -.02em; }
+.vmodal__specs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 6px; }
+.vmodal__specs li { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, .04); border: 1px solid var(--line); }
+.vmodal__specs li > svg { color: var(--red-hi); flex-shrink: 0; }
+.vmodal__specs span { display: flex; flex-direction: column; font-weight: 700; font-size: 14px; min-width: 0; }
+.vmodal__specs small { font-size: 11px; font-weight: 500; color: var(--muted); }
+.vmodal__price { display: flex; align-items: baseline; gap: 8px; margin-top: 8px; }
+.vmodal__price small, .vmodal__price span { color: var(--muted); font-size: 14px; }
+.vmodal__price strong { font-size: 32px; letter-spacing: -.02em; }
+.vmodal__note { color: var(--muted); font-size: 13px; }
+.vmodal__ctas { display: flex; flex-wrap: wrap; gap: 10px; margin-top: auto; padding-top: 10px; }
+.vmodal__ctas .btn { flex: 1 1 180px; justify-content: center; }
+
+@media (max-width: 860px) {
+  .vmodal { padding: 0; place-items: end stretch; }
+  .vmodal__panel { grid-template-columns: 1fr; max-height: 92vh; border-radius: 22px 22px 0 0; }
+  .vmodal__info { padding: 18px 18px 24px; }
+  .vmodal__specs { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .vmodal__specs li { flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px; }
+}
+
+/* Placeholder cards while the admin-listed vehicles load */
+.car--skeleton { min-height: 440px; background: linear-gradient(100deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%); background-size: 300% 100%; animation: skeleton 1.4s ease-in-out infinite; }
+@keyframes skeleton { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+
+/* Nothing listed in the admin panel (or it can't be reached) */
+.fleet-empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px;
+  padding: clamp(40px, 6vw, 72px) 24px; border-radius: var(--r-lg);
+  background: radial-gradient(70% 90% at 50% 0%, var(--red-soft), transparent 70%), var(--surface);
+  border: 1px solid var(--line);
+}
+.fleet-empty__icon { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: var(--red); background: var(--red-soft); margin-bottom: 4px; }
+.fleet-empty__icon svg { width: 30px; height: 30px; }
+.fleet-empty h3 { font-size: clamp(20px, 2.2vw, 26px); }
+.fleet-empty p { color: var(--muted); max-width: 46ch; }
+.fleet-empty__ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 8px; }
+
+/* Listed in the admin panel without a photo yet */
+.car__noimg { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255,255,255,.18); background: radial-gradient(80% 90% at 50% 100%, #2a0d10 0%, #0f0f12 70%); }
+.car__noimg svg { width: 64px; height: 64px; }
 .car__media::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.35) 0%, transparent 35%, transparent 70%, rgba(18,18,21,.6)); pointer-events: none; }
 .verified {
   position: absolute; top: 14px; left: 14px; z-index: 2;
@@ -701,7 +822,8 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .is-loading .header__inner,
 .is-loading .cr,
 .is-loading .trust::before,
-.is-loading .hero__scene { animation-play-state: paused !important; }
+.is-loading .hero__scene,
+.is-loading .hero__lion { animation-play-state: paused !important; }
 
 /* One keyframe drives every clip reveal; each element sets its own start/end shape */
 @keyframes clip-reveal { from { clip-path: var(--cf); } to { clip-path: var(--ct, inset(-40px)); } }
@@ -802,6 +924,13 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   .showcase { max-width: 720px; width: 100%; margin: -120px auto 0; }
   .hero__scene { position: relative; top: auto; bottom: auto; left: auto; right: auto; height: clamp(260px, 56vw, 480px); margin: 0 calc(var(--gutter) * -1); }
   .showcase__shot, .is-day .showcase__shot { inset: 0; width: auto; height: auto; -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 72%, transparent 100%); mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 72%, transparent 100%); }
+  .is-cutout .showcase__shot { inset: auto; left: 0; right: 0; margin: 0 auto; top: 6%; width: min(86%, 620px); height: auto; aspect-ratio: 1 / .69; }
+  .hero__lion { width: min(460px, 110vw); left: -80px; bottom: auto; top: 20px; }
+  .showcase__spot {
+    background:
+      radial-gradient(ellipse 45% 45% at 50% 38%, rgba(255, 255, 255, .13), transparent 70%),
+      radial-gradient(ellipse 55% 22% at 50% 52%, rgba(225, 29, 42, .32), transparent 72%);
+  }
   .hero__shade { background: linear-gradient(0deg, var(--bg) 0%, transparent 30%), linear-gradient(180deg, var(--bg) 0%, transparent 18%); }
   .hero__sweep { width: auto; left: 0; }
   .showcase__stage { aspect-ratio: auto; }
@@ -889,4 +1018,50 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   .showcase__shot, .is-active .showcase__shot, .is-leaving .showcase__shot { transform: none; }
   .showcase__kb, .is-active .showcase__kb { transform: none; transition: none; }
   .flare { animation: none; }
+}
+
+/* Phones: give the car more room and keep the price card from swallowing it */
+@media (max-width: 760px) {
+  /* Scene = 2:1 photo + small top margin + the strip the card overlaps — no dead space */
+  /* Photo runs straight down into the card: the card starts where the photo ends
+     (-40px cancels the hero grid gap, -10px tucks the card over the photo's last edge) */
+  .hero__scene { height: calc(50vw + 12px); }
+  /* Fade only the blurred ambient glow at the bottom (no hard line), never the car */
+  .showcase__amb {
+    -webkit-mask-image: linear-gradient(180deg, #000 35%, transparent 72%);
+    mask-image: linear-gradient(180deg, #000 35%, transparent 72%);
+  }
+  .showcase { margin-top: -64px; }
+  .hero__shade { background: linear-gradient(180deg, var(--bg) 0%, transparent 10%); }
+  /* Cut-outs: car only (no reflection), anchored so the wheels sit on the card's top edge */
+  /* The card starts 24px above the scene bottom (−64px margin + 40px grid gap): put the wheels just over its edge */
+  .is-cutout .showcase__shot { top: auto; bottom: 21px; width: 86%; aspect-ratio: 1 / .44; }
+  .is-cutout.is-active .showcase__shot, .is-cutout.is-leaving .showcase__shot { clip-path: inset(-24px); }  /* don't slice the wheels */
+  .is-cutout .showcase__kb img { height: 100%; }
+  .is-cutout .showcase__kb img.showcase__reflect { display: none; }
+  .showcase__floor { top: auto; bottom: -16px; height: 34px; }
+  /* Full photos: show the whole 2:1 frame instead of zoom-filling the tall scene */
+  .showcase__slide:not(.is-cutout) .showcase__shot {
+    inset: auto; left: 0; right: 0; top: 12px; width: 100%; height: auto; aspect-ratio: 2 / 1;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%), linear-gradient(180deg, transparent 0%, #000 12%, #000 70%, transparent 100%);
+    -webkit-mask-composite: source-in;
+    mask-image: linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%), linear-gradient(180deg, transparent 0%, #000 12%, #000 70%, transparent 100%);
+    mask-composite: intersect;
+  }
+  /* Card: one clean column — tag, name, specs | divider | price on one line | buttons */
+  .vcard { margin: 0; padding: 16px; border-radius: 18px; grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+  .vcard__top, .vcard__name, .vcard__meta, .vcard__price, .vcard__btns { grid-column: 1; }
+  .vcard__top { grid-row: 1; }
+  .vcard__name { grid-row: 2; font-size: 19px; margin-top: 10px; line-height: 1.2; }
+  .vcard__meta { grid-row: 3; font-size: 12.5px; margin-top: 4px; }
+  .vcard__price {
+    grid-row: 4; justify-self: stretch; align-self: auto;
+    flex-direction: row; align-items: baseline; gap: 6px;
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+  }
+  .vcard__price strong { font-size: 22px; }
+  .vcard__btns { grid-row: 5; gap: 10px; margin-top: 14px; }
+  .vcard__btns .btn { padding: 11px 12px; font-size: 14px; justify-content: center; }
+  .showcase__controls { justify-content: center; gap: 12px; margin-top: 16px; }
+  .round-btn { width: 42px; height: 42px; }
 }

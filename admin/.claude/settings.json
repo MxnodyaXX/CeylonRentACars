@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"C:\\\\EMRACManagementSystem\" -Recurse -Depth 3 | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(Get-Process -Name \"node\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force -ErrorAction SilentlyContinue)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(npm install *)",
+      "Bash(node -e \"require\\('./node_modules/react-big-calendar/package.json'\\)\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); let c=fs.readFileSync\\('src/data/sampleData.ts','utf8'\\); const count = \\(c.match\\(/revenue: \\\\d+,/g\\)||[]\\).length; console.log\\('revenue fields:', count\\);\")",
+      "Bash(npx vite *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5174/)",
+      "Bash(Start-Process -NoNewWindow -FilePath \"npx\" -ArgumentList \"vite\",\"--port\",\"5174\")",
+      "Bash(Start-Sleep 4)",
+      "Bash(Invoke-WebRequest -Uri \"http://localhost:5174/\" -UseBasicParsing -TimeoutSec 5)",
+      "Bash(Select-Object -ExpandProperty StatusCode)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(npm ls *)",
+      "Bash(node -e \"const b=require\\('fs'\\).readFileSync\\('C:/EMRACManagementSystem/src/data/CAB-1234.png'\\);const ct=b[25];const types={0:'Grayscale',2:'RGB \\(no alpha\\)',3:'Palette',4:'Grayscale+Alpha',6:'RGBA \\(has alpha\\)'};console.log\\('PNG color type byte:',ct,'=>',types[ct]||'unknown'\\);console.log\\('width',b.readUInt32BE\\(16\\),'height',b.readUInt32BE\\(20\\)\\);\")",
+      "PowerShell(curl.exe -s -X POST \"https://oclzkjdcgjddsnkaogsc.supabase.co/functions/v1/send-sms\" -H \"Authorization: Bearer sb_publishable_0wfk4-NDHPLgtF_NLe6ceg_I9ZAPOA0\" -H \"Content-Type: application/json\" -d '{\\\\\"to\\\\\":\\\\\"94741838376\\\\\",\\\\\"message\\\\\":\\\\\"EMRAC test\\\\\"}' -w \"`nHTTP_STATUS:%{http_code}`n\")",
+      "PowerShell(supabase secrets set TEXTLK_API_TOKEN=\"4125|tDAYWmytd0IfjmqlLFU8L95ZnjqZmJNjVEk8p6b41639f3c8\" \"TEXTLK_SENDER_ID=Dodan's Clo\")",
+      "PowerShell(npm run build 2>&1)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('html2canvas:', \\(p.dependencies&&p.dependencies.html2canvas\\)||\\(p.devDependencies&&p.devDependencies.html2canvas\\)||'MISSING'\\); console.log\\('jspdf:', \\(p.dependencies&&p.dependencies.jspdf\\)||\\(p.devDependencies&&p.devDependencies.jspdf\\)||'MISSING'\\);\")",
+      "Bash(grep -E \"^\\(html2canvas|jspdf\\)$\")",
+      "PowerShell(npm install 2>&1)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\mxnod\\.claude\\projects\\c--EMRACManagementSystem\\memory"
+    ]
+  }
+}
