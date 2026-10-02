@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka</title>
+  <meta name="description" content="Rent verified cars, SUVs, vans and premium vehicles from trusted owners across Sri Lanka. Clear pricing, secure booking, airport pickup and chauffeur options.">
+  <meta name="theme-color" content="#070708">
+  <link rel="icon" href="assets/img/lion.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <script>document.documentElement.classList.add('js')</script>
+</head>
+<body>
+
+<!-- ============ ICON SPRITE ============ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-shield-plus" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M9 12h6M12 9v6"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="M14.106 5.553a2 2 0 0 0 1.788 0l3.659-1.83A1 1 0 0 1 21 4.619v12.764a1 1 0 0 1-.553.894l-4.553 2.277a2 2 0 0 1-1.788 0l-4.212-2.106a2 2 0 0 0-1.788 0l-3.659 1.83A1 1 0 0 1 3 19.381V6.618a1 1 0 0 1 .553-.894l4.553-2.277a2 2 0 0 1 1.788 0z"/><path d="M15 5.764v15M9 3.236v15"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-car" viewBox="0 0 24 24"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></symbol>
+    <symbol id="i-seat" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="12" cy="18" r="2"/><path d="M5 8v8M12 8v8M19 8v4H5"/></symbol>
+    <symbol id="i-fuel" viewBox="0 0 24 24"><path d="M3 22h12M4 9h10M14 22V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v18"/><path d="M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 4 0V9.83a2 2 0 0 0-.59-1.42L18 5"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></symbol>
+    <symbol id="i-plane" viewBox="0 0 24 24"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></symbol>
+    <symbol id="i-wheel" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2.5"/><path d="M12 14.5V22M9.6 11.3 2.4 9.8M14.4 11.3l7.2-1.5"/></symbol>
+    <symbol id="i-badge" viewBox="0 0 24 24"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m9 15 2 2 4-4"/></symbol>
+    <symbol id="i-headset" viewBox="0 0 24 24"><path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5Zm0 0a9 9 0 1 1 18 0m0 0v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z"/><path d="M21 16v2a4 4 0 0 1-4 4h-5"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></symbol>
+    <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></symbol>
+    <symbol id="i-scale" viewBox="0 0 24 24"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></symbol>
+    <symbol id="i-fb" viewBox="0 0 24 24"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></symbol>
+    <symbol id="i-ig" viewBox="0 0 24 24"><rect width="20" height="20" x="2" y="2" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37zM17.5 6.5h.01"/></symbol>
+    <symbol id="i-yt" viewBox="0 0 24 24"><path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17"/><path d="m10 15 5-3-5-3z"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
+  </defs>
+</svg>
+
+<!-- ============ HEADER ============ -->
+<header class="header" id="top">
+  <div class="container header__inner">
+    <a href="#top" class="logo" aria-label="Ceylon Rent A Cars home">
+      <span class="logo__mark" aria-hidden="true"><span class="logo__lion"></span></span>
+      <span class="logo__text">Ceylon<small>Rent A Cars</small></span>
+    </a>
+
+    <nav class="nav" aria-label="Primary">
+      <a href="#top" class="is-active">Home</a>
+      <a href="#vehicles">Vehicles</a>
+      <a href="#how">How It Works</a>
+      <a href="#why">Why Us</a>
+      <a href="#deals">Deals</a>
+      <a href="#faq">Support</a>
+    </nav>
+
+    <div class="header__actions">
+      <label class="currency" title="Display currency">
+        <svg class="ic"><use href="#i-globe"/></svg>
+        <select class="js-currency" aria-label="Currency">
+          <option value="LKR">LKR</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+        </select>
+        <svg class="ic ic--sm"><use href="#i-down"/></svg>
+      </label>
+      <a href="#" class="btn btn--ghost btn--sm hide-sm">Sign In</a>
+      <a href="#" class="btn btn--red btn--sm hide-md">List Your Vehicle</a>
+      <button class="burger" aria-label="Open menu" aria-expanded="false" aria-controls="drawer">
+        <svg class="ic"><use href="#i-menu"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- Mobile drawer -->
+<div class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer__panel">
+    <div class="drawer__head">
+      <span class="logo__text">Ceylon<small>Rent A Cars</small></span>
+      <button class="icon-btn js-close-drawer" aria-label="Close menu"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <nav class="drawer__nav">
+      <a href="#top">Home</a>
+      <a href="#vehicles">Vehicles</a>
+      <a href="#how">How It Works</a>
+      <a href="#why">Why Us</a>
+      <a href="#deals">Deals</a>
+      <a href="#faq">Support</a>
+    </nav>
+    <div class="drawer__foot">
+      <a href="#" class="btn btn--ghost btn--block">Sign In</a>
+      <a href="#" class="btn btn--red btn--block">List Your Vehicle</a>
+    </div>
+  </div>
+</div>
+
+<main>
+
+<!-- ============ HERO ============ -->
+<section class="hero is-intro" data-glow="0">
+  <div class="hero__bg" aria-hidden="true">
+    <div class="hero__glow"></div>
+    <div class="hero__grid"></div>
+    <div class="hero__lion"></div>
+  </div>
+
+  <div class="container hero__inner">
+    <div class="hero__copy">
+      <span class="pill"><svg class="ic ic--sm"><use href="#i-badge"/></svg>Verified Vehicle Rentals Across Sri Lanka</span>
+      <h1 class="hero__title"><span class="line"><span>Drive Sri Lanka.</span></span><span class="line"><span class="text-red">Your Way.</span></span></h1>
+      <p class="hero__sub">Find verified cars, SUVs, vans and premium vehicles from trusted owners across the island. Clear pricing. Secure booking. No hidden surprises.</p>
+
+      <div class="hero__ctas">
+        <a href="#vehicles" class="btn btn--red btn--lg">Browse Vehicles <svg class="ic"><use href="#i-arrow"/></svg></a>
+        <a href="#how" class="btn btn--ghost btn--lg">How It Works</a>
+      </div>
+
+      <ul class="trust">
+        <li><span class="trust__ic"><svg class="ic"><use href="#i-shield"/></svg></span>Verified Vehicles</li>
+        <li><span class="trust__ic"><svg class="ic"><use href="#i-lock"/></svg></span>Secure Booking</li>
+        <li><span class="trust__ic"><svg class="ic"><use href="#i-map"/></svg></span>Islandwide Coverage</li>
+      </ul>
+    </div>
+
+    <!-- Full-bleed featured vehicle scenes (cross-fade on carousel change) -->
+    <div class="hero__scene">
+      <figure class="showcase__slide is-night is-active" data-index="0" data-flares="0.629,0.530 0.822,0.524" data-pos="50% 50%">
+        <div class="showcase__amb" style="background-image:url(assets/img/hero-aqua.jpg)"></div>
+        <div class="showcase__shot"><div class="showcase__kb"><img src="assets/img/hero-aqua.jpg" alt="White Toyota Aqua hybrid on a wet city street at night" fetchpriority="high"></div></div>
+      </figure>
+      <figure class="showcase__slide is-day" data-index="1">
+        <div class="showcase__amb" style="background-image:url(assets/img/prius.jpg)"></div>
+        <div class="showcase__shot"><div class="showcase__kb"><img src="assets/img/prius.jpg" alt="Silver Toyota Prius 2019 hybrid" loading="lazy"></div></div>
+      </figure>
+      <figure class="showcase__slide is-day" data-index="2">
+        <div class="showcase__amb" style="background-image:url(assets/img/wagonr.jpg)"></div>
+        <div class="showcase__shot"><div class="showcase__kb"><img src="assets/img/wagonr.jpg" alt="White Suzuki Wagon R" loading="lazy"></div></div>
+      </figure>
+      <figure class="showcase__slide is-day" data-index="3">
+        <div class="showcase__amb" style="background-image:url(assets/img/vezel.jpg)"></div>
+        <div class="showcase__shot"><div class="showcase__kb"><img src="assets/img/vezel.jpg" alt="White Honda Vezel SUV" loading="lazy"></div></div>
+      </figure>
+      <figure class="showcase__slide is-day" data-index="4">
+        <div class="showcase__amb" style="background-image:url(assets/img/kdh.jpg)"></div>
+        <div class="showcase__shot"><div class="showcase__kb"><img src="assets/img/kdh.jpg" alt="White Toyota KDH van" loading="lazy"></div></div>
+      </figure>
+      <div class="hero__sweep" aria-hidden="true"></div>
+      <div class="hero__shade" aria-hidden="true"></div>
+    </div>
+
+    <div class="showcase" aria-roledescription="carousel" aria-label="Featured vehicles">
+      <div class="showcase__stage">
+        <div class="support-badge" aria-hidden="true"><strong>24/7</strong><span>Support</span></div>
+
+        <article class="vcard glass" aria-live="polite">
+          <div class="vcard__top">
+            <span class="vcard__tag js-v-tag">Eco Favourite</span>
+            <span class="vcard__rating"><svg class="ic ic--sm"><use href="#i-star"/></svg><span class="js-v-rating">4.8</span></span>
+          </div>
+          <h3 class="vcard__name js-v-name">Toyota Aqua</h3>
+          <p class="vcard__meta js-v-meta">Hybrid • Automatic • 5 Seats</p>
+          <div class="vcard__price">
+            <small>From</small>
+            <strong><span class="price js-v-price" data-lkr="10500">LKR 10,500</span></strong><span class="per">/ day</span>
+          </div>
+          <div class="vcard__btns">
+            <a href="#vehicles" class="btn btn--ghost btn--sm">View Vehicle</a>
+            <a href="#search" class="btn btn--red btn--sm">Book Now</a>
+          </div>
+        </article>
+      </div>
+
+      <div class="showcase__controls">
+        <button class="round-btn js-prev" aria-label="Previous vehicle"><svg class="ic"><use href="#i-left"/></svg></button>
+        <div class="dots" role="tablist" aria-label="Choose featured vehicle">
+          <button class="dot is-active" role="tab" aria-selected="true" aria-label="Toyota Aqua"></button>
+          <button class="dot" role="tab" aria-selected="false" aria-label="Toyota Prius 2019"></button>
+          <button class="dot" role="tab" aria-selected="false" aria-label="Suzuki Wagon R"></button>
+          <button class="dot" role="tab" aria-selected="false" aria-label="Honda Vezel"></button>
+          <button class="dot" role="tab" aria-selected="false" aria-label="Toyota KDH"></button>
+        </div>
+        <button class="round-btn js-next" aria-label="Next vehicle"><svg class="ic"><use href="#i-right"/></svg></button>
+        <span class="showcase__count"><b class="js-count">01</b> / 05</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="container search-wrap" id="search">
+    <div class="search-tabs" role="tablist" aria-label="Booking type">
+      <button class="search-tab is-active" role="tab" aria-selected="true" data-mode="self"><svg class="ic ic--sm"><use href="#i-key"/></svg>Self Drive</button>
+      <button class="search-tab" role="tab" aria-selected="false" data-mode="driver"><svg class="ic ic--sm"><use href="#i-wheel"/></svg>With Driver</button>
+      <button class="search-tab" role="tab" aria-selected="false" data-mode="airport"><svg class="ic ic--sm"><use href="#i-plane"/></svg>Airport Pickup</button>
+    </div>
+
+    <form class="search" autocomplete="off">
+      <div class="field field--loc">
+        <label for="pickup">Pickup Location</label>
+        <div class="field__ctl">
+          <svg class="ic"><use href="#i-pin"/></svg>
+          <input id="pickup" list="locations" placeholder="City, airport or hotel" value="Colombo">
+        </div>
+      </div>
+      <div class="field field--loc">
+        <label for="return">Return Location</label>
+        <div class="field__ctl">
+          <svg class="ic"><use href="#i-pin"/></svg>
+          <input id="return" list="locations" placeholder="Same as pickup">
+        </div>
+      </div>
+      <div class="field field--dt">
+        <label for="pdate">Pickup Date &amp; Time</label>
+        <div class="field__pair">
+          <div class="field__ctl"><svg class="ic"><use href="#i-calendar"/></svg><input type="date" id="pdate" aria-label="Pickup date"></div>
+          <div class="field__ctl field__ctl--time"><input type="time" id="ptime" value="10:00" aria-label="Pickup time"></div>
+        </div>
+      </div>
+      <div class="field field--dt">
+        <label for="rdate">Return Date &amp; Time</label>
+        <div class="field__pair">
+          <div class="field__ctl"><svg class="ic"><use href="#i-calendar"/></svg><input type="date" id="rdate" aria-label="Return date"></div>
+          <div class="field__ctl field__ctl--time"><input type="time" id="rtime" value="10:00" aria-label="Return time"></div>
+        </div>
+      </div>
+      <div class="field field--type">
+        <label for="vtype">Vehicle Type</label>
+        <div class="field__ctl">
+          <svg class="ic"><use href="#i-car"/></svg>
+          <select id="vtype">
+            <option>Any type</option>
+            <option>Economy</option>
+            <option>Sedan</option>
+            <option>Hybrid</option>
+            <option>SUV</option>
+            <option>Luxury</option>
+            <option>Van</option>
+          </select>
+        </div>
+      </div>
+      <button type="submit" class="btn btn--red btn--search"><svg class="ic"><use href="#i-search"/></svg>Search Vehicles</button>
+      <p class="search__note js-search-note"><svg class="ic ic--sm"><use href="#i-check"/></svg>No sign-up needed to browse — free cancellation on most vehicles.</p>
+    </form>
+
+    <datalist id="locations">
+      <option value="Bandaranaike International Airport (CMB)">
+      <option value="Colombo">
+      <option value="Negombo">
+      <option value="Kandy">
+      <option value="Galle">
+      <option value="Ella">
+      <option value="Mirissa">
+      <option value="Jaffna">
+    </datalist>
+  </div>
+</section>
+
+<!-- ============ POPULAR VEHICLES ============ -->
+<section class="section section--first" id="vehicles">
+  <div class="container">
+    <div class="section-head section-head--row" data-reveal>
+      <div>
+        <span class="eyebrow">Live availability</span>
+        <h2>Popular Vehicles &amp; Starting Prices</h2>
+        <p>Get an idea of what your Sri Lanka trip could cost.</p>
+      </div>
+      <div class="chips" role="tablist" aria-label="Filter vehicles">
+        <button class="chip is-active" data-filter="all">All</button>
+        <button class="chip" data-filter="economy">Economy</button>
+        <button class="chip" data-filter="hybrid">Hybrid</button>
+        <button class="chip" data-filter="suv">SUV</button>
+        <button class="chip" data-filter="van">Van</button>
+      </div>
+    </div>
+
+    <div class="cars">
+      <!-- card -->
+      <article class="car" data-cat="economy" data-reveal>
+        <div class="car__media">
+          <img src="assets/img/wagonr.jpg" alt="Suzuki Wagon R" loading="lazy">
+          <span class="verified"><svg class="ic ic--xs"><use href="#i-badge"/></svg>Verified</span>
+          <button class="fav" aria-label="Save Suzuki Wagon R" aria-pressed="false"><svg class="ic"><use href="#i-heart"/></svg></button>
+        </div>
+        <div class="car__body">
+          <div class="car__row">
+            <span class="cat">Economy</span>
+            <span class="rating"><svg class="ic ic--sm"><use href="#i-star"/></svg>4.7 <small>(212)</small></span>
+          </div>
+          <h3>Suzuki Wagon R</h3>
+          <p class="loc"><svg class="ic ic--sm"><use href="#i-pin"/></svg>Colombo</p>
+          <ul class="specs">
+            <li><svg class="ic ic--sm"><use href="#i-gear"/></svg>Automatic</li>
+            <li><svg class="ic ic--sm"><use href="#i-fuel"/></svg>Petrol</li>
+            <li><svg class="ic ic--sm"><use href="#i-seat"/></svg>4 Seats</li>
+          </ul>
+          <div class="car__foot">
+            <div class="from"><small>From</small><strong class="price" data-lkr="8500">LKR 8,500</strong><span>/day</span></div>
+            <a href="#" class="btn btn--dark btn--sm">View Details <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+          </div>
+        </div>
+      </article>
+
+      <article class="car" data-cat="hybrid" data-reveal>
+        <div class="car__media">
+          <img src="assets/img/aqua.jpg" alt="Toyota Aqua" loading="lazy">
+          <span class="verified"><svg class="ic ic--xs"><use href="#i-badge"/></svg>Verified</span>
+          <button class="fav" aria-label="Save Toyota Aqua" aria-pressed="false"><svg class="ic"><use href="#i-heart"/></svg></button>
+        </div>
+        <div class="car__body">
+          <div class="car__row">
+            <span class="cat">Hybrid</span>
+            <span class="rating"><svg class="ic ic--sm"><use href="#i-star"/></svg>4.8 <small>(186)</small></span>
+          </div>
+          <h3>Toyota Aqua</h3>
+          <p class="loc"><svg class="ic ic--sm"><use href="#i-pin"/></svg>Negombo</p>
+          <ul class="specs">
+            <li><svg class="ic ic--sm"><use href="#i-gear"/></svg>Automatic</li>
+            <li><svg class="ic ic--sm"><use href="#i-leaf"/></svg>Hybrid</li>
+            <li><svg class="ic ic--sm"><use href="#i-seat"/></svg>5 Seats</li>
+          </ul>
+          <div class="car__foot">
+            <div class="from"><small>From</small><strong class="price" data-lkr="10500">LKR 10,500</strong><span>/day</span></div>
+            <a href="#" class="btn btn--dark btn--sm">View Details <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+          </div>
+        </div>
+      </article>
+
+      <article class="car" data-cat="hybrid" data-reveal>
+        <div class="car__media">
+          <img src="assets/img/prius.jpg" alt="Toyota Prius" loading="lazy">
+          <span class="verified"><svg class="ic ic--xs"><use href="#i-badge"/></svg>Verified</span>
+          <span class="hot">Most booked</span>
+          <button class="fav" aria-label="Save Toyota Prius" aria-pressed="false"><svg class="ic"><use href="#i-heart"/></svg></button>
+        </div>
+        <div class="car__body">
+          <div class="car__row">
+            <span class="cat">Hybrid</span>
+            <span class="rating"><svg class="ic ic--sm"><use href="#i-star"/></svg>4.9 <small>(324)</small></span>
+          </div>
+          <h3>Toyota Prius</h3>
+          <p class="loc"><svg class="ic ic--sm"><use href="#i-pin"/></svg>Katunayake Airport</p>
+          <ul class="specs">
+            <li><svg class="ic ic--sm"><use href="#i-gear"/></svg>Automatic</li>
+            <li><svg class="ic ic--sm"><use href="#i-leaf"/></svg>Hybrid</li>
+            <li><svg class="ic ic--sm"><use href="#i-seat"/></svg>5 Seats</li>
+          </ul>
+          <div class="car__foot">
+            <div class="from"><small>From</small><strong class="price" data-lkr="12500">LKR 12,500</strong><span>/day</span></div>
+            <a href="#" class="btn btn--dark btn--sm">View Details <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+          </div>
+        </div>
+      </article>
+
+      <article class="car" data-cat="suv" data-reveal>
+        <div class="car__media">
+          <img src="assets/img/vezel.jpg" alt="Honda Vezel" loading="lazy">
+          <span class="verified"><svg class="ic ic--xs"><use href="#i-badge"/></svg>Verified</span>
+          <button class="fav" aria-label="Save Honda Vezel" aria-pressed="false"><svg class="ic"><use href="#i-heart"/></svg></button>
+        </div>
+        <div class="car__body">
+          <div class="car__row">
+            <span class="cat">SUV</span>
+            <span class="rating"><svg class="ic ic--sm"><use href="#i-star"/></svg>4.8 <small>(147)</small></span>
+          </div>
+          <h3>Honda Vezel</h3>
+          <p class="loc"><svg class="ic ic--sm"><use href="#i-pin"/></svg>Kandy</p>
+          <ul class="specs">
+            <li><svg class="ic ic--sm"><use href="#i-gear"/></svg>Automatic</li>
+            <li><svg class="ic ic--sm"><use href="#i-leaf"/></svg>Hybrid</li>
+            <li><svg class="ic ic--sm"><use href="#i-seat"/></svg>5 Seats</li>
+          </ul>
+          <div class="car__foot">
+            <div class="from"><small>From</small><strong class="price" data-lkr="15500">LKR 15,500</strong><span>/day</span></div>
+            <a href="#" class="btn btn--dark btn--sm">View Details <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+          </div>
+        </div>
+      </article>
+
+      <article class="car" data-cat="van" data-reveal>
+        <div class="car__media">
+          <img src="assets/img/kdh.jpg" alt="Toyota KDH van" loading="lazy">
+          <span class="verified"><svg class="ic ic--xs"><use href="#i-badge"/></svg>Verified</span>
+          <button class="fav" aria-label="Save Toyota KDH" aria-pressed="false"><svg class="ic"><use href="#i-heart"/></svg></button>
+        </div>
+        <div class="car__body">
+          <div class="car__row">
+            <span class="cat">Van</span>
+            <span class="rating"><svg class="ic ic--sm"><use href="#i-star"/></svg>4.9 <small>(98)</small></span>
+          </div>
+          <h3>Toyota KDH</h3>
+          <p class="loc"><svg class="ic ic--sm"><use href="#i-pin"/></svg>Negombo</p>
+          <ul class="specs">
+            <li><svg class="ic ic--sm"><use href="#i-gear"/></svg>Manual</li>
+            <li><svg class="ic ic--sm"><use href="#i-fuel"/></svg>Diesel</li>
+            <li><svg class="ic ic--sm"><use href="#i-seat"/></svg>14 Seats</li>
+          </ul>
+          <div class="car__foot">
+            <div class="from"><small>From</small><strong class="price" data-lkr="18500">LKR 18,500</strong><span>/day</span></div>
+            <a href="#" class="btn btn--dark btn--sm">View Details <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+          </div>
+        </div>
+      </article>
+
+      <article class="car" data-cat="suv" data-reveal>
+        <div class="car__media">
+          <img src="assets/img/prado.jpg" alt="Toyota Land Cruiser Prado" loading="lazy">
+          <span class="verified"><svg class="ic ic--xs"><use href="#i-badge"/></svg>Verified</span>
+          <span class="hot hot--light">Premium</span>
+          <button class="fav" aria-label="Save Toyota Prado" aria-pressed="false"><svg class="ic"><use href="#i-heart"/></svg></button>
+        </div>
+        <div class="car__body">
+          <div class="car__row">
+            <span class="cat">Premium SUV</span>
+            <span class="rating"><svg class="ic ic--sm"><use href="#i-star"/></svg>5.0 <small>(64)</small></span>
+          </div>
+          <h3>Toyota Prado</h3>
+          <p class="loc"><svg class="ic ic--sm"><use href="#i-pin"/></svg>Colombo</p>
+          <ul class="specs">
+            <li><svg class="ic ic--sm"><use href="#i-gear"/></svg>Automatic</li>
+            <li><svg class="ic ic--sm"><use href="#i-fuel"/></svg>Diesel</li>
+            <li><svg class="ic ic--sm"><use href="#i-seat"/></svg>7 Seats</li>
+          </ul>
+          <div class="car__foot">
+            <div class="from"><small>From</small><strong class="price" data-lkr="30000">LKR 30,000</strong><span>/day</span></div>
+            <a href="#" class="btn btn--dark btn--sm">View Details <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+          </div>
+        </div>
+      </article>
+    </div>
+
+    <p class="fine-print" data-reveal>Prices shown are starting daily rates. Final price can vary by dates, owner, location and season — you’ll always see the full total before you pay.</p>
+  </div>
+</section>
+
+<!-- ============ CATEGORIES ============ -->
+<section class="section" id="categories">
+  <div class="container">
+    <div class="section-head section-head--row" data-reveal>
+      <div>
+        <span class="eyebrow">Categories</span>
+        <h2>Choose Your Ride</h2>
+        <p>From city hatchbacks to chauffeur-driven vans for the whole family.</p>
+      </div>
+      <a href="#vehicles" class="link-arrow">View all vehicles <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+    </div>
+
+    <div class="cat-layout">
+      <div class="cats">
+        <a href="#vehicles" class="cat-card" data-reveal>
+          <div class="cat-card__img"><img src="assets/img/wagonr.jpg" alt="" loading="lazy"></div>
+          <h3>Economy</h3>
+          <p>From <b class="price" data-lkr="8500">LKR 8,500</b> / day</p>
+          <span class="cat-card__btn">View Cars <svg class="ic ic--sm"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a href="#vehicles" class="cat-card" data-reveal>
+          <div class="cat-card__img"><img src="assets/img/axio.jpg" alt="" loading="lazy"></div>
+          <h3>Sedan</h3>
+          <p>From <b class="price" data-lkr="11000">LKR 11,000</b> / day</p>
+          <span class="cat-card__btn">View Cars <svg class="ic ic--sm"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a href="#vehicles" class="cat-card" data-reveal>
+          <div class="cat-card__img"><img src="assets/img/aqua.jpg" alt="" loading="lazy"></div>
+          <h3>Hybrid</h3>
+          <p>From <b class="price" data-lkr="10500">LKR 10,500</b> / day</p>
+          <span class="cat-card__btn">View Cars <svg class="ic ic--sm"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a href="#vehicles" class="cat-card" data-reveal>
+          <div class="cat-card__img"><img src="assets/img/vezel.jpg" alt="" loading="lazy"></div>
+          <h3>SUV</h3>
+          <p>From <b class="price" data-lkr="15500">LKR 15,500</b> / day</p>
+          <span class="cat-card__btn">View Cars <svg class="ic ic--sm"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a href="#vehicles" class="cat-card" data-reveal>
+          <div class="cat-card__img"><img src="assets/img/eclass.jpg" alt="" loading="lazy"></div>
+          <h3>Luxury</h3>
+          <p>From <b class="price" data-lkr="35000">LKR 35,000</b> / day</p>
+          <span class="cat-card__btn">View Cars <svg class="ic ic--sm"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a href="#vehicles" class="cat-card" data-reveal>
+          <div class="cat-card__img"><img src="assets/img/kdh.jpg" alt="" loading="lazy"></div>
+          <h3>Van</h3>
+          <p>From <b class="price" data-lkr="18500">LKR 18,500</b> / day</p>
+          <span class="cat-card__btn">View Cars <svg class="ic ic--sm"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a href="#vehicles" class="cat-card cat-card--red" data-reveal>
+          <div class="cat-card__img"><img src="assets/img/prado.jpg" alt="" loading="lazy"></div>
+          <h3>With Driver</h3>
+          <p>From <b class="price" data-lkr="16000">LKR 16,000</b> / day</p>
+          <span class="cat-card__btn">View Cars <svg class="ic ic--sm"><use href="#i-arrow"/></svg></span>
+        </a>
+      </div>
+
+      <aside class="stats glass" data-reveal>
+        <div class="stat"><span class="stat__ic"><svg class="ic"><use href="#i-seat"/></svg></span><div><strong>12K+</strong><span>Happy travellers</span></div></div>
+        <div class="stat"><span class="stat__ic"><svg class="ic"><use href="#i-car"/></svg></span><div><strong>850+</strong><span>Verified vehicles</span></div></div>
+        <div class="stat"><span class="stat__ic"><svg class="ic"><use href="#i-pin"/></svg></span><div><strong>40+</strong><span>Pickup points islandwide</span></div></div>
+        <div class="stat"><span class="stat__ic"><svg class="ic"><use href="#i-star"/></svg></span><div><strong>4.8 / 5</strong><span>Average owner rating</span></div></div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LOCATIONS ============ -->
+<section class="section" id="locations">
+  <div class="container">
+    <div class="section-head section-head--row" data-reveal>
+      <div>
+        <span class="eyebrow">Pickup points</span>
+        <h2>Popular Pickup Locations</h2>
+        <p>Collect your vehicle where your trip begins — airport, city or coast.</p>
+      </div>
+    </div>
+
+    <div class="places">
+      <a href="#search" class="place place--xl" data-reveal>
+        <img src="assets/img/airport.jpg" alt="Bandaranaike International Airport" loading="lazy">
+        <div class="place__info">
+          <span class="place__tag"><svg class="ic ic--xs"><use href="#i-plane"/></svg>Airport</span>
+          <h3>Bandaranaike International Airport</h3>
+          <p>Meet &amp; greet at arrivals · 240+ vehicles</p>
+        </div>
+        <span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span>
+      </a>
+      <a href="#search" class="place" data-reveal><img src="assets/img/colombo.jpg" alt="Colombo skyline" loading="lazy"><div class="place__info"><h3>Colombo</h3><p>180+ vehicles</p></div><span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span></a>
+      <a href="#search" class="place" data-reveal><img src="assets/img/negombo.jpg" alt="Negombo beach" loading="lazy"><div class="place__info"><h3>Negombo</h3><p>95+ vehicles</p></div><span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span></a>
+      <a href="#search" class="place" data-reveal><img src="assets/img/kandy.jpg" alt="Kandy lake and Temple of the Tooth" loading="lazy"><div class="place__info"><h3>Kandy</h3><p>70+ vehicles</p></div><span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span></a>
+      <a href="#search" class="place" data-reveal><img src="assets/img/galle.jpg" alt="Galle Fort lighthouse" loading="lazy"><div class="place__info"><h3>Galle</h3><p>60+ vehicles</p></div><span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span></a>
+      <a href="#search" class="place place--wide" data-reveal><img src="assets/img/ella.jpg" alt="Nine Arch Bridge, Ella" loading="lazy"><div class="place__info"><h3>Ella</h3><p>35+ vehicles</p></div><span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span></a>
+      <a href="#search" class="place" data-reveal><img src="assets/img/mirissa.jpg" alt="Mirissa beach" loading="lazy"><div class="place__info"><h3>Mirissa</h3><p>40+ vehicles</p></div><span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span></a>
+      <a href="#search" class="place" data-reveal><img src="assets/img/jaffna.jpg" alt="Nallur temple, Jaffna" loading="lazy"><div class="place__info"><h3>Jaffna</h3><p>25+ vehicles</p></div><span class="place__go"><svg class="ic"><use href="#i-arrow"/></svg></span></a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section class="section" id="how">
+  <div class="container">
+    <div class="section-head section-head--center" data-reveal>
+      <span class="eyebrow">Simple &amp; secure</span>
+      <h2>How It Works</h2>
+      <p>From search to the open road in five easy steps.</p>
+    </div>
+
+    <ol class="steps">
+      <li class="step" data-reveal><span class="step__ic"><svg class="ic"><use href="#i-search"/></svg><i>1</i></span><h3>Search</h3><p>Choose your location, dates and vehicle type.</p></li>
+      <li class="step" data-reveal><span class="step__ic"><svg class="ic"><use href="#i-scale"/></svg><i>2</i></span><h3>Compare</h3><p>Compare verified vehicles, prices and owner ratings.</p></li>
+      <li class="step" data-reveal><span class="step__ic"><svg class="ic"><use href="#i-lock"/></svg><i>3</i></span><h3>Book Securely</h3><p>Book and pay inside Ceylon Rent A Cars.</p></li>
+      <li class="step" data-reveal><span class="step__ic"><svg class="ic"><use href="#i-key"/></svg><i>4</i></span><h3>Verify &amp; Pick Up</h3><p>Complete driver verification and digital handover.</p></li>
+      <li class="step" data-reveal><span class="step__ic"><svg class="ic"><use href="#i-compass"/></svg><i>5</i></span><h3>Explore Sri Lanka</h3><p>Start your journey with confidence.</p></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============ WHY US ============ -->
+<section class="section why" id="why">
+  <div class="why__lion" aria-hidden="true"></div>
+  <div class="container why__inner">
+    <div class="why__intro" data-reveal>
+      <span class="eyebrow">Why Ceylon Rent A Cars</span>
+      <h2>Travel with total<br><span class="text-red">peace of mind.</span></h2>
+      <p>Every owner and every vehicle is checked before it appears on the site, and every booking is protected from payment to drop-off.</p>
+      <a href="#how" class="btn btn--red">See how we verify <svg class="ic"><use href="#i-arrow"/></svg></a>
+    </div>
+    <div class="features">
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-user"/></svg></span><h3>Verified Owners</h3><p>ID and ownership checked for every host.</p></div>
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-badge"/></svg></span><h3>Verified Vehicles</h3><p>Registration, condition and photos reviewed.</p></div>
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-shield-plus"/></svg></span><h3>Rental-Eligible Insurance Checks</h3><p>Cover confirmed as valid for rental use.</p></div>
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-tag"/></svg></span><h3>Transparent Pricing</h3><p>Full total shown upfront. No surprises.</p></div>
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-lock"/></svg></span><h3>Secure Booking</h3><p>Encrypted payments held until pickup.</p></div>
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-file"/></svg></span><h3>Digital Handover Records</h3><p>Timestamped photos, fuel and mileage.</p></div>
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-headset"/></svg></span><h3>Customer Support</h3><p>Real people, 24/7, in English.</p></div>
+      <div class="feature" data-reveal><span class="feature__ic"><svg class="ic"><use href="#i-map"/></svg></span><h3>Islandwide Availability</h3><p>From Jaffna to Galle and everywhere between.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PROMO ============ -->
+<section class="section section--tight" id="deals">
+  <div class="container">
+    <div class="promo" data-reveal>
+      <img src="assets/img/sigiriya.jpg" alt="" class="promo__bg" loading="lazy">
+      <div class="promo__content">
+        <span class="pill pill--light"><svg class="ic ic--sm"><use href="#i-spark"/></svg>Weekly Deals</span>
+        <h2>Explore Sri Lanka for Longer</h2>
+        <p>Save more on weekly rentals. Book 7 days or more and get up to <b>20% off</b> the daily rate.</p>
+        <a href="#search" class="btn btn--white btn--lg">View Weekly Deals <svg class="ic"><use href="#i-arrow"/></svg></a>
+      </div>
+      <div class="promo__badge"><strong>-20%</strong><span>7+ days</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ REVIEWS ============ -->
+<section class="section" id="reviews">
+  <div class="container">
+    <div class="section-head section-head--row" data-reveal>
+      <div>
+        <span class="eyebrow">Reviews</span>
+        <h2>Loved by Travellers Worldwide</h2>
+        <p>Rated 4.8 out of 5 by visitors from over 60 countries.</p>
+      </div>
+    </div>
+    <!-- Sample reviews for the design; replace with real customer reviews before launch. -->
+    <div class="reviews">
+      <figure class="review" data-reveal>
+        <div class="review__stars" aria-label="5 out of 5 stars"><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg></div>
+        <blockquote>“The Prius was waiting at arrivals and the handover took ten minutes. Total price was exactly what we saw online. Made our two-week loop to Ella and Galle so easy.”</blockquote>
+        <figcaption>
+          <span class="avatar" style="--h:350">EW</span>
+          <span><b>Emma W.</b><small>United Kingdom · Toyota Prius</small></span>
+        </figcaption>
+      </figure>
+      <figure class="review" data-reveal>
+        <div class="review__stars" aria-label="5 out of 5 stars"><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg></div>
+        <blockquote>“We booked a KDH with a driver for six of us. Our driver knew every tea estate and the van was spotless. Support answered on WhatsApp within minutes.”</blockquote>
+        <figcaption>
+          <span class="avatar" style="--h:10">LM</span>
+          <span><b>Lukas M.</b><small>Germany · Toyota KDH with driver</small></span>
+        </figcaption>
+      </figure>
+      <figure class="review" data-reveal>
+        <div class="review__stars" aria-label="5 out of 5 stars"><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg><svg class="ic"><use href="#i-star"/></svg></div>
+        <blockquote>“Clear advice on the driving permit before we flew in, and the deposit was back in our account two days after drop-off. Would rent again in a heartbeat.”</blockquote>
+        <figcaption>
+          <span class="avatar" style="--h:0">SD</span>
+          <span><b>Sophie &amp; Dan</b><small>Australia · Honda Vezel</small></span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="section" id="faq">
+  <div class="container faq-layout">
+    <div class="section-head" data-reveal>
+      <span class="eyebrow">Support</span>
+      <h2>Frequently Asked Questions</h2>
+      <p>Everything visitors usually ask before renting a vehicle in Sri Lanka.</p>
+      <div class="help-card glass">
+        <span class="feature__ic"><svg class="ic"><use href="#i-headset"/></svg></span>
+        <div>
+          <b>Still have questions?</b>
+          <p>Our team is available 24/7.</p>
+          <a href="tel:+94112345678" class="link-arrow">+94 11 234 5678 <svg class="ic ic--sm"><use href="#i-arrow"/></svg></a>
+        </div>
+      </div>
+    </div>
+
+    <div class="faq" data-reveal>
+      <details open>
+        <summary>Can foreigners rent a car in Sri Lanka?<span class="faq__ic"><svg class="ic"><use href="#i-plus"/></svg></span></summary>
+        <p>Yes. Visitors aged 21+ with a valid national driving licence can rent self-drive vehicles. You can also book any vehicle with a driver — no licence needed.</p>
+      </details>
+      <details>
+        <summary>Do I need a Sri Lankan driving permit?<span class="faq__ic"><svg class="ic"><use href="#i-plus"/></svg></span></summary>
+        <p>For self-drive you’ll need your home licence plus an International Driving Permit, which must be endorsed locally with a temporary Sri Lankan permit. We help arrange this on arrival so you can start driving the same day.</p>
+      </details>
+      <details>
+        <summary>Is insurance included?<span class="faq__ic"><svg class="ic"><use href="#i-plus"/></svg></span></summary>
+        <p>Every listed vehicle must carry insurance that is valid for rental use, and we check this before a vehicle goes live. The cover details and excess are shown on each vehicle page before you book.</p>
+      </details>
+      <details>
+        <summary>Can vehicles be delivered to the airport?<span class="faq__ic"><svg class="ic"><use href="#i-plus"/></svg></span></summary>
+        <p>Yes. Choose “Airport Pickup” and your owner will meet you at Bandaranaike International Airport arrivals, at any time of day.</p>
+      </details>
+      <details>
+        <summary>Is the security deposit refundable?<span class="faq__ic"><svg class="ic"><use href="#i-plus"/></svg></span></summary>
+        <p>Yes. The deposit is held securely and released after drop-off once the digital handover record confirms there’s no new damage, usually within 2–5 working days.</p>
+      </details>
+      <details>
+        <summary>Can I rent with a driver?<span class="faq__ic"><svg class="ic"><use href="#i-plus"/></svg></span></summary>
+        <p>Absolutely. Select “With Driver” in the search. Experienced, English-speaking drivers are available for day trips and multi-day tours, with driver meals and lodging clearly priced.</p>
+      </details>
+      <details>
+        <summary>How do cancellations work?<span class="faq__ic"><svg class="ic"><use href="#i-plus"/></svg></span></summary>
+        <p>Most vehicles offer free cancellation up to 48 hours before pickup. The exact policy is shown on every vehicle page and in your booking confirmation.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="footer">
+  <div class="footer__lion" aria-hidden="true"></div>
+  <div class="container">
+    <div class="footer__cta">
+      <div>
+        <h2>Ready to explore the island?</h2>
+        <p>Browse hundreds of verified vehicles — no account needed until you book.</p>
+      </div>
+      <div class="footer__cta-btns">
+        <a href="#search" class="btn btn--red btn--lg">Find a Vehicle</a>
+        <a href="#" class="btn btn--ghost btn--lg">List Your Vehicle</a>
+      </div>
+    </div>
+
+    <div class="footer__grid">
+      <div class="footer__brand">
+        <a href="#top" class="logo" aria-label="Ceylon Rent A Cars home">
+          <span class="logo__mark" aria-hidden="true"><span class="logo__lion"></span></span>
+          <span class="logo__text">Ceylon<small>Rent A Cars</small></span>
+        </a>
+        <p>The trusted marketplace for verified vehicle rentals across Sri Lanka.</p>
+        <ul class="contact">
+          <li><svg class="ic ic--sm"><use href="#i-mail"/></svg><a href="mailto:hello@ceylonrentacars.lk">hello@ceylonrentacars.lk</a></li>
+          <li><svg class="ic ic--sm"><use href="#i-phone"/></svg><a href="tel:+94112345678">+94 11 234 5678</a></li>
+        </ul>
+        <div class="socials">
+          <a href="#" aria-label="Facebook"><svg class="ic"><use href="#i-fb"/></svg></a>
+          <a href="#" aria-label="Instagram"><svg class="ic"><use href="#i-ig"/></svg></a>
+          <a href="#" aria-label="YouTube"><svg class="ic"><use href="#i-yt"/></svg></a>
+          <a href="#" aria-label="WhatsApp"><svg class="ic"><use href="#i-chat"/></svg></a>
+        </div>
+      </div>
+
+      <div class="footer__col">
+        <h4>Company</h4>
+        <a href="#">About Us</a><a href="#how">How It Works</a><a href="#">Careers</a><a href="#">Contact</a>
+      </div>
+      <div class="footer__col">
+        <h4>Renters</h4>
+        <a href="#vehicles">Browse Vehicles</a><a href="#locations">Airport Rentals</a><a href="#categories">With Driver</a><a href="#faq">FAQs</a>
+      </div>
+      <div class="footer__col">
+        <h4>Vehicle Owners</h4>
+        <a href="#">List Your Vehicle</a><a href="#">Owner Portal</a><a href="#">Owner Help</a><a href="#">Insurance Requirements</a>
+      </div>
+      <div class="footer__col">
+        <h4>Support</h4>
+        <a href="#faq">Help Centre</a><a href="#">Emergency Support</a><a href="#">Terms</a><a href="#">Privacy</a>
+      </div>
+    </div>
+
+    <div class="footer__bar">
+      <div class="payments" aria-label="Accepted payments">
+        <span class="pay">VISA</span><span class="pay">Mastercard</span><span class="pay">AMEX</span><span class="pay">Apple Pay</span><span class="pay">Google Pay</span>
+      </div>
+      <label class="currency currency--footer">
+        <svg class="ic"><use href="#i-globe"/></svg>
+        <select class="js-currency" aria-label="Currency">
+          <option value="LKR">LKR — Sri Lankan Rupee</option>
+          <option value="USD">USD — US Dollar</option>
+          <option value="EUR">EUR — Euro</option>
+          <option value="GBP">GBP — British Pound</option>
+        </select>
+        <svg class="ic ic--sm"><use href="#i-down"/></svg>
+      </label>
+    </div>
+
+    <p class="footer__legal">© <span class="js-year">2026</span> Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka</p>
+  </div>
+</footer>
+
+<div class="toast" role="status" aria-live="polite"></div>
+
+<script src="assets/js/main.js"></script>
+</body>
+</html>
