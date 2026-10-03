@@ -1,14 +1,93 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { Price } from '../context/AppContext';
-import { useFleet } from '../lib/fleet';
+import { fetchReviews, useFleet } from '../lib/fleet';
 import { CONTACT } from '../data/site';
 
 const EVENT = 'vehicle:open';
 
-/** Open the details window for a listed vehicle (from a card, the hero, …). */
-export function openVehicle(id) {
-  window.dispatchEvent(new CustomEvent(EVENT, { detail: id }));
+/** Open the details window: pass a vehicle object, or the id of a website-listed vehicle. */
+export function openVehicle(vehicleOrId) {
+  window.dispatchEvent(new CustomEvent(EVENT, { detail: vehicleOrId }));
+}
+
+const fmt = n => Number(n).toLocaleString(undefined, { maximumFractionDigits: 1 });
+
+function Stars({ value, size = 'sm' }) {
+  return (
+    <span className="stars" aria-label={`${value} out of 5`}>
+      {[1, 2, 3, 4, 5].map(n => <Icon key={n} name="star" size={size} className={n <= Math.round(value) ? 'is-on' : ''} />)}
+    </span>
+  );
+}
+
+/* Customer reviews (published in the admin; reviewer shown as "First L.").
+   Compact slider under the spec cards: one small card at a time, arrows + swipe. */
+function Reviews({ vehicle }) {
+  const [list, setList] = useState(null);
+  const [index, setIndex] = useState(0);
+  const trackRef = useRef(null);
+
+  useEffect(() => {
+    let live = true;
+    setList(null); setIndex(0);
+    fetchReviews(vehicle.id).then(r => live && setList(r));
+    return () => { live = false; };
+  }, [vehicle.id]);
+
+  // Keep the counter in sync when the visitor swipes the track
+  const onScroll = () => {
+    const el = trackRef.current;
+    if (el) setIndex(Math.round(el.scrollLeft / el.clientWidth));
+  };
+  const go = d => {
+    const el = trackRef.current;
+    if (!el || !list?.length) return;
+    const next = (index + d + list.length) % list.length;
+    el.scrollTo({ left: next * el.clientWidth, behavior: 'smooth' });
+    setIndex(next);
+  };
+
+  const count = list?.length ?? 0;
+  const avg = count ? list.reduce((a, r) => a + r.rating, 0) / count : 0;
+
+  return (
+    <section className="vrevs" aria-label="Customer reviews">
+      <div className="vrevs__head">
+        <h3>Reviews</h3>
+        {count > 0 && (
+          <span className="vrevs__score"><Icon name="star" size="sm" /><b>{avg.toFixed(1)}</b><small>({count})</small></span>
+        )}
+        {count > 1 && (
+          <div className="vrevs__nav">
+            <span className="vrevs__pos">{index + 1}/{count}</span>
+            <button type="button" aria-label="Previous review" onClick={() => go(-1)}><Icon name="left" size="sm" /></button>
+            <button type="button" aria-label="Next review" onClick={() => go(1)}><Icon name="right" size="sm" /></button>
+          </div>
+        )}
+      </div>
+
+      {list === null ? (
+        <p className="vrevs__empty">Loading reviews…</p>
+      ) : count === 0 ? (
+        <p className="vrevs__empty">No reviews yet — be one of the first to drive this {vehicle.name}.</p>
+      ) : (
+        <ul className="vrevs__track" ref={trackRef} onScroll={onScroll}>
+          {list.map(r => (
+            <li key={r.id} className="vrev">
+              <div className="vrev__top">
+                <span className="vrev__avatar" aria-hidden="true">{r.reviewer.slice(0, 1)}</span>
+                <b>{r.reviewer}</b>
+                <Stars value={r.rating} size="xs" />
+                <small>{new Date(r.created_at).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}</small>
+              </div>
+              {r.comment && <p title={r.comment}>{r.comment}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 /*
@@ -17,16 +96,17 @@ export function openVehicle(id) {
  */
 export default function VehicleModal() {
   const { vehicles } = useFleet();
-  const [id, setId] = useState(null);
+  // Opened with a vehicle object (popular list) or an id (hero, which uses the website list)
+  const [opened, setOpened] = useState(null);
   const [index, setIndex] = useState(0);
-  const v = vehicles.find(x => x.id === id);
+  const v = opened && typeof opened === 'object' ? opened : vehicles.find(x => x.id === opened);
 
   const photos = v ? (v.photos.length ? v.photos : [v.heroImg, v.cutoutImg].filter(Boolean)) : [];
-  const close = () => setId(null);
+  const close = () => setOpened(null);
   const step = d => setIndex(i => (i + d + photos.length) % photos.length);
 
   useEffect(() => {
-    const onOpen = e => { setId(e.detail); setIndex(0); };
+    const onOpen = e => { setOpened(e.detail); setIndex(0); };
     window.addEventListener(EVENT, onOpen);
     return () => window.removeEventListener(EVENT, onOpen);
   }, []);
@@ -85,15 +165,30 @@ export default function VehicleModal() {
             <span className="cat">{v.catLabel}</span>
             {v.badge && <span className="vmodal__badge">{v.badge}</span>}
             <span className="verified"><Icon name="badge" size="xs" />Verified</span>
+            {v.hires != null && (
+              <span className={`hires${v.hires ? '' : ' hires--none'}`}><Icon name="check" size="sm" />{v.hires} completed {v.hires === 1 ? 'trip' : 'trips'}</span>
+            )}
+            {v.reviewCount > 0 && v.rating != null && (
+              <span className="rating-tag"><Icon name="star" size="sm" />{v.rating.toFixed(1)} · {v.reviewCount} {v.reviewCount === 1 ? 'review' : 'reviews'}</span>
+            )}
           </div>
           <h2 className="vmodal__name">{v.name}</h2>
           <p className="loc"><Icon name="pin" size="sm" />{v.location}</p>
 
           <ul className="vmodal__specs">
-            <li><Icon name="gear" /><span><small>Transmission</small>{v.transmission}</span></li>
-            <li><Icon name={v.fuelIcon} /><span><small>Fuel</small>{v.fuel}</span></li>
-            <li><Icon name="seat" /><span><small>Seats</small>{v.seats}</span></li>
+            {[
+              ['gear', 'Transmission', v.transmission],
+              [v.fuelIcon, 'Fuel', v.fuel],
+              ['seat', 'Seats', v.seats],
+              ['compass', 'Mileage', v.mileage != null ? `${fmt(v.mileage)} km` : null],
+              ['spark', 'Fuel efficiency', v.kmpl != null ? `${fmt(v.kmpl)} km/L` : null],
+              ['fuel', 'Fuel tank', v.tank != null ? `${fmt(v.tank)} L` : null],
+            ].filter(([, , value]) => value != null && value !== '').map(([icon, label, value]) => (
+              <li key={label}><Icon name={icon} /><span><small>{label}</small>{value}</span></li>
+            ))}
           </ul>
+
+          <Reviews vehicle={v} />
 
           <div className="vmodal__price">
             <small>From</small>
@@ -106,6 +201,7 @@ export default function VehicleModal() {
             <a href={`tel:${CONTACT.tel}`} className="btn btn--ghost"><Icon name="phone" size="sm" />Ask about this car</a>
           </div>
         </div>
+
       </div>
     </div>
   );

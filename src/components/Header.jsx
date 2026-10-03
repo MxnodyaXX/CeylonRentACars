@@ -3,6 +3,7 @@ import { Icon } from './Icon';
 import { NAV_LINKS } from '../data/site';
 import { CURRENCIES, useApp } from '../context/AppContext';
 import { useActiveSection } from '../hooks/useMotion';
+import { useRoute } from '../lib/router';
 
 const SECTION_IDS = ['hero', 'vehicles', 'how', 'why', 'deals', 'faq'];
 
@@ -43,7 +44,9 @@ export default function Header() {
   const [scrolled, setScrolled] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const activeId = useActiveSection(SECTION_IDS);
-  const activeHref = activeId === 'hero' ? '#top' : `#${activeId}`;
+  const { path } = useRoute();
+  // On the fleet page the Vehicles link is active; on home, whichever section is in view
+  const activeHref = path === '/vehicles' ? '/vehicles' : activeId === 'hero' ? '#top' : `#${activeId}`;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);

@@ -9,6 +9,7 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import CropModal from '../components/ui/CropModal';
 import VehicleImageFields, { ImageSlot, SLOT_ASPECT } from '../components/ui/VehicleImageFields';
+import VehicleReviews from '../components/ui/VehicleReviews';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
 import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Hash, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
@@ -236,6 +237,9 @@ export default function Vehicles() {
       if (modal === 'edit') {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { imageUrl, imageUrls, heroImageUrl, photoUrls: _p, ...details } = form as Vehicle;
+        // Only send the spec fields if they changed (keeps edits working before website.sql adds them)
+        if (details.fuelEfficiency === (selected?.fuelEfficiency ?? undefined)) delete details.fuelEfficiency;
+        if (details.tankCapacity === (selected?.tankCapacity ?? undefined)) delete details.tankCapacity;
         updateVehicle(vehicleId, { ...details, ...imageUpdates });
       } else if (Object.keys(imageUpdates).length > 0) {
         updateVehicle(vehicleId, imageUpdates);
@@ -589,6 +593,16 @@ export default function Vehicles() {
           <Field label="Mileage (km)">
             <input className="input" type="number" value={form.mileage ?? 0} onChange={(e) => set('mileage', +e.target.value)} />
           </Field>
+          <Field label="Fuel efficiency (km/L)">
+            <input className="input" type="number" step="0.1" min="0" placeholder="e.g. 18"
+                   value={form.fuelEfficiency ?? ''}
+                   onChange={(e) => set('fuelEfficiency', e.target.value === '' ? null : +e.target.value)} />
+          </Field>
+          <Field label="Fuel tank (litres)">
+            <input className="input" type="number" step="0.1" min="0" placeholder="e.g. 36"
+                   value={form.tankCapacity ?? ''}
+                   onChange={(e) => set('tankCapacity', e.target.value === '' ? null : +e.target.value)} />
+          </Field>
 
           {/* ── Vehicle Images: admin cut-out, website hero, real photos ── */}
           <VehicleImageFields
@@ -759,6 +773,9 @@ export default function Vehicles() {
                   <div><p className="text-xs text-navy-400">Premium</p><p className="font-medium text-navy-700">Rs {selected.insurance.premium.toLocaleString()}</p></div>
                 </div>
               </div>
+
+              {/* Customer reviews — shown on the website's vehicle details when published */}
+              <VehicleReviews vehicleId={selected.id} canEdit={isAdmin() || canActOn(selected)} />
 
               <div className="flex gap-3">
                 {canActOn(selected) && can('canEditVehicle') && (

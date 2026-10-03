@@ -43,6 +43,8 @@ export interface Vehicle {
   fuelType?: string;
   transmission?: string;
   mileage?: number;
+  fuelEfficiency?: number | null;   // km per litre
+  tankCapacity?: number | null;     // litres
   createdAt: string;
   // Ceylon Rent A Cars website listing (managed on the Website page)
   webFeatured?: boolean;
@@ -51,6 +53,18 @@ export interface Vehicle {
   webBadge?: string;
   webLocation?: string;
   webPrice?: number;
+}
+
+/** Customer review of a vehicle, recorded in the admin and shown on the website when published */
+export interface VehicleReview {
+  id: string;
+  vehicleId: string;
+  bookingId?: string;
+  customerName: string;
+  rating: number;            // 1–5
+  comment?: string;
+  published: boolean;
+  createdAt: string;
 }
 
 export interface Owner {

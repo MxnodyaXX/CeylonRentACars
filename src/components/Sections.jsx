@@ -9,13 +9,13 @@ export function Categories() {
     <section className="section" id="categories">
       <div className="container">
         <SectionHead row eyebrow="Categories" title="Choose Your Ride" text="From city hatchbacks to chauffeur-driven vans for the whole family.">
-          <a href="#vehicles" className="link-arrow">View all vehicles <Icon name="arrow" size="sm" /></a>
+          <a href="/vehicles" className="link-arrow">View all vehicles <Icon name="arrow" size="sm" /></a>
         </SectionHead>
 
         <div className="cat-layout">
           <div className="cats">
             {CATEGORIES.map(c => (
-              <a key={c.name} href="#vehicles" className={`cat-card${c.featured ? ' cat-card--red' : ''}`} data-reveal>
+              <a key={c.name} href={`/vehicles${c.type ? `?type=${c.type}` : ''}`} className={`cat-card${c.featured ? ' cat-card--red' : ''}`} data-reveal>
                 <div className="cat-card__img"><img src={c.img} alt="" loading="lazy" /></div>
                 <h3>{c.name}</h3>
                 <p>From <Price lkr={c.price} as="b" /> / day</p>

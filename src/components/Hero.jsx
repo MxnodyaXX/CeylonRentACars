@@ -286,7 +286,7 @@ export default function Hero({ revealed = true }) {
             Clear pricing. Secure booking. No hidden surprises.
           </p>
           <div className="hero__ctas">
-            <a href="#vehicles" className="btn btn--red btn--lg cr">Browse Vehicles <Icon name="arrow" /></a>
+            <a href="/vehicles" className="btn btn--red btn--lg cr">Browse Vehicles <Icon name="arrow" /></a>
             <a href="#how" className="btn btn--ghost btn--lg cr">How It Works</a>
           </div>
           <ul className="trust">

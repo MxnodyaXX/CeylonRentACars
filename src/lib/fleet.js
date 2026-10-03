@@ -20,8 +20,17 @@ const CATEGORY_LABELS = {
 };
 const LIGHT_BADGES = ['Premium'];
 
+// Vehicles not set up on the admin's Website page have no category: infer one from the specs
+function guessCategory(row) {
+  if ((row.seats ?? 0) >= 8) return 'van';
+  if (/hybrid|electric/i.test(row.fuel_type || '')) return 'hybrid';
+  return 'economy';
+}
+
+const toNum = v => (v == null || v === '' ? null : Number(v));
+
 function toCard(row) {
-  const cat = row.category || 'economy';
+  const cat = row.category || guessCategory(row);
   const fuel = row.fuel_type || '';
   return {
     id: row.id,
@@ -42,16 +51,132 @@ function toCard(row) {
     price: Number(row.price) || 0,
     badge: row.badge || undefined,
     badgeLight: LIGHT_BADGES.includes(row.badge),
+    hires: row.completed_hires ?? null,   // completed trips (counted in the DB)
+    available: row.available ?? null,     // catalog only: status is 'Available' right now
+    transKind: /auto|cvt/i.test(row.transmission || 'Automatic') ? 'automatic' : 'manual',
+    // Details specs (admin: Vehicles → Edit) and review summary (admin: vehicle details → reviews)
+    mileage: toNum(row.mileage),
+    kmpl: toNum(row.fuel_efficiency),
+    tank: toNum(row.tank_capacity),
+    rating: toNum(row.rating),
+    reviewCount: row.review_count ?? 0,
   };
 }
 
-export async function fetchFleet(signal) {
-  const res = await fetch(`${URL}/rest/v1/website_vehicles?select=*&order=sort_order.asc`, {
+async function fetchView(view, order, signal) {
+  const res = await fetch(`${URL}/rest/v1/${view}?select=*&order=${order}`, {
     headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
     signal,
   });
-  if (!res.ok) throw new Error(`website_vehicles: HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`${view}: HTTP ${res.status}`);
   return (await res.json()).map(toCard);
+}
+
+/** Vehicles picked on the admin's Website page (hero). */
+export const fetchFleet = signal => fetchView('website_vehicles', 'sort_order.asc', signal);
+
+/*
+ * "Popular Vehicles" section: the 10 vehicles with the most completed hires
+ * (popular_vehicles view in admin/supabase/website.sql — counted inside the DB).
+ */
+let popularShared = null;
+function getPopular() {
+  if (!fleetEnabled) return Promise.resolve([]);
+  if (!popularShared) {
+    popularShared = fetchView('popular_vehicles', 'hire_rank.asc').catch(err => { popularShared = null; throw err; });
+  }
+  return popularShared;
+}
+
+/*
+ * Whole MRAC fleet without the catalog view (website.sql not re-run yet): read the
+ * vehicles table asking ONLY for listing-safe columns (no owner, plate, insurance,
+ * revenue), and count completed bookings from just vehicle_id + status.
+ */
+const SAFE_VEHICLE_COLUMNS = 'id,brand,model,year,daily_rent,web_price,image_url,seats,fuel_type,transmission,' +
+  'web_category,web_badge,web_location,hero_image_url,photo_urls,status,web_featured';
+
+async function fetchFleetDirect() {
+  const headers = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+  const vehiclesWith = cols => fetch(`${URL}/rest/v1/vehicles?select=${cols}`, { headers });
+  const [vFirst, bRes] = await Promise.all([
+    vehiclesWith(SAFE_VEHICLE_COLUMNS + ',mileage,fuel_efficiency,tank_capacity'),
+    fetch(`${URL}/rest/v1/bookings?select=vehicle_id&status=eq.Completed`, { headers }),
+  ]);
+  const vRes = vFirst.ok ? vFirst : await vehiclesWith(SAFE_VEHICLE_COLUMNS + ',mileage');
+  if (!vRes.ok) throw new Error(`vehicles: HTTP ${vRes.status}`);
+  const trips = {};
+  if (bRes.ok) (await bRes.json()).forEach(b => { trips[b.vehicle_id] = (trips[b.vehicle_id] || 0) + 1; });
+  return (await vRes.json())
+    .map(v => toCard({
+      ...v,
+      price: v.web_price ?? v.daily_rent,
+      category: v.web_category, badge: v.web_badge, location: v.web_location,
+      completed_hires: bRes.ok ? trips[v.id] || 0 : null,
+      available: v.status === 'Available',
+    }))
+    .sort((a, b) => (b.hires ?? 0) - (a.hires ?? 0) || a.name.localeCompare(b.name));
+}
+
+/*
+ * "All Vehicles" page: the whole MRAC fleet (catalog_vehicles view). If the view
+ * hasn't been created yet, reads the fleet directly; last resort, website vehicles.
+ */
+let catalogShared = null;
+function getCatalog() {
+  if (!fleetEnabled) return Promise.resolve([]);
+  if (!catalogShared) {
+    catalogShared = fetchView('catalog_vehicles', 'completed_hires.desc,brand.asc')
+      .catch(err => {
+        console.warn('[catalog] view missing, reading the MRAC fleet directly —', err.message);
+        return fetchFleetDirect();
+      })
+      .catch(err => {
+        console.warn('[catalog] falling back to website vehicles —', err.message);
+        return getFleet();
+      })
+      .catch(err => { catalogShared = null; throw err; });
+  }
+  return catalogShared;
+}
+
+export function useCatalog() {
+  const [state, setState] = useState(() =>
+    fleetEnabled ? { vehicles: [], status: 'loading' } : { vehicles: [], status: 'offline' });
+  const load = () => {
+    let live = true;
+    setState(s => ({ ...s, status: 'loading' }));
+    getCatalog()
+      .then(list => live && setState({ vehicles: list, status: 'ready' }))
+      .catch(() => live && setState({ vehicles: [], status: 'error' }));
+    return () => { live = false; };
+  };
+  useEffect(() => (fleetEnabled ? load() : undefined), []);
+  return { ...state, retry: () => fleetEnabled && load() };
+}
+
+export function usePopular() {
+  const [state, setState] = useState(() =>
+    fleetEnabled ? { vehicles: [], status: 'loading' } : { vehicles: [], status: 'offline' });
+
+  const load = () => {
+    let live = true;
+    setState(s => ({ ...s, status: 'loading' }));
+    getPopular()
+      .then(list => live && setState({ vehicles: list, status: 'ready' }))
+      .catch(err => {
+        // View not created yet (website.sql not re-run): show the admin-listed vehicles instead
+        console.warn('[popular] falling back to website vehicles —', err.message);
+        return getFleet()
+          .then(list => live && setState({ vehicles: list, status: 'ready' }))
+          .catch(() => live && setState({ vehicles: [], status: 'error' }));
+      });
+    return () => { live = false; };
+  };
+
+  useEffect(() => (fleetEnabled ? load() : undefined), []);
+
+  return { ...state, retry: () => fleetEnabled && load() };
 }
 
 /*
@@ -174,4 +299,18 @@ export function useFleet() {
   }, []);
 
   return { ...state, retry: () => fleetEnabled && load() };
+}
+
+/** Published reviews for a vehicle, newest first. Empty if reviews aren't set up yet. */
+export async function fetchReviews(vehicleId) {
+  if (!fleetEnabled) return [];
+  try {
+    const res = await fetch(
+      `${URL}/rest/v1/public_reviews?select=id,reviewer,rating,comment,created_at&vehicle_id=eq.${encodeURIComponent(vehicleId)}&order=created_at.desc`,
+      { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } },
+    );
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
 }

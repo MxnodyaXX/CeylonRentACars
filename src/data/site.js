@@ -3,7 +3,7 @@
 
 export const NAV_LINKS = [
   { href: '#top', label: 'Home' },
-  { href: '#vehicles', label: 'Vehicles' },
+  { href: '/vehicles', label: 'Vehicles' },
   { href: '#how', label: 'How It Works' },
   { href: '#why', label: 'Why Us' },
   { href: '#deals', label: 'Deals' },
@@ -30,12 +30,12 @@ export const VEHICLE_FILTERS = [
 ];
 
 export const CATEGORIES = [
-  { name: 'Economy', img: '/img/wagonr.jpg', price: 8500 },
-  { name: 'Sedan', img: '/img/axio.jpg', price: 11000 },
-  { name: 'Hybrid', img: '/img/aqua.jpg', price: 10500 },
-  { name: 'SUV', img: '/img/vezel.jpg', price: 15500 },
-  { name: 'Luxury', img: '/img/eclass.jpg', price: 35000 },
-  { name: 'Van', img: '/img/kdh.jpg', price: 18500 },
+  { name: 'Economy', type: 'economy', img: '/img/wagonr.jpg', price: 8500 },
+  { name: 'Sedan', type: 'sedan', img: '/img/axio.jpg', price: 11000 },
+  { name: 'Hybrid', type: 'hybrid', img: '/img/aqua.jpg', price: 10500 },
+  { name: 'SUV', type: 'suv', img: '/img/vezel.jpg', price: 15500 },
+  { name: 'Luxury', type: 'luxury', img: '/img/eclass.jpg', price: 35000 },
+  { name: 'Van', type: 'van', img: '/img/kdh.jpg', price: 18500 },
   { name: 'With Driver', img: '/img/prado.jpg', price: 16000, featured: true },
 ];
 

@@ -32,6 +32,8 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
     fuelType: (r.fuel_type as string) ?? undefined,
     transmission: (r.transmission as string) ?? undefined,
     mileage: numOpt(r.mileage), createdAt: r.created_at as string,
+    fuelEfficiency: numOpt(r.fuel_efficiency),
+    tankCapacity: numOpt(r.tank_capacity),
     webFeatured: r.web_featured === true,
     webOrder: numOpt(r.web_order),
     webCategory: (r.web_category as string) ?? undefined,
@@ -50,6 +52,9 @@ function vToDb(v: Vehicle) {
     image_url: v.imageUrl ?? null, color: v.color ?? null, seats: v.seats ?? null,
     fuel_type: v.fuelType ?? null, transmission: v.transmission ?? null,
     mileage: v.mileage ?? null, created_at: v.createdAt,
+    // only sent when filled, so inserts still work before website.sql adds the columns
+    ...(v.fuelEfficiency != null && { fuel_efficiency: v.fuelEfficiency }),
+    ...(v.tankCapacity != null && { tank_capacity: v.tankCapacity }),
   }
 }
 
@@ -397,6 +402,9 @@ export const db = {
     if (u.fuelType !== undefined) row.fuel_type = u.fuelType
     if (u.transmission !== undefined) row.transmission = u.transmission
     if (u.mileage !== undefined) row.mileage = u.mileage
+    // undefined = untouched (skip); null = cleared
+    if (u.fuelEfficiency !== undefined) row.fuel_efficiency = u.fuelEfficiency
+    if (u.tankCapacity !== undefined) row.tank_capacity = u.tankCapacity
     if (u.webFeatured !== undefined) row.web_featured = u.webFeatured
     if ('webOrder' in u) row.web_order = u.webOrder ?? null
     if ('webCategory' in u) row.web_category = u.webCategory || null

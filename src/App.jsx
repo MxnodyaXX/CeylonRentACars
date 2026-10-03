@@ -11,6 +11,8 @@ import { useScrollReveal } from './hooks/useMotion';
 import { HERO_ART } from './data/site';
 import { preloadHero } from './lib/fleet';
 import VehicleModal from './components/VehicleModal';
+import AllVehicles from './components/AllVehicles';
+import { useLinkInterception, useRoute } from './lib/router';
 
 function Toast() {
   const { toast } = useApp();
@@ -32,23 +34,29 @@ export default function App() {
   }, []);
 
   useScrollReveal(revealed);
+  useLinkInterception();
+  const { path, search } = useRoute();
 
   return (
     <>
       <IconSprite />
       <PageLoader heroReady={heroReady} onReveal={onReveal} />
       <Header />
-      <main>
-        <Hero revealed={revealed} />
-        <PopularVehicles />
-        <Categories />
-        <Locations />
-        <HowItWorks />
-        <WhyUs />
-        <Promo />
-        <Reviews />
-        <Faq />
-      </main>
+      {path === '/vehicles' ? (
+        <AllVehicles search={search} />
+      ) : (
+        <main>
+          <Hero revealed={revealed} />
+          <PopularVehicles />
+          <Categories />
+          <Locations />
+          <HowItWorks />
+          <WhyUs />
+          <Promo />
+          <Reviews />
+          <Faq />
+        </main>
+      )}
       <Footer />
       <VehicleModal />
       <Toast />
