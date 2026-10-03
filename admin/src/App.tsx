@@ -25,6 +25,7 @@ import Customers from './pages/Customers';
 import Settings from './pages/Settings';
 import Incomplete from './pages/Incomplete';
 import Website from './pages/Website';
+import Feedback from './pages/Feedback';
 
 export default function App() {
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -96,6 +97,7 @@ export default function App() {
           <Route path="/settings"    element={isAdmin() || currentUser?.role === 'owner' ? <Settings /> : <Navigate to="/" replace />} />
           <Route path="/credit"      element={isAdmin() ? <CreditManagement /> : <Navigate to="/" replace />} />
           <Route path="/website"     element={isAdmin() ? <Website />          : <Navigate to="/" replace />} />
+          <Route path="/feedback"    element={isAdmin() ? <Feedback />         : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

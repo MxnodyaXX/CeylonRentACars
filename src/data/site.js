@@ -78,12 +78,6 @@ export const FEATURES = [
 ];
 
 // Sample reviews for the design — replace with real customer reviews before launch.
-export const REVIEWS = [
-  { initials: 'EW', hue: 350, name: 'Emma W.', country: 'United Kingdom', vehicle: 'Toyota Prius', text: 'The Prius was waiting at arrivals and the handover took ten minutes. Total price was exactly what we saw online. Made our two-week loop to Ella and Galle so easy.' },
-  { initials: 'LM', hue: 10, name: 'Lukas M.', country: 'Germany', vehicle: 'Toyota KDH with driver', text: 'We booked a KDH with a driver for six of us. Our driver knew every tea estate and the van was spotless. Support answered on WhatsApp within minutes.' },
-  { initials: 'SD', hue: 0, name: 'Sophie & Dan', country: 'Australia', vehicle: 'Honda Vezel', text: 'Clear advice on the driving permit before we flew in, and the deposit was back in our account two days after drop-off. Would rent again in a heartbeat.' },
-];
-
 export const FAQS = [
   { q: 'Can foreigners rent a car in Sri Lanka?', a: 'Yes. Visitors aged 21+ with a valid national driving licence can rent self-drive vehicles. You can also book any vehicle with a driver — no licence needed.' },
   { q: 'Do I need a Sri Lankan driving permit?', a: 'For self-drive you’ll need your home licence plus an International Driving Permit, which must be endorsed locally with a temporary Sri Lankan permit. We help arrange this on arrival so you can start driving the same day.' },
@@ -102,9 +96,9 @@ export const VEHICLE_TYPES = ['Any type', 'Economy', 'Sedan', 'Hybrid', 'SUV', '
 
 export const FOOTER_COLUMNS = [
   { title: 'Company', links: [['About Us', '#'], ['How It Works', '#how'], ['Careers', '#'], ['Contact', '#']] },
-  { title: 'Renters', links: [['Browse Vehicles', '#vehicles'], ['Airport Rentals', '#locations'], ['With Driver', '#categories'], ['FAQs', '#faq']] },
+  { title: 'Renters', links: [['Browse Vehicles', '/vehicles'], ['Airport Rentals', '#locations'], ['With Driver', '#categories'], ['FAQs', '#faq']] },
   { title: 'Vehicle Owners', links: [['List Your Vehicle', '#'], ['Owner Portal', '#'], ['Owner Help', '#'], ['Insurance Requirements', '#']] },
-  { title: 'Support', links: [['Help Centre', '#faq'], ['Emergency Support', '#'], ['Terms', '#'], ['Privacy', '#']] },
+  { title: 'Support', links: [['Help Centre', '#faq'], ['Leave Feedback', '/feedback'], ['Emergency Support', '#'], ['Terms', '#'], ['Privacy', '#']] },
 ];
 
 export const CONTACT = { email: 'hello@ceylonrentacars.lk', phone: '+94 11 234 5678', tel: '+94112345678' };

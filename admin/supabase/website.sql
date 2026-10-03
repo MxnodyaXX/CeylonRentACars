@@ -62,6 +62,80 @@ where r.published;
 
 grant select on public_reviews to anon, authenticated;
 
+-- ---------------------------------------------------------------------------
+-- Customer feedback page (website /feedback)
+-- Past customers rate the COMPANY/SERVICE and (optionally) the VEHICLE they hired.
+-- Everything arrives unpublished; the admin approves it on the Feedback page.
+-- ---------------------------------------------------------------------------
+alter table vehicle_reviews add column if not exists source text not null default 'admin';  -- 'admin' | 'customer'
+
+create table if not exists service_reviews (
+  id            uuid primary key default gen_random_uuid(),
+  customer_name text not null,
+  country       text,
+  vehicle_id    text references vehicles(id) on delete set null,
+  rating        integer not null check (rating between 1 and 5),
+  comment       text,
+  published     boolean not null default false,
+  created_at    timestamptz not null default now()
+);
+
+-- The only way the public site can write: validated, length-limited, always unpublished.
+create or replace function submit_feedback(
+  p_name text, p_country text, p_vehicle_id text,
+  p_service_rating int, p_service_comment text,
+  p_vehicle_rating int, p_vehicle_comment text
+) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_name text := left(trim(coalesce(p_name, '')), 60);
+begin
+  if length(v_name) < 2 then raise exception 'Please enter your name'; end if;
+  if p_service_rating is null or p_service_rating not between 1 and 5 then raise exception 'Please rate our service'; end if;
+  if p_vehicle_id is not null and not exists (select 1 from vehicles where id = p_vehicle_id) then p_vehicle_id := null; end if;
+
+  insert into service_reviews (customer_name, country, vehicle_id, rating, comment)
+  values (v_name, nullif(left(trim(coalesce(p_country, '')), 40), ''), p_vehicle_id,
+          p_service_rating, nullif(left(trim(coalesce(p_service_comment, '')), 1000), ''));
+
+  if p_vehicle_id is not null and p_vehicle_rating between 1 and 5 then
+    insert into vehicle_reviews (vehicle_id, customer_name, rating, comment, published, source)
+    values (p_vehicle_id, v_name, p_vehicle_rating, nullif(left(trim(coalesce(p_vehicle_comment, '')), 1000), ''), false, 'customer');
+  end if;
+end $$;
+
+grant execute on function submit_feedback(text, text, text, int, text, int, text) to anon, authenticated;
+
+-- Vehicle picker on the feedback form: customers recognise their car by its number plate.
+-- Kept to this one small view so plate numbers don't spread to the other website data.
+create or replace view feedback_vehicles as
+select id, brand, model, year, vehicle_number, image_url
+from vehicles;
+
+grant select on feedback_vehicles to anon, authenticated;
+
+-- Approved company reviews for the website's homepage, reviewer shown as "First L."
+create or replace view public_service_reviews as
+select
+  s.id,
+  split_part(trim(s.customer_name), ' ', 1)
+    || coalesce(' ' || nullif(left(split_part(trim(s.customer_name), ' ', 2), 1), '') || '.', '') as reviewer,
+  s.country,
+  case when v.id is not null then trim(v.brand || ' ' || v.model) end as vehicle,
+  s.rating,
+  s.comment,
+  s.created_at
+from service_reviews s
+left join vehicles v on v.id = s.vehicle_id
+where s.published;
+
+grant select on public_service_reviews to anon, authenticated;
+
+-- The admin (MRAC) signs in with its own logins, not Supabase Auth, and the rest of its tables
+-- run with RLS off (see schema.sql). Supabase may switch RLS on automatically for NEW tables,
+-- which hides these rows from the admin — so match the rest of the app.
+alter table vehicle_reviews disable row level security;
+alter table service_reviews disable row level security;
+
 create or replace view website_vehicles as
 select
   id,

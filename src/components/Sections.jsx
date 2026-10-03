@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Icon } from './Icon';
 import SectionHead from './SectionHead';
-import { CATEGORIES, CONTACT, FAQS, FEATURES, LOCATIONS, REVIEWS, STATS, STEPS } from '../data/site';
+import { CATEGORIES, CONTACT, FAQS, FEATURES, LOCATIONS, STATS, STEPS } from '../data/site';
+import { useServiceReviews } from '../lib/fleet';
 import { Price } from '../context/AppContext';
 
 export function Categories() {
@@ -125,24 +126,52 @@ export function Promo() {
 }
 
 export function Reviews() {
+  // Real, admin-approved reviews from past customers (feedback page → admin Feedback → published)
+  const { reviews, status } = useServiceReviews();
+  const avg = reviews.length ? reviews.reduce((a, r) => a + r.rating, 0) / reviews.length : 0;
+  const shown = reviews.slice(0, 6);
+
   return (
     <section className="section" id="reviews">
       <div className="container">
-        <SectionHead row eyebrow="Reviews" title="Loved by Travellers Worldwide" text="Rated 4.8 out of 5 by visitors from over 60 countries." />
-        <div className="reviews">
-          {REVIEWS.map(r => (
-            <figure className="review" key={r.name} data-reveal>
-              <div className="review__stars" aria-label="5 out of 5 stars">
-                {Array.from({ length: 5 }, (_, i) => <Icon key={i} name="star" />)}
-              </div>
-              <blockquote>“{r.text}”</blockquote>
-              <figcaption>
-                <span className="avatar" style={{ '--h': r.hue }}>{r.initials}</span>
-                <span><b>{r.name}</b><small>{r.country} · {r.vehicle}</small></span>
-              </figcaption>
-            </figure>
-          ))}
-        </div>
+        <SectionHead
+          row
+          eyebrow="Reviews"
+          title="What Our Customers Say"
+          text={reviews.length
+            ? `Rated ${avg.toFixed(1)} out of 5 by ${reviews.length} ${reviews.length === 1 ? 'customer' : 'customers'}.`
+            : 'Honest feedback from travellers who rented with us.'}
+        >
+          <a href="/feedback" className="btn btn--ghost">Rented with us? Leave a review <Icon name="arrow" size="sm" /></a>
+        </SectionHead>
+
+        {status === 'ready' && reviews.length === 0 && (
+          <div className="fleet-empty" data-reveal>
+            <span className="fleet-empty__icon"><Icon name="star" /></span>
+            <h3>Be the first to review us</h3>
+            <p>Travelled with Ceylon Rent A Cars? Rate our service and your vehicle — it takes a minute.</p>
+            <div className="fleet-empty__ctas"><a href="/feedback" className="btn btn--red">Share your feedback <Icon name="arrow" size="sm" /></a></div>
+          </div>
+        )}
+
+        {shown.length > 0 && (
+          <div className="reviews">
+            {shown.map((r, i) => (
+              <figure className="review" key={r.id} data-reveal>
+                <div className="review__stars" aria-label={`${r.rating} out of 5 stars`}>
+                  {Array.from({ length: 5 }, (_, n) => <Icon key={n} name="star" className={n < r.rating ? '' : 'is-off'} />)}
+                </div>
+                <blockquote>{r.comment ? `“${r.comment}”` : `Rated our service ${r.rating} out of 5.`}</blockquote>
+                <figcaption>
+                  <span className="avatar" style={{ '--h': [350, 10, 0, 355, 5, 345][i % 6] }}>
+                    {r.reviewer.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}
+                  </span>
+                  <span><b>{r.reviewer}</b><small>{[r.country, r.vehicle].filter(Boolean).join(' · ') || 'Verified customer'}</small></span>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

@@ -35,6 +35,7 @@ function toCard(row) {
   return {
     id: row.id,
     name: `${row.brand} ${row.model}`,
+    year: row.year ?? null,
     cat,
     catLabel: CATEGORY_LABELS[cat] ?? cat,
     // Three image kinds from the admin: cut-out, hero photo, real photos
@@ -313,4 +314,68 @@ export async function fetchReviews(vehicleId) {
   } catch {
     return [];
   }
+}
+
+/** Send a customer's feedback (stored unpublished until approved in the admin). */
+export async function submitFeedback(data) {
+  if (!fleetEnabled) throw new Error('Feedback is not available right now.');
+  const res = await fetch(`${URL}/rest/v1/rpc/submit_feedback`, {
+    method: 'POST',
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      p_name: data.name, p_country: data.country || null, p_vehicle_id: data.vehicleId || null,
+      p_service_rating: data.serviceRating, p_service_comment: data.serviceComment || null,
+      p_vehicle_rating: data.vehicleRating || null, p_vehicle_comment: data.vehicleComment || null,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Could not send feedback (HTTP ${res.status})`);
+  }
+}
+
+/** Approved company/service reviews for the homepage. */
+export function useServiceReviews() {
+  const [state, setState] = useState({ reviews: [], status: fleetEnabled ? 'loading' : 'ready' });
+  useEffect(() => {
+    if (!fleetEnabled) return;
+    let live = true;
+    fetch(`${URL}/rest/v1/public_service_reviews?select=*&order=created_at.desc&limit=12`, {
+      headers: { apikey: KEY, Authorization: `Bearer ${KEY}` },
+    })
+      .then(r => (r.ok ? r.json() : []))
+      .catch(() => [])
+      .then(reviews => live && setState({ reviews, status: 'ready' }));
+    return () => { live = false; };
+  }, []);
+  return state;
+}
+
+/*
+ * Vehicle picker for the feedback form, with number plates (feedback_vehicles view).
+ * Falls back to reading just those columns from the vehicles table if the view isn't there yet.
+ */
+export function useFeedbackVehicles() {
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    if (!fleetEnabled) return;
+    let live = true;
+    const headers = { apikey: KEY, Authorization: `Bearer ${KEY}` };
+    const cols = 'id,brand,model,year,vehicle_number,image_url';
+    fetch(`${URL}/rest/v1/feedback_vehicles?select=${cols}`, { headers })
+      .then(r => (r.ok ? r : fetch(`${URL}/rest/v1/vehicles?select=${cols}`, { headers })))
+      .then(r => (r.ok ? r.json() : []))
+      .catch(() => [])
+      .then(rows => live && setList(rows
+        .map(v => ({
+          id: v.id,
+          name: `${v.brand} ${v.model}`.replace(/\s+/g, ' ').trim(),
+          year: v.year ?? null,
+          plate: (v.vehicle_number || '').trim(),
+          img: v.image_url || null,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name) || a.plate.localeCompare(b.plate))));
+    return () => { live = false; };
+  }, []);
+  return list;
 }

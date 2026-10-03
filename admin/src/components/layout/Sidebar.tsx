@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Car, CalendarDays, MessageSquare,
   Percent, Users, Receipt, UserCheck, Bell, Settings, ShieldCheck, Truck, Contact, HandCoins, CreditCard, AlertTriangle, Globe,
-  ChevronsLeft, ChevronDown, LucideIcon,
+  ChevronsLeft, ChevronDown, MessageSquareHeart, LucideIcon,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
@@ -35,11 +35,12 @@ const groups: { title: string; links: Link[] }[] = [
   ] },
   { title: 'Admin', links: [
     { to: '/website',       icon: Globe,           label: 'Website'     },
+    { to: '/feedback',      icon: MessageSquareHeart, label: 'Feedback' },
     { to: '/permissions',   icon: ShieldCheck,     label: 'Permissions' },
   ] },
 ];
 
-const ADMIN_ONLY = ['/owners', '/credit', '/website', '/permissions'];
+const ADMIN_ONLY = ['/owners', '/credit', '/website', '/feedback', '/permissions'];
 
 /* 5 primary links shown in the mobile pill */
 const mobileNav = [
