@@ -43,7 +43,7 @@ function PriceRange({ min, max, value, onChange }) {
 }
 
 /** One vehicle row. bookQuery adds extra booking-page params (e.g. the customer's dates). */
-export function VehicleRow({ v, bookQuery = '' }) {
+export function VehicleRow({ v, bookQuery = '', action }) {
   const isCutout = v.img && v.img === v.cutoutImg && !v.photos.length && !v.heroImg;
   return (
     <article className="vrow" data-reveal>
@@ -80,7 +80,7 @@ export function VehicleRow({ v, bookQuery = '' }) {
         <Price lkr={v.price} as="strong" />
         <span className="vrow__per">per day</span>
         <div className="vrow__btns">
-          <a href={`/book?v=${encodeURIComponent(v.id)}${bookQuery}`} className="btn btn--red btn--sm">Book <Icon name="arrow" size="sm" /></a>
+          {action ?? <a href={`/book?v=${encodeURIComponent(v.id)}${bookQuery}`} className="btn btn--red btn--sm">Book <Icon name="arrow" size="sm" /></a>}
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => openVehicle(v)}>Details</button>
         </div>
       </div>

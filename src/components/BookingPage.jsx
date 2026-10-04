@@ -83,7 +83,7 @@ export default function BookingPage({ search = '' }) {
       startTime: '10:00',
       endDate: params.get('to') || addDays(start, 3),
       endTime: '10:00',
-      name: '', phone: '', email: '', country: '', message: '',
+      name: params.get('n') || '', phone: '', email: '', country: '', message: '',
       agree: false,
     };
   });
@@ -96,6 +96,10 @@ export default function BookingPage({ search = '' }) {
   const vehicle = vehicles.find(v => v.id === form.vehicleId);
   const days = rentalDays(form.startDate, form.startTime, form.endDate, form.endTime);
   const estimate = vehicle ? vehicle.price * days : 0;
+
+  // Booked from the /alternatives page: link this request to the customer's original inquiry
+  const altOf = params.get('alt') || '';
+  const altRef = params.get('ref') || '';
 
   // "Book Now" inside the details window points here with ?v=… — switch to that vehicle
   const urlVehicle = params.get('v');
@@ -155,6 +159,7 @@ export default function BookingPage({ search = '' }) {
         ...form,
         pickup: withLink(form.pickup, form.pickupPos),
         returnTo: form.sameReturn ? withLink(form.pickup, form.pickupPos) : withLink(form.returnTo || form.pickup, form.returnPos),
+        alternativeOf: altOf,
         estimate,
       });
       setReference(ref);
@@ -199,6 +204,13 @@ export default function BookingPage({ search = '' }) {
           <h1>Request a booking</h1>
           <p>Tell us your dates — we confirm availability and the final price before anything is charged.</p>
         </header>
+
+        {altOf && (
+          <div className="book-alt">
+            <Icon name="check" size="sm" />
+            <p>You’re choosing an <b>alternative vehicle</b>{altRef ? <> for request <b>{altRef}</b></> : ''}. Our team will continue with your original booking details — just confirm the dates and your contact number.</p>
+          </div>
+        )}
 
         <form className="booking" onSubmit={submit} noValidate>
           <div className="booking__main">

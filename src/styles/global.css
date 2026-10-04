@@ -1649,3 +1649,10 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .alt-help { max-width: 1100px; margin: 24px auto 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 20px 24px; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); }
 .alt-help p { color: var(--muted); font-size: 14px; margin-top: 2px; }
 .alt-help .fleet-empty__ctas { margin: 0; }
+
+.book-alt { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 16px; padding: 14px 16px; border-radius: 14px; background: rgba(74, 222, 128, .07); border: 1px solid rgba(74, 222, 128, .3); color: #d4d4d8; font-size: 14px; }
+.book-alt .ic { color: #4ade80; flex: none; margin-top: 3px; }
+.book-alt b { color: #fff; }
+
+.alt-confirm { display: inline-flex; gap: 6px; }
+.alt-item__err { margin: 8px 14px 0; }

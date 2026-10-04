@@ -127,6 +127,7 @@ export const vehicleLink = (id: string) => `${WEBSITE_URL}/vehicles?vehicle=${en
 export function alternativesLink(inq: Inquiry, alternatives: Vehicle[], ref?: string) {
   const q = new URLSearchParams({
     ids: alternatives.map((v) => v.id).join(','),
+    i: inq.id,                                             // links the customer's choice back to this inquiry
     req: inq.requestedVehicle.replace(/\s*\(.*\)$/, ''),     // without the plate number
     n: inq.customerName.trim().split(' ')[0],
     ...(inq.startDate ? { from: inq.startDate } : {}),

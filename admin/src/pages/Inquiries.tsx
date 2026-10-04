@@ -162,9 +162,9 @@ export default function Inquiries() {
 
       {/* Why leads are lost */}
       {(tab === 'Lost' || tab === 'All') && (() => {
-        const lost = inquiries.filter((i) => i.status === 'Lost');
+        const lost = inquiries.filter((i) => i.status === 'Lost' && !i.alternativeChosen);
         if (!lost.length) return null;
-        const decided = inquiries.filter((i) => i.status !== 'Pending').length;
+        const decided = inquiries.filter((i) => i.status !== 'Pending' && !i.alternativeChosen).length;
         const byReason = Object.entries(lost.reduce<Record<string, number>>((m, i) => { const k = i.lostReason || 'Not recorded'; m[k] = (m[k] ?? 0) + 1; return m; }, {}))
           .sort((x, y) => y[1] - x[1]);
         const byVehicle = Object.entries(lost.reduce<Record<string, number>>((m, i) => { const k = (i.requestedVehicle || '—').replace(/\s*\(.*\)$/, ''); m[k] = (m[k] ?? 0) + 1; return m; }, {}))
@@ -252,10 +252,19 @@ export default function Inquiries() {
               </div>
             </div>
 
-            {inq.status === 'Lost' && inq.lostReason && (
+            {inq.alternativeChosen ? (
+              <div className="flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 rounded-lg px-3 py-2 mb-3">
+                ↪ Customer chose an alternative — continued in a new inquiry
+              </div>
+            ) : inq.status === 'Lost' && inq.lostReason && (
               <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">
                 <AlertTriangle size={11} />
                 {inq.lostReason}
+              </div>
+            )}
+            {inq.alternativeOf && (
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mb-3">
+                ✓ Alternative chosen by customer
               </div>
             )}
 

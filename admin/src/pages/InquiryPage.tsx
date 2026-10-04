@@ -110,6 +110,12 @@ export default function InquiryPage() {
     catch { /* the quote itself is saved; logging is best-effort */ }
   };
 
+  // Remember which vehicles were offered — the customer can only choose one of these on the website
+  const offerAlternatives = () => {
+    if (alt.list.length) patchInquiry(inq.id, { alternativesOffered: alt.list.map((v) => v.id) });
+    openWa(tpl.find((t) => t.id === 'alternatives')!.text);
+  };
+
   const openWa = (text: string) => { setChannel('WhatsApp'); window.open(`https://wa.me/${intlDigits(inq.customerPhone)}?text=${encodeURIComponent(text)}`, '_blank'); };
   const copy = async (text: string, what: string) => {
     try { await navigator.clipboard.writeText(text); toast.success(`${what} copied`, ''); } catch { prompt(`Copy ${what.toLowerCase()}:`, text); }
@@ -195,7 +201,33 @@ export default function InquiryPage() {
             </div>
           )}
         </div>
-        {inq.status === 'Lost' && inq.lostReason && <p className="mt-3 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2 flex items-center gap-2"><AlertTriangle size={14} /> Lost: {inq.lostReason}</p>}
+        {/* Customer moved to an alternative vehicle → follow up in the new inquiry */}
+        {inq.alternativeChosen ? (() => {
+          const next = inquiries.find((i) => i.id === inq.alternativeChosen);
+          return (
+            <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex flex-wrap items-center gap-3">
+              <Repeat size={16} className="text-blue-600 flex-shrink-0" />
+              <p className="text-sm text-blue-900 flex-1 min-w-[220px]">
+                The customer chose an <b>alternative vehicle</b>{next ? <>: <b>{next.requestedVehicle}</b></> : ''}. This inquiry is closed — continue in the new one.
+              </p>
+              <Link to={`/inquiries/${inq.alternativeChosen}`} className="btn-primary !py-1.5 text-xs flex items-center gap-1">Open new inquiry <ArrowRight size={13} /></Link>
+            </div>
+          );
+        })() : inq.status === 'Lost' && inq.lostReason && <p className="mt-3 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2 flex items-center gap-2"><AlertTriangle size={14} /> Lost: {inq.lostReason}</p>}
+
+        {/* This inquiry IS the alternative the customer chose */}
+        {inq.alternativeOf && (() => {
+          const prev = inquiries.find((i) => i.id === inq.alternativeOf);
+          return (
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex flex-wrap items-center gap-3">
+              <CheckCircle2 size={16} className="text-emerald-600 flex-shrink-0" />
+              <p className="text-sm text-emerald-900 flex-1 min-w-[220px]">
+                <b>Alternative chosen by the customer</b>{prev ? <> instead of <b>{prev.requestedVehicle}</b></> : ''}. Earlier contact, notes and quote are in the original inquiry.
+              </p>
+              <Link to={`/inquiries/${inq.alternativeOf}`} className="btn-secondary !py-1.5 text-xs flex items-center gap-1"><ArrowLeft size={13} /> Original inquiry</Link>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="grid lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-4 items-start">
@@ -214,7 +246,7 @@ export default function InquiryPage() {
             <p className="text-[11px] text-navy-400 mb-1.5">Quick WhatsApp replies</p>
             <div className="flex flex-wrap gap-1.5">
               {tpl.map((t) => (
-                <button key={t.id} type="button" onClick={() => openWa(t.text)} title="Opens WhatsApp with this message"
+                <button key={t.id} type="button" onClick={() => (t.id === 'alternatives' ? offerAlternatives() : openWa(t.text))} title="Opens WhatsApp with this message"
                         className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-navy-100 bg-white text-navy-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700">
                   {t.label}
                 </button>
@@ -304,7 +336,7 @@ export default function InquiryPage() {
                     <button type="button" onClick={() => switchVehicle(v.id)} className="text-xs font-semibold text-brand-500 hover:underline flex-shrink-0">Use this</button>
                   </div>
                 ))}
-                <button type="button" onClick={() => openWa(tpl.find((t) => t.id === 'alternatives')!.text)}
+                <button type="button" onClick={offerAlternatives}
                         className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">
                   <MessageCircle size={13} /> Offer these on WhatsApp
                 </button>

@@ -189,6 +189,9 @@ function iFromDb(r: Record<string, unknown>): Inquiry {
     vehicleId: (r.vehicle_id as string) ?? undefined,
     checklist: (r.checklist as Record<string, boolean>) ?? undefined,
     quote: (r.quote as Inquiry['quote']) ?? undefined,
+    alternativeOf: (r.alternative_of as string) ?? undefined,
+    alternativeChosen: (r.alternative_chosen as string) ?? undefined,
+    alternativesOffered: Array.isArray(r.alternatives_offered) ? (r.alternatives_offered as string[]) : undefined,
   }
 }
 
@@ -489,6 +492,7 @@ export const db = {
     if (u.vehicleId !== undefined) row.vehicle_id = u.vehicleId
     if (u.checklist !== undefined) row.checklist = u.checklist
     if (u.quote !== undefined) row.quote = u.quote
+    if (u.alternativesOffered !== undefined) row.alternatives_offered = u.alternativesOffered
     return supabase.from('inquiries').update(row).eq('id', id)
   },
 

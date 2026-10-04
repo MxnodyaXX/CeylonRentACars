@@ -178,6 +178,9 @@ export interface Inquiry {
   vehicleId?: string;                       // set for website booking requests
   checklist?: Record<string, boolean>;      // qualification checklist (inquiry page)
   quote?: InquiryQuote;                     // price quote sent to the customer
+  alternativeOf?: string;                   // this inquiry is the customer's alternative choice for that inquiry
+  alternativeChosen?: string;               // the customer moved from this inquiry to that one
+  alternativesOffered?: string[];           // vehicle ids offered to the customer as alternatives
 }
 
 export interface InquiryQuote {

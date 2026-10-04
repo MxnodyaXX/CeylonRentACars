@@ -407,9 +407,23 @@ export async function submitBookingRequest(d) {
       p_start_date: d.startDate, p_start_time: d.startTime || null, p_end_date: d.endDate, p_end_time: d.endTime || null,
       p_pickup: d.pickup, p_return: d.returnTo || d.pickup, p_mode: d.mode, p_message: d.message || null,
       p_estimate: d.estimate ?? null,
+      p_alternative_of: d.alternativeOf || null,
     }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(body?.message || `Could not send your request (HTTP ${res.status})`);
   return body; // reference, e.g. "CRC-4F9A2C"
+}
+
+/** Customer picks one of the offered alternatives — reuses the original request's details. Returns the new reference. */
+export async function chooseAlternative(inquiryId, vehicleId) {
+  if (!fleetEnabled) throw new Error('Please contact us to choose this vehicle.');
+  const res = await fetch(`${URL}/rest/v1/rpc/choose_alternative`, {
+    method: 'POST',
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p_inquiry_id: inquiryId, p_vehicle_id: vehicleId }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.message || `Could not confirm your choice (HTTP ${res.status})`);
+  return body;
 }

@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
-import { useCatalog } from '../lib/fleet';
+import { chooseAlternative, useCatalog } from '../lib/fleet';
 import { VehicleRow } from './AllVehicles';
 import { CONTACT } from '../data/site';
 
@@ -20,17 +20,71 @@ export default function AlternativesPage({ search = '' }) {
   const from = isDate(p.get('from')) ? p.get('from') : '';
   const to = isDate(p.get('to')) ? p.get('to') : '';
   const ref = p.get('ref');
+  const original = p.get('i');   // original inquiry id — links the new request to it
 
   const { vehicles, status } = useCatalog();
   // Keep the order the team chose
   const list = ids.map(id => vehicles.find(v => v.id === id)).filter(Boolean);
-  const bookQuery = `${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}`;
+  const bookQuery = `${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}`
+    + `${original ? `&alt=${encodeURIComponent(original)}` : ''}${name ? `&n=${encodeURIComponent(name)}` : ''}${ref ? `&ref=${encodeURIComponent(ref)}` : ''}`;
   const wa = `https://wa.me/${CONTACT.tel.replace(/\D/g, '')}?text=${encodeURIComponent(`Hi, about my booking request${ref ? ` ${ref}` : ''} — I'd like one of the alternative vehicles.`)}`;
+
+  // One-tap choice (no form): the original request's dates, locations and contact details are reused
+  const [confirming, setConfirming] = useState(null);   // vehicle id awaiting "Yes, choose it"
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [chosen, setChosen] = useState(null);            // { vehicle, reference }
+
+  const choose = async v => {
+    setBusy(true); setError('');
+    try {
+      const reference = await chooseAlternative(original, v.id);
+      setChosen({ vehicle: v, reference });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const actionFor = v => {
+    if (!original) return undefined;   // older links without the inquiry: fall back to the booking form
+    if (confirming !== v.id) {
+      return <button type="button" className="btn btn--red btn--sm" onClick={() => { setConfirming(v.id); setError(''); }}>Choose this vehicle <Icon name="arrow" size="sm" /></button>;
+    }
+    return (
+      <span className="alt-confirm">
+        <button type="button" className="btn btn--red btn--sm" disabled={busy} onClick={() => choose(v)}>{busy ? 'Confirming…' : 'Yes, choose it'}</button>
+        <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={() => setConfirming(null)}>Cancel</button>
+      </span>
+    );
+  };
 
   useEffect(() => {
     document.title = 'Alternative vehicles for you — Ceylon Rent A Cars';
     return () => { document.title = 'Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka'; };
   }, []);
+
+  if (chosen) {
+    return (
+      <main className="feedback-page">
+        <div className="container">
+          <div className="feedback-done">
+            <span className="feedback-done__icon"><Icon name="check" /></span>
+            <h1>Great choice{name ? `, ${name}` : ''}!</h1>
+            <p>We’ve switched your booking request to the <b>{chosen.vehicle.name}</b>{from && to ? <> for <b>{pretty(from)} – {pretty(to)}</b></> : ''}. Your pickup, return and contact details stay the same.</p>
+            <span className="book-ref">{chosen.reference}</span>
+            <p>Our team will confirm the final price and details with you shortly. Nothing has been charged.</p>
+            <div className="fleet-empty__ctas">
+              <a href={wa} target="_blank" rel="noreferrer" className="btn btn--red"><Icon name="chat" size="sm" />Message us on WhatsApp</a>
+              <a href="/" className="btn btn--ghost">Back to home</a>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="catalog-page alt-page">
@@ -42,6 +96,7 @@ export default function AlternativesPage({ search = '' }) {
           <p>
             We know you had your heart set on it. Our team has hand-picked the vehicles below as the closest match —
             similar size, comfort and price{from && to ? ', and every one of them is free for your trip' : ''}.
+            {original && ' Just tap “Choose this vehicle” — we’ll keep your dates, pickup and contact details.'}
           </p>
           {from && to && (
             <div className="alt-hero__trip">
@@ -56,7 +111,8 @@ export default function AlternativesPage({ search = '' }) {
           {status !== 'loading' && list.map((v, i) => (
             <div key={v.id} className="alt-item">
               <span className="alt-item__n">Option {i + 1}</span>
-              <VehicleRow v={v} bookQuery={bookQuery} />
+              <VehicleRow v={v} bookQuery={bookQuery} action={actionFor(v)} />
+              {confirming === v.id && error && <p className="fb-error alt-item__err">{error}</p>}
             </div>
           ))}
           {status !== 'loading' && list.length === 0 && (
