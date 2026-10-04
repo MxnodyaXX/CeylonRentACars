@@ -123,6 +123,19 @@ export const prettyDate = (d?: string) =>
 const WEBSITE_URL = ((import.meta.env.VITE_WEBSITE_URL as string | undefined) ?? 'http://localhost:5173').replace(/\/$/, '');
 export const vehicleLink = (id: string) => `${WEBSITE_URL}/vehicles?vehicle=${encodeURIComponent(id)}`;
 
+/** One personal page listing all suggested vehicles, with an apology and the customer's dates */
+export function alternativesLink(inq: Inquiry, alternatives: Vehicle[], ref?: string) {
+  const q = new URLSearchParams({
+    ids: alternatives.map((v) => v.id).join(','),
+    req: inq.requestedVehicle.replace(/\s*\(.*\)$/, ''),     // without the plate number
+    n: inq.customerName.trim().split(' ')[0],
+    ...(inq.startDate ? { from: inq.startDate } : {}),
+    ...(inq.endDate ? { to: inq.endDate } : {}),
+    ...(ref ? { ref } : {}),
+  });
+  return `${WEBSITE_URL}/alternatives?${q.toString()}`;
+}
+
 const SIGN = (staff: string) => ['', 'Kind regards,', staff, '*Ceylon Rent A Cars*', '📞 077 972 6761'];
 
 /** One-click WhatsApp / email templates (*bold* renders bold in WhatsApp) */
@@ -148,9 +161,14 @@ export function templates(inq: Inquiry, staff: string, alternatives: Vehicle[] =
     },
     {
       id: 'alternatives', label: 'Dates not available',
-      text: [...open(`Unfortunately the *${inq.requestedVehicle}* is not available${dates ? ` for ${dates}` : ''}. We can offer these similar vehicles instead:`),
+      text: [...open(`We're sorry — the *${inq.requestedVehicle.replace(/\s*\(.*\)$/, '')}* is not available${dates ? ` for ${dates}` : ''}. We have picked similar vehicles that are free for your trip:`),
         ...(alternatives.length
-          ? alternatives.flatMap((v) => [`• *${v.brand} ${v.model}* (${v.year}) — ${v.seats ?? '-'} seats, ${v.transmission ?? ''} — from ${rs(v.webPrice ?? v.dailyRent)}/day`, `  🔗 ${vehicleLink(v.id)}`, ''])
+          ? [
+              ...alternatives.map((v) => `• *${v.brand} ${v.model}* (${v.year}) — from ${rs(v.webPrice ?? v.dailyRent)}/day`),
+              '',
+              '👉 *See them all with photos & book:*',
+              alternativesLink(inq, alternatives, ref),
+            ]
           : ['• Please tell us your preferred vehicle type and we will find the best match.']),
         '', 'Would any of these work for you?', ...SIGN(staff)].join('\n'),
     },

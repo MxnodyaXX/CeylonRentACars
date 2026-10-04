@@ -14,6 +14,7 @@ import VehicleModal from './components/VehicleModal';
 import AllVehicles from './components/AllVehicles';
 import FeedbackPage from './components/FeedbackPage';
 import BookingPage from './components/BookingPage';
+import AlternativesPage from './components/AlternativesPage';
 import { useLinkInterception, useRoute } from './lib/router';
 
 function Toast() {
@@ -50,6 +51,8 @@ export default function App() {
         <FeedbackPage search={search} />
       ) : path === '/book' ? (
         <BookingPage search={search} />
+      ) : path === '/alternatives' ? (
+        <AlternativesPage search={search} />
       ) : (
         <main>
           <Hero revealed={revealed} />
