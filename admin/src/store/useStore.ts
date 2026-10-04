@@ -369,6 +369,12 @@ export const useStore = create<AppState>()(
         toast.success('Inquiry updated', 'Changes have been saved.');
       },
 
+      // Silent save for the inquiry review page (checklist ticks, quote drafts); errors still surface
+      patchInquiry: (id, updates) => {
+        set((s) => ({ inquiries: s.inquiries.map((i) => (i.id === id ? { ...i, ...updates } : i)) }));
+        sync(() => Promise.resolve(db.updateInquiry(id, updates)).then((r) => { if (r.error) throw r.error; }));
+      },
+
       // ── Expenses ──────────────────────────────────────────────────────────
       addExpense: (e) => {
         const newE: Expense = { ...e, id: uid(), createdAt: now() };

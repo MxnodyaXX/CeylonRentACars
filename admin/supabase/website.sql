@@ -130,6 +130,104 @@ where s.published;
 
 grant select on public_service_reviews to anon, authenticated;
 
+-- Inquiry review page: qualification checklist, quote and the requested vehicle (set by the booking page)
+alter table inquiries add column if not exists checklist  jsonb not null default '{}'::jsonb;
+alter table inquiries add column if not exists quote      jsonb;
+alter table inquiries add column if not exists vehicle_id text;
+
+-- ---------------------------------------------------------------------------
+-- Booking page (website /book)
+-- Requests become PENDING inquiries in the admin (Inquiries page, referral "Website");
+-- the team confirms and converts them into bookings.
+-- ---------------------------------------------------------------------------
+
+-- Dates each vehicle is already taken (live bookings only) — no customer details
+create or replace view vehicle_busy_dates as
+select vehicle_id, start_date, end_date
+from bookings
+where status in ('Confirmed', 'Ongoing') and vehicle_id is not null;
+
+grant select on vehicle_busy_dates to anon, authenticated;
+
+-- Validated insert of a booking request (checks dates against live bookings); returns the reference number
+create or replace function submit_booking_request(
+  p_vehicle_id text, p_name text, p_phone text, p_email text, p_country text,
+  p_start_date date, p_start_time text, p_end_date date, p_end_time text,
+  p_pickup text, p_return text, p_mode text, p_message text, p_estimate numeric
+) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_vehicle vehicles%rowtype;
+  v_name  text := left(trim(coalesce(p_name, '')), 80);
+  v_phone text := left(trim(coalesce(p_phone, '')), 30);
+  v_ref   text := 'CRC-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 6));
+  v_days  int;
+begin
+  if length(v_name) < 2 then raise exception 'Please enter your full name'; end if;
+  if length(regexp_replace(v_phone, '\D', '', 'g')) < 7 then raise exception 'Please enter a valid phone or WhatsApp number'; end if;
+  if p_start_date is null or p_end_date is null then raise exception 'Please choose your pickup and return dates'; end if;
+  if p_start_date < current_date then raise exception 'Pickup date cannot be in the past'; end if;
+  if p_end_date < p_start_date then raise exception 'Return date must be after the pickup date'; end if;
+  if p_end_date - p_start_date > 90 then raise exception 'For rentals longer than 90 days please contact us directly'; end if;
+
+  select * into v_vehicle from vehicles where id = p_vehicle_id;
+  if not found then raise exception 'Please choose a vehicle'; end if;
+
+  if exists (
+    select 1 from bookings b
+    where b.vehicle_id = p_vehicle_id and b.status in ('Confirmed', 'Ongoing')
+      and b.start_date::date <= p_end_date and b.end_date::date >= p_start_date
+  ) then
+    raise exception 'Sorry, this vehicle is already booked for some of those dates';
+  end if;
+
+  v_days := greatest(1, p_end_date - p_start_date);
+
+  insert into inquiries (id, customer_name, customer_phone, requested_vehicle, preferred_brand,
+                         start_date, end_date, referral, status, notes, created_at, vehicle_id)
+  values (
+    'web_' || lower(substr(v_ref, 5)),
+    v_name, v_phone,
+    trim(v_vehicle.brand || ' ' || v_vehicle.model) || coalesce(' (' || nullif(v_vehicle.vehicle_number, '') || ')', ''),
+    v_vehicle.brand,
+    p_start_date::text, p_end_date::text,
+    'Website', 'Pending',
+    concat_ws(E'\n',
+      'Website booking request ' || v_ref,
+      'Type: ' || coalesce(nullif(p_mode, ''), 'Self drive'),
+      'Pickup: ' || coalesce(nullif(left(p_pickup, 300), ''), '—') || ' · ' || p_start_date || coalesce(' ' || nullif(left(p_start_time, 5), ''), ''),
+      'Return: ' || coalesce(nullif(left(p_return, 300), ''), '—') || ' · ' || p_end_date || coalesce(' ' || nullif(left(p_end_time, 5), ''), ''),
+      'Days: ' || v_days || coalesce(' · Estimate: Rs ' || to_char(p_estimate, 'FM999,999,990'), ''),
+      case when nullif(trim(p_email), '') is not null then 'Email: ' || left(trim(p_email), 120) end,
+      case when nullif(trim(p_country), '') is not null then 'Country: ' || left(trim(p_country), 40) end,
+      case when nullif(trim(p_message), '') is not null then 'Message: ' || left(trim(p_message), 1000) end
+    ),
+    to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    p_vehicle_id
+  );
+
+  return v_ref;
+end $$;
+
+grant execute on function submit_booking_request(text, text, text, text, text, date, text, date, text, text, text, text, text, numeric) to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Inquiry follow-ups (admin Inquiries page): every time the team contacts a
+-- customer about an inquiry — channel, outcome, what the customer said, next step.
+-- ---------------------------------------------------------------------------
+create table if not exists inquiry_followups (
+  id             uuid primary key default gen_random_uuid(),
+  inquiry_id     text not null references inquiries(id) on delete cascade,
+  channel        text not null,                 -- Call / WhatsApp / Email / SMS / In person
+  outcome        text not null,                 -- Reached / No answer / Interested / …
+  response       text,                          -- what the customer said / requirements
+  next_follow_up date,                          -- when to contact them again
+  staff          text,                          -- who made the contact
+  created_at     timestamptz not null default now()
+);
+create index if not exists inquiry_followups_inquiry_idx on inquiry_followups (inquiry_id, created_at desc);
+alter table inquiry_followups disable row level security;
+
 -- The admin (MRAC) signs in with its own logins, not Supabase Auth, and the rest of its tables
 -- run with RLS off (see schema.sql). Supabase may switch RLS on automatically for NEW tables,
 -- which hides these rows from the admin — so match the rest of the app.

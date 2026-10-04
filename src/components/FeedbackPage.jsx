@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { submitFeedback, useFeedbackVehicles } from '../lib/fleet';
+import Dropdown from './ui/Dropdown';
 
 const LABELS = ['', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
 
@@ -111,22 +112,18 @@ export default function FeedbackPage({ search = '' }) {
 
           <section className="fb-card">
             <h2><span>1</span>Your trip</h2>
-            <label className="fb-field">
+            <div className="fb-field">
               <span>Which vehicle did you rent?</span>
-              <small>Find it by model or number plate.</small>
-              <div className="fb-select">
-                <select value={form.vehicleId} onChange={e => set('vehicleId', e.target.value)}>
-                  <option value="">Choose a vehicle…</option>
-                  {sorted.map(v => (
-                    <option key={v.id} value={v.id}>
-                      {[v.plate, v.name, v.year && `(${v.year})`].filter(Boolean).join(' — ').replace(' — (', ' (')}
-                    </option>
-                  ))}
-                  <option value="other">I'm not sure / not listed</option>
-                </select>
-                <Icon name="down" size="sm" />
-              </div>
-            </label>
+              <small>Type the model or number plate to find it.</small>
+              <Dropdown
+                searchable icon="car" ariaLabel="Vehicle" placeholder="Choose a vehicle…"
+                value={form.vehicleId} onChange={v => set('vehicleId', v)}
+                options={[
+                  ...sorted.map(v => ({ value: v.id, icon: 'car', label: v.name, sub: [v.plate, v.year].filter(Boolean).join(' · ') })),
+                  { value: 'other', icon: 'search', label: 'I’m not sure / not listed' },
+                ]}
+              />
+            </div>
             {vehicle && (
               <div className="fb-vehicle">
                 {vehicle.img && <img src={vehicle.img} alt="" />}

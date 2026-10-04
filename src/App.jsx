@@ -13,6 +13,7 @@ import { preloadHero } from './lib/fleet';
 import VehicleModal from './components/VehicleModal';
 import AllVehicles from './components/AllVehicles';
 import FeedbackPage from './components/FeedbackPage';
+import BookingPage from './components/BookingPage';
 import { useLinkInterception, useRoute } from './lib/router';
 
 function Toast() {
@@ -47,6 +48,8 @@ export default function App() {
         <AllVehicles search={search} />
       ) : path === '/feedback' ? (
         <FeedbackPage search={search} />
+      ) : path === '/book' ? (
+        <BookingPage search={search} />
       ) : (
         <main>
           <Hero revealed={revealed} />

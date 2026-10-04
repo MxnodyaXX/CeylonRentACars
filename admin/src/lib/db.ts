@@ -186,6 +186,9 @@ function iFromDb(r: Record<string, unknown>): Inquiry {
     referral: r.referral as string, status: r.status as Inquiry['status'],
     lostReason: (r.lost_reason as string) ?? undefined,
     notes: (r.notes as string) ?? undefined, createdAt: r.created_at as string,
+    vehicleId: (r.vehicle_id as string) ?? undefined,
+    checklist: (r.checklist as Record<string, boolean>) ?? undefined,
+    quote: (r.quote as Inquiry['quote']) ?? undefined,
   }
 }
 
@@ -483,6 +486,9 @@ export const db = {
     if (u.requestedVehicle !== undefined) row.requested_vehicle = u.requestedVehicle
     if (u.startDate !== undefined) row.start_date = u.startDate
     if (u.endDate !== undefined) row.end_date = u.endDate
+    if (u.vehicleId !== undefined) row.vehicle_id = u.vehicleId
+    if (u.checklist !== undefined) row.checklist = u.checklist
+    if (u.quote !== undefined) row.quote = u.quote
     return supabase.from('inquiries').update(row).eq('id', id)
   },
 

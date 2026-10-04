@@ -34,6 +34,28 @@ function Stars({ value }: { value: number }) {
 const linkFor = (vehicleId: string, customerName: string) =>
   `${WEBSITE_URL}/feedback?v=${encodeURIComponent(vehicleId)}&n=${encodeURIComponent(customerName.trim().split(' ')[0])}`;
 
+const fmtDate = (d: string) =>
+  new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+/* Feedback request for WhatsApp: one idea per line; *text* renders bold in WhatsApp */
+const feedbackMessage = (firstName: string, vehicle: string, start: string, end: string, url: string) => [
+  `Dear ${firstName},`,
+  '',
+  'Thank you for choosing *Ceylon Rent A Cars*. We hope you enjoyed your journey with us.',
+  '',
+  `🚗 *Vehicle:* ${vehicle}`,
+  `📅 *Rental:* ${fmtDate(start)} – ${fmtDate(end)}`,
+  '',
+  'We would be grateful if you could take a minute to rate our service and the vehicle. Your feedback helps us improve and helps other travellers choose with confidence.',
+  '',
+  '⭐ *Share your feedback:*',
+  url,
+  '',
+  'Kind regards,',
+  '*Ceylon Rent A Cars*',
+  '📞 077 972 6761',
+].join('\n');
+
 /* WhatsApp wants international digits only (Sri Lankan 07x… → 947x…) */
 const waNumber = (phone: string) => {
   const d = phone.replace(/\D/g, '');
@@ -202,7 +224,7 @@ export default function Feedback() {
             <ul className="divide-y divide-navy-100">
               {completed.slice(0, 50).map((b) => {
                 const url = linkFor(b.vehicleId, b.customerName);
-                const msg = `Hi ${b.customerName.split(' ')[0]}, thank you for renting with Ceylon Rent A Cars! We'd love your feedback on our service and the ${vehicleName(b.vehicleId) ?? 'vehicle'}: ${url}`;
+                const msg = feedbackMessage(b.customerName.trim().split(' ')[0], vehicleName(b.vehicleId) ?? 'your vehicle', b.startDate, b.endDate, url);
                 return (
                   <li key={b.id} className="flex items-center gap-3 px-5 py-3 flex-wrap">
                     <div className="min-w-0 flex-1">

@@ -101,4 +101,4 @@ export const FOOTER_COLUMNS = [
   { title: 'Support', links: [['Help Centre', '#faq'], ['Leave Feedback', '/feedback'], ['Emergency Support', '#'], ['Terms', '#'], ['Privacy', '#']] },
 ];
 
-export const CONTACT = { email: 'hello@ceylonrentacars.lk', phone: '+94 11 234 5678', tel: '+94112345678' };
+export const CONTACT = { email: 'hello@ceylonrentacars.lk', phone: '077 972 6761', tel: '+94779726761' };

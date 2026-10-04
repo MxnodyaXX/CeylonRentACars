@@ -175,6 +175,21 @@ export interface Inquiry {
   lostReason?: string;
   notes?: string;
   createdAt: string;
+  vehicleId?: string;                       // set for website booking requests
+  checklist?: Record<string, boolean>;      // qualification checklist (inquiry page)
+  quote?: InquiryQuote;                     // price quote sent to the customer
+}
+
+export interface InquiryQuote {
+  dailyRate: number;
+  days: number;
+  discount: number;
+  extras: { label: string; amount: number }[];   // driver, airport pickup, child seat…
+  deposit: number;
+  total: number;
+  status: 'draft' | 'sent' | 'accepted';
+  sentAt?: string;
+  sentVia?: string;
 }
 
 export interface Commission {
@@ -281,6 +296,7 @@ export interface AppState {
 
   addInquiry: (i: Omit<Inquiry, 'id' | 'createdAt'>) => void;
   updateInquiry: (id: string, updates: Partial<Inquiry>) => void;
+  patchInquiry: (id: string, updates: Partial<Inquiry>) => void;
 
   addExpense: (e: Omit<Expense, 'id' | 'createdAt'>) => void;
   deleteExpense: (id: string) => void;

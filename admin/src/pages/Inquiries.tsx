@@ -6,7 +6,10 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
-import { Plus, MessageSquare, AlertTriangle } from 'lucide-react';
+import { Plus, MessageSquare, AlertTriangle, Phone, MessageCircle, CalendarClock, Clock } from 'lucide-react';
+import { FollowUp, loadFollowUps, stageOf, intlDigits, parseRequest } from '../lib/inquiryFollowups';
+import { temperatureOf, responseInfo } from '../lib/inquiryReview';
+import { LOST_REASONS as REASONS } from './InquiryPage';
 import { Inquiry } from '../types';
 
 const REFERRAL_SOURCES = [
@@ -24,16 +27,11 @@ const REFERRAL_SOURCES = [
 ];
 
 type IStatus = 'Pending' | 'Converted' | 'Lost';
-const TABS: ('All' | IStatus)[] = ['All', 'Pending', 'Converted', 'Lost'];
+type Tab = 'All' | IStatus | 'Follow-up due';
+const TABS: Tab[] = ['All', 'Pending', 'Follow-up due', 'Converted', 'Lost'];
+const STAGE_STYLE = { New: 'bg-brand-500 text-white', Contacted: 'bg-navy-100 text-navy-600', 'Follow-up due': 'bg-amber-100 text-amber-800' };
 
-const LOST_REASONS = [
-  'No vehicle available',
-  'Dates not available',
-  'Budget mismatch',
-  'Customer cancelled',
-  'Found elsewhere',
-  'Other',
-];
+const LOST_REASONS = REASONS;
 
 const emptyForm = (): Omit<Inquiry, 'id' | 'createdAt'> => ({
   customerName: '',
@@ -51,16 +49,16 @@ export default function Inquiries() {
   const navigate = useNavigate();
   const location = useLocation();
   const { inquiries, owners, addInquiry, updateInquiry } = useStore();
-  const [tab, setTab] = useState<'All' | IStatus>('All');
+  const [tab, setTab] = useState<Tab>('All');
 
   // Deep-link from dashboard analytics: /inquiries?status=Lost focuses that tab
   useEffect(() => {
     const status = new URLSearchParams(location.search).get('status');
-    if (status && ['All', 'Pending', 'Converted', 'Lost'].includes(status)) {
-      setTab(status as 'All' | IStatus);
+    if (status && (TABS as string[]).includes(status)) {
+      setTab(status as Tab);
     }
   }, [location.search]);
-  const [modal, setModal] = useState<'add' | 'view' | 'lost' | null>(null);
+  const [modal, setModal] = useState<'add' | 'lost' | null>(null);
   const [selected, setSelected] = useState<Inquiry | null>(null);
   const [form, setForm] = useState(emptyForm());
 
@@ -69,7 +67,19 @@ export default function Inquiries() {
   const [lostReason, setLostReason] = useState(LOST_REASONS[0]);
   const [lostCustom, setLostCustom] = useState('');
 
-  const filtered = tab === 'All' ? inquiries : inquiries.filter((i) => i.status === tab);
+  // Contact log for every inquiry (table inquiry_followups); null = table not created yet
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [logReady, setLogReady] = useState(true);
+  const refreshLog = () => loadFollowUps().then((l) => { setLogReady(l !== null); setFollowUps(l ?? []); }).catch(() => {});
+  useEffect(() => { refreshLog(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const stage = (i: Inquiry) => stageOf(i, followUps);
+  const dueCount = inquiries.filter((i) => i.status === 'Pending' && stage(i).stage === 'Follow-up due').length;
+
+  const filtered =
+    tab === 'All' ? inquiries :
+    tab === 'Follow-up due' ? inquiries.filter((i) => i.status === 'Pending' && stage(i).stage === 'Follow-up due') :
+    inquiries.filter((i) => i.status === tab);
   const sorted = [...filtered].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const set = (field: string, value: unknown) => setForm((f) => ({ ...f, [field]: value }));
@@ -108,7 +118,19 @@ export default function Inquiries() {
           customerPhone: inq.customerPhone,
           startDate:     inq.startDate,
           endDate:       inq.endDate,
-          notes:         inq.requestedVehicle ? `Requested: ${inq.requestedVehicle}` : '',
+          // Carry the request + what the customer told us into the booking notes
+          notes: (() => {
+            const req = parseRequest(inq.notes);
+            const last = followUps.find((x) => x.inquiryId === inq.id && x.response);
+            return [
+              inq.requestedVehicle && `Requested: ${inq.requestedVehicle}`,
+              req.reference && `Website request ${req.reference}`,
+              req.fields.Type && `Type: ${req.fields.Type}`,
+              req.fields.Pickup && `Pickup: ${req.fields.Pickup}`,
+              req.fields.Return && `Return: ${req.fields.Return}`,
+              last?.response && `Customer: ${last.response}`,
+            ].filter(Boolean).join('\n');
+          })(),
         },
       },
     });
@@ -129,7 +151,7 @@ export default function Inquiries() {
               }`}
             >
               {t}
-              {t !== 'All' && <span className="ml-1.5 opacity-70">{inquiries.filter((i) => i.status === t).length}</span>}
+              {t !== 'All' && <span className="ml-1.5 opacity-70">{t === 'Follow-up due' ? dueCount : inquiries.filter((i) => i.status === t).length}</span>}
             </button>
           ))}
         </div>
@@ -138,13 +160,51 @@ export default function Inquiries() {
         </button>
       </div>
 
+      {/* Why leads are lost */}
+      {(tab === 'Lost' || tab === 'All') && (() => {
+        const lost = inquiries.filter((i) => i.status === 'Lost');
+        if (!lost.length) return null;
+        const decided = inquiries.filter((i) => i.status !== 'Pending').length;
+        const byReason = Object.entries(lost.reduce<Record<string, number>>((m, i) => { const k = i.lostReason || 'Not recorded'; m[k] = (m[k] ?? 0) + 1; return m; }, {}))
+          .sort((x, y) => y[1] - x[1]);
+        const byVehicle = Object.entries(lost.reduce<Record<string, number>>((m, i) => { const k = (i.requestedVehicle || '—').replace(/\s*\(.*\)$/, ''); m[k] = (m[k] ?? 0) + 1; return m; }, {}))
+          .sort((x, y) => y[1] - x[1]).slice(0, 3);
+        const max = byReason[0][1];
+        return (
+          <div className="card !p-4 md:!p-5 mb-5 grid md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-5">
+            <div>
+              <div className="flex items-baseline justify-between mb-3">
+                <p className="text-sm font-bold text-navy-800">Why leads are lost</p>
+                <p className="text-xs text-navy-400">{lost.length} lost · {decided ? Math.round((lost.length / decided) * 100) : 0}% of decided inquiries</p>
+              </div>
+              <ul className="space-y-2">
+                {byReason.map(([reason, n]) => (
+                  <li key={reason} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-3 text-xs">
+                    <span className="text-navy-600 truncate">{reason}</span>
+                    <span className="h-2 rounded-full bg-navy-50 overflow-hidden"><span className="block h-full rounded-full bg-brand-500" style={{ width: `${(n / max) * 100}%` }} /></span>
+                    <span className="font-bold text-navy-800 tabular-nums">{n}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-navy-800 mb-3">Most-lost vehicles</p>
+              <ul className="space-y-1.5 text-xs">
+                {byVehicle.map(([v, n]) => <li key={v} className="flex justify-between gap-2"><span className="text-navy-600 truncate">{v}</span><b className="text-navy-800">{n}</b></li>)}
+              </ul>
+              <p className="text-[11px] text-navy-400 mt-3">Frequent "No vehicle available" or "Dates not available" means demand you could serve with more of these vehicles.</p>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Cards grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {sorted.map((inq) => (
           <div
             key={inq.id}
             className="card hover:shadow-card-hover transition-shadow cursor-pointer"
-            onClick={() => { setSelected(inq); setModal('view'); }}
+            onClick={() => navigate(`/inquiries/${inq.id}`)}
           >
             <div className="flex items-start justify-between mb-3">
               <div className="flex items-center gap-3">
@@ -156,7 +216,21 @@ export default function Inquiries() {
                   <p className="text-xs text-navy-400">{inq.customerPhone}</p>
                 </div>
               </div>
-              <StatusBadge status={inq.status} />
+              <div className="flex flex-col items-end gap-1">
+                <StatusBadge status={inq.status} />
+                {inq.status === 'Pending' && (() => {
+                  const st = stage(inq);
+                  const mine = followUps.filter((x) => x.inquiryId === inq.id);
+                  const t = temperatureOf(mine, inq.quote);
+                  const r = responseInfo(inq.createdAt, mine);
+                  return (
+                    <>
+                      <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${STAGE_STYLE[st.stage]}`}>{st.stage}{t.level !== 'New' ? ` · ${t.level}` : ''}</span>
+                      {!r.contacted && r.late && <span className="text-[10px] font-bold text-red-600">⚠ {r.time} waiting</span>}
+                    </>
+                  );
+                })()}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-y-2 text-xs mb-3">
@@ -185,8 +259,30 @@ export default function Inquiries() {
               </div>
             )}
 
-            {inq.notes && (
-              <p className="text-xs text-navy-400 bg-navy-50/60 rounded-lg px-3 py-2 mb-3 truncate">{inq.notes}</p>
+            {(() => {
+              const st = stage(inq);
+              if (st.last) return (
+                <div className="text-xs bg-navy-50/60 rounded-lg px-3 py-2 mb-3">
+                  <p className="flex items-center gap-1.5 text-navy-500"><Clock size={11} /> Last: {st.last.channel} · <b className="text-navy-700">{st.last.outcome}</b></p>
+                  {st.due && <p className={`flex items-center gap-1.5 mt-1 font-semibold ${st.stage === 'Follow-up due' ? 'text-amber-700' : 'text-navy-400'}`}><CalendarClock size={11} /> Follow up {st.due}</p>}
+                </div>
+              );
+              const req = parseRequest(inq.notes);
+              const preview = req.reference ? `Website request ${req.reference}${req.fields.Type ? ' · ' + req.fields.Type : ''}` : inq.notes;
+              return preview ? <p className="text-xs text-navy-400 bg-navy-50/60 rounded-lg px-3 py-2 mb-3 truncate">{preview}</p> : null;
+            })()}
+
+            {/* Quick contact */}
+            {inq.status === 'Pending' && inq.customerPhone && (
+              <div className="flex gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
+                <a href={`tel:+${intlDigits(inq.customerPhone)}`} className="flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 rounded-xl bg-navy-700 text-white hover:bg-navy-600 font-medium">
+                  <Phone size={12} /> Call
+                </a>
+                <button type="button" onClick={() => navigate(`/inquiries/${inq.id}`)}
+                        className="flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 font-medium">
+                  <MessageCircle size={12} /> Review
+                </button>
+              </div>
             )}
 
             {/* Quick status actions */}
@@ -261,67 +357,6 @@ export default function Inquiries() {
           <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
           <button onClick={handleSave} className="btn-primary" disabled={!form.customerName || !form.requestedVehicle}>Save Inquiry</button>
         </div>
-      </Modal>
-
-      {/* View Modal */}
-      <Modal open={modal === 'view'} onClose={() => setModal(null)} title="Inquiry Details">
-        {selected && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-lg font-bold text-navy-800">{selected.customerName}</p>
-                <p className="text-sm text-navy-400">{selected.customerPhone}</p>
-              </div>
-              <StatusBadge status={selected.status} size="md" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                ['Requested', selected.requestedVehicle],
-                ['Referral', selected.referral || '—'],
-                ['Start Date', selected.startDate || '—'],
-                ['End Date', selected.endDate || '—'],
-              ].map(([l, v]) => (
-                <div key={l} className="bg-navy-50/60 rounded-xl p-3">
-                  <p className="text-xs text-navy-400">{l}</p>
-                  <p className="text-sm font-semibold text-navy-800">{v}</p>
-                </div>
-              ))}
-            </div>
-
-            {selected.status === 'Lost' && selected.lostReason && (
-              <div className="flex items-center gap-2 bg-red-50 rounded-xl p-3">
-                <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
-                <div>
-                  <p className="text-xs text-red-400">Lost Reason</p>
-                  <p className="text-sm font-semibold text-red-700">{selected.lostReason}</p>
-                </div>
-              </div>
-            )}
-
-            {selected.notes && (
-              <div className="bg-navy-50/60 rounded-xl p-3">
-                <p className="text-xs text-navy-400 mb-1">Notes</p>
-                <p className="text-sm text-navy-700">{selected.notes}</p>
-              </div>
-            )}
-            {selected.status === 'Pending' && (
-              <div className="flex gap-3">
-                <button
-                  onClick={() => convertInquiry(selected)}
-                  className="flex-1 py-2 rounded-xl text-sm font-medium bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                >
-                  ✓ Convert to Booking
-                </button>
-                <button
-                  onClick={() => { openLostModal(selected); }}
-                  className="flex-1 py-2 rounded-xl text-sm font-medium bg-red-50 text-red-600 hover:bg-red-100"
-                >
-                  ✕ Mark as Lost
-                </button>
-              </div>
-            )}
-          </div>
-        )}
       </Modal>
 
       {/* Lost Reason Modal */}

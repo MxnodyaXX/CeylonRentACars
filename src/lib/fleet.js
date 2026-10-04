@@ -379,3 +379,37 @@ export function useFeedbackVehicles() {
   }, []);
   return list;
 }
+
+/* ---------------- Booking page ---------------- */
+
+/** Date ranges a vehicle is already booked (live bookings only, no customer data). */
+export async function fetchBusyDates(vehicleId) {
+  if (!fleetEnabled || !vehicleId) return [];
+  try {
+    const res = await fetch(
+      `${URL}/rest/v1/vehicle_busy_dates?select=start_date,end_date&vehicle_id=eq.${encodeURIComponent(vehicleId)}&order=start_date.asc`,
+      { headers: { apikey: KEY, Authorization: `Bearer ${KEY}` } },
+    );
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Send a booking request (becomes a Pending inquiry in the admin). Returns the reference number. */
+export async function submitBookingRequest(d) {
+  if (!fleetEnabled) throw new Error('Online booking is not available right now — please call us.');
+  const res = await fetch(`${URL}/rest/v1/rpc/submit_booking_request`, {
+    method: 'POST',
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      p_vehicle_id: d.vehicleId, p_name: d.name, p_phone: d.phone, p_email: d.email || null, p_country: d.country || null,
+      p_start_date: d.startDate, p_start_time: d.startTime || null, p_end_date: d.endDate, p_end_time: d.endTime || null,
+      p_pickup: d.pickup, p_return: d.returnTo || d.pickup, p_mode: d.mode, p_message: d.message || null,
+      p_estimate: d.estimate ?? null,
+    }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.message || `Could not send your request (HTTP ${res.status})`);
+  return body; // reference, e.g. "CRC-4F9A2C"
+}

@@ -181,7 +181,7 @@ export default function Bookings() {
 
   // Auto-open booking form when navigated from an inquiry conversion
   useEffect(() => {
-    const inq = (location.state as { fromInquiry?: { customerName: string; customerPhone: string; startDate: string; endDate: string; notes: string } } | null)?.fromInquiry;
+    const inq = (location.state as { fromInquiry?: { customerName: string; customerPhone: string; startDate: string; endDate: string; notes: string; vehicleId?: string; startTime?: string; endTime?: string; pickupLocation?: string; dropLocation?: string; customerEmail?: string; totalAmount?: number } } | null)?.fromInquiry;
     if (!inq) return;
     const f = emptyForm();
     f.customerName  = inq.customerName  ?? '';
@@ -189,6 +189,13 @@ export default function Bookings() {
     f.startDate     = inq.startDate     ?? '';
     f.endDate       = inq.endDate       ?? '';
     f.notes         = inq.notes         ?? '';
+    if (inq.vehicleId)      f.vehicleId      = inq.vehicleId;
+    if (inq.startTime)      f.startTime      = inq.startTime;
+    if (inq.endTime)        f.endTime        = inq.endTime;
+    if (inq.pickupLocation) f.pickupLocation = inq.pickupLocation;
+    if (inq.dropLocation)   f.dropLocation   = inq.dropLocation;
+    if (inq.customerEmail)  f.customerEmail  = inq.customerEmail;
+    if (inq.totalAmount)    f.totalAmount    = inq.totalAmount;
     setForm(f);
     setModal('add');
     setAvailability(null);

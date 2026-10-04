@@ -4,6 +4,7 @@ import { Price } from '../context/AppContext';
 import { useCatalog } from '../lib/fleet';
 import { openVehicle } from './VehicleModal';
 import { CONTACT } from '../data/site';
+import Dropdown from './ui/Dropdown';
 
 const TYPE_LABELS = { economy: 'Economy', sedan: 'Sedan', hybrid: 'Hybrid', suv: 'SUV', luxury: 'Luxury', van: 'Van' };
 const SEAT_OPTIONS = [2, 4, 5, 7];
@@ -77,9 +78,10 @@ function VehicleRow({ v }) {
         <small>From</small>
         <Price lkr={v.price} as="strong" />
         <span className="vrow__per">per day</span>
-        <button type="button" className="btn btn--red btn--sm" onClick={() => openVehicle(v)}>
-          View <Icon name="arrow" size="sm" />
-        </button>
+        <div className="vrow__btns">
+          <a href={`/book?v=${encodeURIComponent(v.id)}`} className="btn btn--red btn--sm">Book <Icon name="arrow" size="sm" /></a>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => openVehicle(v)}>Details</button>
+        </div>
       </div>
     </article>
   );
@@ -254,13 +256,11 @@ export default function AllVehicles({ search = '' }) {
                 <button type="button" className="btn btn--ghost btn--sm filters__toggle" onClick={() => setSheetOpen(true)}>
                   <Icon name="menu" size="sm" />Filters{activeCount ? ` (${activeCount})` : ''}
                 </button>
-                <label className="sort">
+                <div className="sort">
                   <span>Sort by</span>
-                  <select value={sort} onChange={e => setSort(e.target.value)}>
-                    {SORTS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-                  </select>
-                  <Icon name="down" size="sm" />
-                </label>
+                  <Dropdown value={sort} onChange={setSort} ariaLabel="Sort by" className="dd--compact"
+                            options={SORTS.map(o => ({ value: o.id, label: o.label }))} />
+                </div>
               </div>
             </div>
 

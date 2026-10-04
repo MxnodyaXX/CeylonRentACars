@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { Price } from '../context/AppContext';
-import { fetchReviews, useFleet } from '../lib/fleet';
+import { fetchReviews, useCatalog, useFleet } from '../lib/fleet';
+import { useRoute } from '../lib/router';
 import { CONTACT } from '../data/site';
 
 const EVENT = 'vehicle:open';
@@ -96,13 +97,23 @@ function Reviews({ vehicle }) {
  */
 export default function VehicleModal() {
   const { vehicles } = useFleet();
+  const { vehicles: fleet } = useCatalog();     // whole fleet, for shared links
+  // Shared link: /vehicles?vehicle=<id> opens that vehicle's details
+  const { search } = useRoute();
+  const linked = new URLSearchParams(search).get('vehicle');
   // Opened with a vehicle object (popular list) or an id (hero, which uses the website list)
   const [opened, setOpened] = useState(null);
   const [index, setIndex] = useState(0);
-  const v = opened && typeof opened === 'object' ? opened : vehicles.find(x => x.id === opened);
+  useEffect(() => { if (linked) { setOpened(linked); setIndex(0); } }, [linked]);
+  const v = opened && typeof opened === 'object' ? opened : (vehicles.find(x => x.id === opened) ?? fleet.find(x => x.id === opened));
 
   const photos = v ? (v.photos.length ? v.photos : [v.heroImg, v.cutoutImg].filter(Boolean)) : [];
-  const close = () => setOpened(null);
+  const close = () => {
+    setOpened(null);
+    // Drop ?vehicle=… so a refresh doesn't reopen it
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('vehicle')) { url.searchParams.delete('vehicle'); history.replaceState(null, '', url.pathname + url.search + url.hash); }
+  };
   const step = d => setIndex(i => (i + d + photos.length) % photos.length);
 
   useEffect(() => {
@@ -197,7 +208,7 @@ export default function VehicleModal() {
           <p className="vmodal__note">Final price depends on your dates and pickup location — you'll see the full total before you pay.</p>
 
           <div className="vmodal__ctas">
-            <a href="#search" className="btn btn--red" onClick={close}>Book Now <Icon name="arrow" size="sm" /></a>
+            <a href={`/book?v=${encodeURIComponent(v.id)}`} className="btn btn--red" onClick={close}>Book Now <Icon name="arrow" size="sm" /></a>
             <a href={`tel:${CONTACT.tel}`} className="btn btn--ghost"><Icon name="phone" size="sm" />Ask about this car</a>
           </div>
         </div>

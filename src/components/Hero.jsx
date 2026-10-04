@@ -347,7 +347,7 @@ export default function Hero({ revealed = true }) {
               </div>
               <div className="vcard__btns">
                 <button type="button" className="btn btn--ghost btn--sm" onClick={() => openVehicle(v.id)}>View Vehicle</button>
-                <a href="#search" className="btn btn--red btn--sm">Book Now</a>
+                <a href={`/book?v=${encodeURIComponent(v.id)}`} className="btn btn--red btn--sm">Book Now</a>
               </div>
             </article>
             )}
