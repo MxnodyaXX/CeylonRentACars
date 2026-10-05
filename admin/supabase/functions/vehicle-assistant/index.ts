@@ -3,7 +3,10 @@
 // vehicles from the REAL fleet (catalog_vehicles), checking real booking dates (vehicle_busy_dates).
 //
 // Body:    { messages: [{ role: "user" | "assistant", content: string }, ...] }   (plain text history)
-// Returns: { reply: string, vehicles: string[] }   — reply contains [[car:ID]] markers the chat turns into vehicle cards
+//          plus { trip } — trip details remembered from earlier replies
+// Returns: { reply, vehicles, trip, suggestions, info }
+//   reply has [[car:ID]] markers the chat turns into vehicle cards; trip = dates/mode/people so far;
+//   suggestions = quick replies; info[id] = { available, days, total } for the trip dates
 //
 // Deploy:  supabase functions deploy vehicle-assistant --no-verify-jwt
 // Secret:  supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
@@ -70,17 +73,60 @@ Rules:
 - For questions you can't answer from this information (deposit, insurance details, special requests, payment), say our team will confirm on WhatsApp at +94 77 972 6761 or by email hello@ceylonrentacars.lk.
 - Reply in the customer's language, friendly and short (about 40-90 words).
 
-Formatting (the chat shows simple formatting):
-- Start with a one-line direct answer.
+Layout (the chat shows every line as its own row — write tidy rows, never one long paragraph):
+- The chat window is small, so be brief: usually 2-4 rows in total, plus any vehicle lines and the question list. Keep the text (not counting vehicle lines) under about 60 words.
+- Row 1: a one-sentence direct answer (it is shown as the headline).
+- Then the details. Keep sentences that belong together in the SAME row; start a new row (blank line) only where the topic changes — e.g. answer → how it works → advice → vehicles → questions. Do not put every sentence on its own row.
+- Last row: ONE short question. If you need several details, write a lead-in row (e.g. "To find the right car:") followed by a "- " list of short questions, max 3, each ending with "?" (e.g. "- Your pickup and return dates?").
+- Never put a question in the middle of a row with other information.
+
+Formatting:
 - Each vehicle you recommend goes on its own line in this exact form:
-  - [[car:ID]] why it fits this trip, plus the estimated total if you know the days
-  Example: "- [[car:ab12cd34]] Easy to park in Colombo and very light on fuel. About **LKR 35,000** for 7 days."
-  The chat turns [[car:ID]] into a card with the photo, name, seats, gearbox, fuel, daily price and Book button — so do NOT repeat the vehicle's name, seats, gearbox, fuel or daily price in that line. Never list a recommended vehicle in any other way.
+  - [[car:ID]] why it fits this trip, in one or two short sentences
+  Example: "- [[car:ab12cd34]] Easy to park in Colombo and very light on fuel."
+  The chat turns [[car:ID]] into a card with the photo, name, seats, gearbox, fuel, daily price, and — once the dates are known — "Free for your dates" and the trip total, plus a Book button that carries the trip details. So do NOT repeat the name, seats, gearbox, fuel, prices, totals or availability in that line. Never list a recommended vehicle in any other way.
 - If you mention another vehicle in passing, just use its name (no marker) — but prefer giving it its own [[car:ID]] line if you suggest it.
 - Use **bold** only for key numbers (totals, dates).
-- Put a blank line between paragraphs. End with at most one short question.
 - No headings, tables, links or emojis, and never mention "cards" or "below".
-- Stay on topic: vehicle rental and travel in Sri Lanka. Politely decline anything else.`;
+- Stay on topic: vehicle rental and travel in Sri Lanka. Politely decline anything else.
+
+Hidden notes (the chat reads and removes these — put them on the LAST lines, after everything else):
+- Trip details: whenever you know any of them, add one line with ALL details known so far in the conversation:
+  [[trip:from=YYYY-MM-DD;to=YYYY-MM-DD;mode=Self drive;people=4]]
+  mode is exactly one of: Self drive, With driver, Airport pickup. Leave out anything not known yet. Resolve relative dates ("next Friday", "12-16 Nov") using today's date; if the customer gives a number of days, set to = from + days.
+- Quick replies: add 2-3 lines like [[reply:12–16 Nov]] — short answers (max 4 words) the customer is likely to tap next, matching your question (e.g. dates, "With driver", "Self drive", "Show cheaper cars", "7 seats please"). Write them as the customer would say them.`;
+
+const TRIP_MODES = ["Self drive", "With driver", "Airport pickup"];
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Reads and removes the hidden [[trip:…]] and [[reply:…]] notes */
+function hiddenNotes(reply: string) {
+  const trip: Record<string, string | number> = {};
+  const suggestions: string[] = [];
+  const text = reply
+    .replace(/\[\[trip:([^\]]*)\]\]/g, (_m, body: string) => {
+      for (const pair of body.split(";")) {
+        const [k, ...rest] = pair.split("=");
+        const key = k?.trim(), val = rest.join("=").trim();
+        if ((key === "from" || key === "to") && ISO_DAY.test(val)) trip[key] = val;
+        else if (key === "mode" && TRIP_MODES.includes(val)) trip.mode = val;
+        else if (key === "people" && /^\d{1,2}$/.test(val)) trip.people = Number(val);
+      }
+      return "";
+    })
+    .replace(/\[\[reply:([^\]]{1,40})\]\]/g, (_m, s: string) => {
+      const t = s.trim();
+      if (t && suggestions.length < 3 && !suggestions.includes(t)) suggestions.push(t);
+      return "";
+    })
+    .replace(/\n{3,}/g, "\n\n").trim();
+  if (trip.from && trip.to && String(trip.to) < String(trip.from)) delete trip.to;
+  return { text, trip, suggestions };
+}
+
+/** Rental days like the booking page: return date minus pickup date, at least 1 */
+const rentalDays = (from: string, to: string) =>
+  Math.max(1, Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000));
 
 const tools: Anthropic.Beta.BetaTool[] = [
   {
@@ -109,6 +155,41 @@ function cards(reply: string, known: Set<string>) {
     return `[[car:${id}]] `;
   });
   return { reply: text, vehicles: ids };
+}
+
+/** Trip details the browser remembered from earlier replies (untrusted → validated) */
+function cleanTrip(t: any) {
+  const out: Record<string, string | number> = {};
+  if (ISO_DAY.test(t?.from ?? "")) out.from = t.from;
+  if (ISO_DAY.test(t?.to ?? "")) out.to = t.to;
+  if (TRIP_MODES.includes(t?.mode)) out.mode = t.mode;
+  if (Number.isInteger(t?.people) && t.people > 0 && t.people < 100) out.people = t.people;
+  return out;
+}
+
+/**
+ * Final answer for the browser: text with [[car:ID]] markers, the trip so far, quick replies,
+ * and for each shown vehicle its availability + total for the trip dates (when known).
+ */
+async function finish(raw: string, known: Set<string>, fleetList: Vehicle[], prevTrip: Record<string, string | number>) {
+  const notes = hiddenNotes(raw);
+  const { reply, vehicles } = cards(notes.text || "Could you tell me a little more about your trip?", known);
+  const trip = { ...prevTrip, ...notes.trip };
+  if (trip.from && trip.to && String(trip.to) < String(trip.from)) delete trip.to;
+
+  const info: Record<string, { available: boolean | null; days?: number; total?: number }> = {};
+  if (vehicles.length && trip.from && trip.to) {
+    const from = String(trip.from), to = String(trip.to);
+    const days = rentalDays(from, to);
+    const { data, error } = await db.from("vehicle_busy_dates")
+      .select("vehicle_id").in("vehicle_id", vehicles).lte("start_date", to).gte("end_date", from);
+    const busy = new Set((data ?? []).map((b) => String(b.vehicle_id)));
+    for (const id of vehicles) {
+      const price = Number(fleetList.find((v) => String(v.id) === id)?.price) || 0;
+      info[id] = { available: error ? null : !busy.has(id), days, total: price ? price * days : undefined };
+    }
+  }
+  return { reply, vehicles, trip, suggestions: notes.suggestions, info };
 }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -160,13 +241,15 @@ serve(async (req) => {
   let list: Vehicle[];
   try { list = await fleet(); } catch { return json({ error: "Couldn't load the fleet right now." }, 503); }
   const known = new Set(list.map((v) => String(v.id)));
+  const prevTrip = cleanTrip(body?.trip);
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Colombo" });
   const system: Anthropic.Beta.BetaTextBlockParam[] = [
     { type: "text", text: INSTRUCTIONS },
     // Instructions + fleet are the stable prefix → cached; the date comes after the breakpoint
     { type: "text", text: `Our fleet (one vehicle per line):\n${fleetText(list)}`, cache_control: { type: "ephemeral" } },
-    { type: "text", text: `Today's date in Sri Lanka: ${today}.` },
+    { type: "text", text: `Today's date in Sri Lanka: ${today}.` +
+      (Object.keys(prevTrip).length ? `\nTrip details known so far: ${JSON.stringify(prevTrip)}` : "") },
   ];
 
   const messages = [...history];
@@ -198,7 +281,7 @@ serve(async (req) => {
       if (response.stop_reason !== "tool_use" || !calls.length || round === MAX_TOOL_ROUNDS) {
         // A full final answer stands alone; only a very short one gets the earlier rounds' text too
         const reply = text.split(/\s+/).length >= 25 ? text : said.join("\n\n");
-        return json(cards(reply || "Could you tell me a little more about your trip?", known));
+        return json(await finish(reply, known, list, prevTrip));
       }
 
       messages.push({ role: "assistant", content: response.content });
@@ -214,7 +297,7 @@ serve(async (req) => {
       }
       messages.push({ role: "user", content: results });
     }
-    return json(cards(said.join("\n\n") || "Could you tell me a little more about your trip?", known));
+    return json(await finish(said.join("\n\n"), known, list, prevTrip));
   } catch (e) {
     console.error("[vehicle-assistant]", e);
     if (e instanceof Anthropic.RateLimitError) return json({ error: "The assistant is busy — please try again in a moment." }, 429);

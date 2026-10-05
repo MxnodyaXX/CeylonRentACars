@@ -31,37 +31,40 @@ const save = (m) => { try { sessionStorage.setItem(STORE, JSON.stringify(m.slice
 
 const WORD_MS = 22;   // reveal speed: one word every 22 ms
 
-/** Splits the reply into paragraphs and "- " bullet lists; **bold** inline. No HTML is injected. */
+/**
+ * Splits the reply into rows: every line is its own paragraph (never merged into one block),
+ * consecutive "- " / "1." lines become one list. **bold** inline. No HTML is injected.
+ */
 function parseBlocks(text) {
   const blocks = [];
-  text.replace(/\r/g, '').split(/\n{2,}/).forEach((chunk) => {
-    let para = [];
-    const flushPara = () => { if (para.length) { blocks.push({ type: 'p', text: para.join(' ') }); para = []; } };
-    chunk.split('\n').forEach((line) => {
-      const t = line.trim();
-      if (!t) return;
-      const item = t.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
-      if (item) {
-        flushPara();
-        const last = blocks[blocks.length - 1];
-        if (last?.type === 'ul' && last.open) last.items.push(item[1]);
-        else blocks.push({ type: 'ul', items: [item[1]], open: true });
-      } else {
-        if (blocks[blocks.length - 1]?.type === 'ul') blocks[blocks.length - 1].open = false;
-        para.push(t);
-      }
-    });
-    flushPara();
-    if (blocks[blocks.length - 1]?.type === 'ul') blocks[blocks.length - 1].open = false;
+  text.replace(/\r/g, '').split('\n').forEach((line) => {
+    const t = line.trim();
+    if (!t) { const last = blocks[blocks.length - 1]; if (last) last.open = false; return; }
+    const item = t.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    const last = blocks[blocks.length - 1];
+    if (item) {
+      if (last?.type === 'ul' && last.open) last.items.push(item[1]);
+      else blocks.push({ type: 'ul', items: [item[1]], open: true });
+    } else {
+      if (last) last.open = false;
+      blocks.push({ type: 'p', text: t, open: false });
+    }
   });
   return blocks;
 }
+
+/** Row style: the first line is the headline, a closing question gets its own box */
+const rowClass = (b, i, all) => {
+  if (i === 0 && all.length > 1) return 'ai-lead';
+  if (i === all.length - 1 && /\?\s*$/.test(b.text) && all.length > 1) return 'ai-ask';
+  return undefined;
+};
 
 /**
  * Formatted reply; when `animate`, each word fades in one after another (counter shared across blocks).
  * A "- [[car:ID]] reason" line becomes that vehicle's card with the reason inside it.
  */
-function Rich({ text, animate, byId }) {
+function Rich({ text, animate, byId, info, trip }) {
   const counter = { n: 0 };
   const words = (s) => s.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).flatMap((part, pi) => {
     const bold = /^\*\*[^*]+\*\*$/.test(part);
@@ -83,15 +86,18 @@ function Rich({ text, animate, byId }) {
     const delay = animate ? { animationDelay: `${counter.n * WORD_MS}ms` } : undefined;
     return (
       <li key={j} className="ai-rich__car">
-        <VehicleCard v={v} className={animate ? 'ai-card-in' : ''} style={delay}>{car[2] ? words(car[2]) : null}</VehicleCard>
+        <VehicleCard v={v} info={info?.[v.id]} trip={trip} className={animate ? 'ai-card-in' : ''} style={delay}>{car[2] ? words(car[2]) : null}</VehicleCard>
       </li>
     );
   };
+  const blocks = parseBlocks(text);
+  // A list that only asks questions ("- Your dates?") is shown as a question box too
+  const askList = (b) => b.type === 'ul' && b.items.every((it) => /\?\s*$/.test(it));
   return (
     <div className="ai-rich">
-      {parseBlocks(text).map((b, i) => (b.type === 'ul'
-        ? <ul key={i}>{b.items.map(item)}</ul>
-        : <p key={i}>{words(b.text.replace(/\[\[car:[^\]]+\]\]\s*/g, ''))}</p>))}
+      {blocks.map((b, i) => (b.type === 'ul'
+        ? <ul key={i} className={askList(b) ? 'ai-asklist' : undefined}>{b.items.map(item)}</ul>
+        : <p key={i} className={rowClass(b, i, blocks)}>{words(b.text.replace(/\[\[car:[^\]]+\]\]\s*/g, ''))}</p>))}
     </div>
   );
 }
@@ -111,10 +117,26 @@ function Thinking() {
   );
 }
 
-/** One recommended vehicle: photo + specs + the assistant's reason + Details / Book — shown once, inline */
-function VehicleCard({ v, children, className = '', style }) {
+const shortDay = (iso) => new Date(`${iso}T00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+/** /book link carrying everything the chat learned: vehicle, dates, rental mode */
+function bookHref(id, trip = {}) {
+  const q = new URLSearchParams({ v: id });
+  if (trip.from) q.set('from', trip.from);
+  if (trip.to) q.set('to', trip.to);
+  if (trip.mode) q.set('mode', trip.mode);
+  return `/book?${q}`;
+}
+
+/**
+ * One recommended vehicle, shown once inline: photo + specs + price, availability and trip total
+ * for the customer's dates, the assistant's reason, and Details / Book (Book pre-fills the form).
+ */
+function VehicleCard({ v, info, trip, children, className = '', style }) {
+  const dates = trip?.from && trip?.to ? `${shortDay(trip.from)} – ${shortDay(trip.to)}` : '';
+  const booked = info?.available === false;
   return (
-    <div className={`ai-car ${className}`} style={style}>
+    <div className={`ai-car ${booked ? 'is-booked' : ''} ${className}`} style={style}>
       <button type="button" className="ai-car__img" onClick={() => openVehicle(v)} aria-label={`View ${v.name}`}>
         {v.img ? <img src={v.img} alt="" loading="lazy" /> : <Icon name="car" />}
       </button>
@@ -123,10 +145,22 @@ function VehicleCard({ v, children, className = '', style }) {
         <span className="ai-car__meta"><Icon name="seat" /> {v.seats} · {v.transKind === 'automatic' ? 'Auto' : 'Manual'} · {v.fuel}</span>
         <span className="ai-car__price"><Price lkr={v.price} /> <small>/ day</small></span>
       </div>
+      {info && dates && (
+        <div className="ai-car__trip">
+          {info.available === true && <span className="ai-car__badge is-free"><Icon name="check" /> Free {dates}</span>}
+          {booked && <span className="ai-car__badge is-busy">Booked {dates}</span>}
+          {info.available == null && <span className="ai-car__badge">{dates}</span>}
+          {info.total > 0 && !booked && (
+            <span className="ai-car__total">Total <Price lkr={info.total} /> <small>· {info.days} {info.days === 1 ? 'day' : 'days'}</small></span>
+          )}
+        </div>
+      )}
       {children && <div className="ai-car__why">{children}</div>}
       <div className="ai-car__actions">
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => openVehicle(v)}>Details</button>
-        <a className="btn btn--red btn--sm" href={`/book?v=${encodeURIComponent(v.id)}`}>Book</a>
+        {booked
+          ? <span className="btn btn--ghost btn--sm is-disabled" aria-disabled="true">Not free</span>
+          : <a className="btn btn--red btn--sm" href={bookHref(v.id, trip)}>{trip?.from ? 'Book these dates' : 'Book'}</a>}
       </div>
     </div>
   );
@@ -165,6 +199,9 @@ export default function AssistantChat() {
   if (!fleetEnabled || path === '/book') return null;
 
   const byId = new Map(vehicles.map((v) => [String(v.id), v]));
+  // Trip details learned so far (dates, mode, people) — from the latest reply that had them
+  const trip = [...messages].reverse().find((m) => m.trip)?.trip ?? {};
+  const lastMsg = messages[messages.length - 1];
 
   const send = async (content) => {
     const msg = content.trim();
@@ -175,11 +212,14 @@ export default function AssistantChat() {
       const res = await fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: KEY, Authorization: `Bearer ${KEY}` },
-        body: JSON.stringify({ messages: next.map(({ role, content: c }) => ({ role, content: c })) }),
+        body: JSON.stringify({ messages: next.map(({ role, content: c }) => ({ role, content: c })), trip }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'The assistant is unavailable right now.');
-      setMessages((m) => [...m, { role: 'assistant', content: data.reply, vehicles: data.vehicles ?? [], fresh: true }]);
+      setMessages((m) => [...m, {
+        role: 'assistant', content: data.reply, vehicles: data.vehicles ?? [], fresh: true,
+        trip: data.trip && Object.keys(data.trip).length ? data.trip : undefined, info: data.info, suggestions: data.suggestions,
+      }]);
     } catch (e) {
       // "Failed to fetch" = offline, or the assistant isn't reachable — don't show browser jargon to customers
       const why = e instanceof TypeError ? "Sorry, I can't connect right now." : e.message;
@@ -215,12 +255,17 @@ export default function AssistantChat() {
             const extra = (m.vehicles ?? []).filter((id) => !m.content.includes(`[[car:${id}]]`)).map((id) => byId.get(String(id))).filter(Boolean);
             return (
               <div key={i} className={`ai-msg ai-msg--${m.role}${m.error ? ' is-error' : ''}${animate ? ' is-fresh' : ''}`}>
-                {m.role === 'assistant' ? <Rich text={m.content} animate={animate} byId={byId} /> : <p>{m.content}</p>}
+                {m.role === 'assistant' ? <Rich text={m.content} animate={animate} byId={byId} info={m.info} trip={m.trip} /> : <p>{m.content}</p>}
                 {extra.length > 0 && (
                   <div className="ai-cars">
                     {extra.map((v, j) => (
-                      <VehicleCard key={v.id} v={v} className={animate ? 'ai-card-in' : ''} style={animate ? { animationDelay: `${after + j * 110}ms` } : undefined} />
+                      <VehicleCard key={v.id} v={v} info={m.info?.[v.id]} trip={m.trip} className={animate ? 'ai-card-in' : ''} style={animate ? { animationDelay: `${after + j * 110}ms` } : undefined} />
                     ))}
+                  </div>
+                )}
+                {m === lastMsg && !busy && m.role === 'assistant' && m.suggestions?.length > 0 && (
+                  <div className={`ai-quick${animate ? ' ai-card-in' : ''}`} style={animate ? { animationDelay: `${after + 250}ms` } : undefined}>
+                    {m.suggestions.map((q) => <button key={q} type="button" onClick={() => send(q)}>{q}</button>)}
                   </div>
                 )}
                 {m.error && <a className="ai-msg__wa" href={wa} target="_blank" rel="noreferrer"><Icon name="chat" /> WhatsApp us</a>}

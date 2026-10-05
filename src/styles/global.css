@@ -1787,3 +1787,48 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .ai-car__why { grid-column: 1 / -1; font-size: 13.5px; line-height: 1.5; color: var(--text); padding: 2px 2px 0; }
 .ai-car__actions { grid-column: 1 / -1; }
 .ai-car__actions .btn { padding: 8px 10px; }
+
+/* Assistant replies: clear rows and hierarchy */
+.ai-rich { padding: 13px 15px; font-size: 14.5px; line-height: 1.6; color: #d9d9de; }
+.ai-rich > * + * { margin-top: 10px !important; }
+.ai-msg .ai-rich p.ai-lead { color: #fff; font-weight: 600; font-size: 15px; line-height: 1.5; }
+.ai-msg .ai-rich p.ai-ask, .ai-rich ul.ai-asklist {
+  padding: 10px 12px; border-radius: 12px; color: #fff;
+  background: rgba(225, 29, 42, .09); border: 1px solid rgba(225, 29, 42, .28);
+}
+.ai-rich ul.ai-asklist { gap: 4px; }
+.ai-rich ul.ai-asklist li { padding: 2px 0 2px 18px; background: none; border: 0; }
+.ai-rich ul.ai-asklist li::before { left: 3px; top: 11px; }
+.ai-msg--assistant { max-width: 92%; }
+
+/* Assistant: compact text for the small chat window */
+.ai-panel { width: min(440px, calc(100vw - 32px)); }
+.ai-rich { padding: 11px 13px; font-size: 14px; line-height: 1.55; }
+.ai-rich > * + * { margin-top: 8px !important; }
+.ai-msg .ai-rich p.ai-lead { font-size: 14.5px; line-height: 1.45; }
+.ai-msg .ai-rich p.ai-ask, .ai-rich ul.ai-asklist { padding: 8px 11px; }
+.ai-rich ul.ai-asklist li { padding: 1px 0 1px 17px; }
+.ai-rich ul.ai-asklist li::before { top: 9px; }
+.ai-car__why { font-size: 13px; }
+
+/* Assistant: trip availability + total on cards, quick replies */
+.ai-car__trip { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
+  padding: 7px 10px; border-radius: 10px; background: rgba(255, 255, 255, .035); border: 1px solid var(--line); }
+.ai-car__badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.ai-car__badge .ic { width: 13px; height: 13px; }
+.ai-car__badge.is-free { color: #34d399; }
+.ai-car__badge.is-busy { color: #f87171; }
+.ai-car__total { font-size: 13px; font-weight: 700; color: #fff; }
+.ai-car__total small { font-weight: 500; color: var(--muted); }
+.ai-car.is-booked { opacity: .7; }
+.ai-car__actions .is-disabled { opacity: .55; pointer-events: none; }
+
+.ai-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-quick button {
+  border: 1px solid rgba(225, 29, 42, .45); background: var(--red-soft); color: #fff; font: inherit; font-size: 13px; font-weight: 600;
+  padding: 7px 12px; border-radius: 999px; cursor: pointer; transition: background .2s, transform .2s var(--ease);
+}
+.ai-quick button:hover { background: var(--red); transform: translateY(-1px); }
+@media (max-width: 600px) {
+  .ai-panel { width: 100vw; height: 100dvh; right: 0; bottom: 0; border-radius: 0; border: 0; }
+}
