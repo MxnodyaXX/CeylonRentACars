@@ -109,7 +109,7 @@ export const upsertMessage = (list: WaMessage[], m: WaMessage) => {
 
 /* ---------------- Sending ---------------- */
 
-async function invokeSend(body: Record<string, unknown>): Promise<WaMessage | undefined> {
+async function invokeSend(body: Record<string, unknown> | FormData): Promise<WaMessage | undefined> {
   const { data, error } = await supabase.functions.invoke('whatsapp-send', { body });
   // Supabase wraps non-2xx answers in an error; read our { error } message from the response
   if (error) {
@@ -128,6 +128,20 @@ export const sendTemplate = (to: string, t: WaTemplate, values: Record<string, s
     to: waPhone(to), staff,
     template: { name: t.name, language: t.language, params: t.params.map((p) => values[p] ?? ''), preview: fillTemplate(t, values) },
   });
+
+/** Photo / video / audio / document with an optional caption (inside the 24-hour window) */
+export async function sendFile(to: string, file: File, caption?: string, staff?: string): Promise<WaMessage | undefined> {
+  if (whatsappDemo) return demoSend(to, caption ?? '', staff, undefined, file);
+  const form = new FormData();
+  form.append('to', waPhone(to));
+  form.append('file', file, file.name);
+  if (caption) form.append('caption', caption);
+  if (staff) form.append('staff', staff);
+  return invokeSend(form);
+}
+
+/** WhatsApp size limits per type (MB) */
+export const fileLimitMb = (f: File) => (/^image\/(jpeg|png)$/.test(f.type) ? 5 : /^(video|audio)\//.test(f.type) ? 16 : 25);
 
 /* ---------------- Approved templates ----------------
    Templates must be created and approved in WhatsApp Manager with EXACTLY these names,

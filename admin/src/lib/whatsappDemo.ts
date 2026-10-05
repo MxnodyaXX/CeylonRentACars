@@ -30,7 +30,8 @@ const LICENCE_SVG = `data:image/svg+xml;utf8,${encodeURIComponent(
   <rect x="26" y="70" width="90" height="112" rx="8" fill="#cbd5e1"/><circle cx="71" cy="110" r="20" fill="#94a3b8"/><rect x="45" y="138" width="52" height="30" rx="14" fill="#94a3b8"/>
   <g font-family="Arial" font-size="13" fill="#334155"><text x="134" y="92">Name: SAMPLE CUSTOMER</text><text x="134" y="116">No: B1234567</text><text x="134" y="140">Valid: 2030-01-01</text><text x="134" y="164">Class: B</text></g></svg>`)}`;
 
-export const demoMediaUrl = (mediaId: string) => (mediaId === 'demo-licence' ? LICENCE_SVG : '#');
+const files = new Map<string, string>();   // demo attachments → object URLs
+export const demoMediaUrl = (mediaId: string) => (mediaId === 'demo-licence' ? LICENCE_SVG : files.get(mediaId) ?? '#');
 
 function seed() {
   if (seeded) return;
@@ -110,11 +111,18 @@ export function demoSubscribe(cb: (m: WaMessage) => void) { listeners.add(cb); r
 const REPLIES = ['Thank you! 👍', 'Perfect, that works for me.', 'Great, see you then!', 'Ok noted 🙏', 'Can I pay by card on pickup?'];
 
 /** "Sends" a message: ticks go sent → delivered → read, then the customer replies */
-export async function demoSend(to: string, body: string, staff?: string, template?: string): Promise<WaMessage> {
+export async function demoSend(to: string, body: string, staff?: string, template?: string, file?: File): Promise<WaMessage> {
   seed();
+  let media: Partial<WaMessage> = {};
+  if (file) {
+    const mediaId = `demo-file-${++seq}`;
+    files.set(mediaId, URL.createObjectURL(file));
+    const image = /^image\/(jpeg|png)$/.test(file.type);
+    media = { kind: image ? 'image' : 'document', mediaId, mediaMime: file.type, mediaName: file.name };
+  }
   const msg: WaMessage = {
-    id: id(), phone: digits(to), direction: 'out', kind: template ? 'template' : 'text', template, body,
-    status: 'sent', staff, createdAt: new Date().toISOString(),
+    id: id(), phone: digits(to), direction: 'out', kind: template ? 'template' : 'text', template, body: body || undefined,
+    status: 'sent', staff, createdAt: new Date().toISOString(), ...media,
   };
   messages.push(msg);
   setTimeout(() => update(msg.id, { status: 'delivered' }), 1200);

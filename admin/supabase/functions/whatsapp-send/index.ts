@@ -4,6 +4,7 @@
 //
 // Body: { to, text, staff? }                                  — free-form (only inside the 24-hour window)
 //       { to, template: { name, language, params[], preview }, staff? }  — approved template (any time)
+//       multipart/form-data: to, file, caption?, staff?              — photo / video / audio / document (24-hour window)
 //
 // Deploy:   supabase functions deploy whatsapp-send --no-verify-jwt
 // Secrets:  supabase secrets set WHATSAPP_TOKEN=... WHATSAPP_PHONE_NUMBER_ID=... [WHATSAPP_API_VERSION=v21.0]
@@ -27,6 +28,13 @@ const digits = (p: string) => {
   return d.startsWith("0") ? `94${d.slice(1)}` : d;
 };
 
+/** WhatsApp message type for a file (other image formats such as webp/heic go as documents) */
+const MEDIA_KIND = (mime: string) =>
+  /^image\/(jpeg|png)$/.test(mime) ? "image"
+  : /^video\/(mp4|3gpp)$/.test(mime) ? "video"
+  : /^audio\/(aac|mp4|mpeg|amr|ogg)/.test(mime) ? "audio"
+  : "document";
+
 /** Friendlier text for the errors staff will actually hit */
 function explain(code: number | undefined, fallback: string) {
   if (code === 131047) return "More than 24 hours since the customer's last message — send an approved template instead.";
@@ -46,8 +54,19 @@ serve(async (req) => {
   const version = Deno.env.get("WHATSAPP_API_VERSION") ?? "v21.0";
   if (!token || !phoneId) return json({ error: "WhatsApp is not configured (set WHATSAPP_TOKEN and WHATSAPP_PHONE_NUMBER_ID)." }, 500);
 
+  // Attachments arrive as multipart/form-data, everything else as JSON
   let body: Record<string, any>;
-  try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  let file: File | null = null;
+  if ((req.headers.get("content-type") ?? "").includes("multipart/form-data")) {
+    try {
+      const form = await req.formData();
+      const f = form.get("file");
+      file = f instanceof File ? f : null;
+      body = { to: form.get("to"), staff: form.get("staff"), caption: form.get("caption") };
+    } catch { return json({ error: "Invalid upload" }, 400); }
+  } else {
+    try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  }
 
   const to = digits(body.to);
   const staff = body.staff ? String(body.staff).slice(0, 80) : null;
@@ -66,6 +85,29 @@ serve(async (req) => {
       },
     };
     row = { kind: "template", template: String(t.name), body: t.preview ? String(t.preview).slice(0, 4000) : null };
+  } else if (file) {
+    // 1. upload the file to Meta, 2. send it by media id
+    const mime = file.type || "application/octet-stream";
+    const kind = MEDIA_KIND(mime);
+    const max = kind === "image" ? 5 : kind === "document" ? 25 : 16;
+    if (file.size > max * 1024 * 1024) return json({ error: `File too large — WhatsApp allows up to ${max} MB for this type.` }, 400);
+    const up = new FormData();
+    up.append("messaging_product", "whatsapp");
+    up.append("type", mime);
+    up.append("file", file, file.name || "file");
+    const upRes = await fetch(`https://graph.facebook.com/${version}/${phoneId}/media`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}` }, body: up,
+    });
+    const upOut = await upRes.json().catch(() => ({}));
+    if (!upRes.ok || !upOut?.id) {
+      return json({ error: explain(upOut?.error?.code, upOut?.error?.message ?? "Upload to WhatsApp failed") }, 400);
+    }
+    const caption = String(body.caption ?? "").trim().slice(0, 1024);
+    const media: Record<string, unknown> = { id: upOut.id };
+    if (caption && kind !== "audio") media.caption = caption;
+    if (kind === "document") media.filename = (file.name || "document").slice(0, 240);
+    payload = { messaging_product: "whatsapp", to, type: kind, [kind]: media };
+    row = { kind, body: caption || null, media_id: upOut.id, media_mime: mime, media_name: file.name || null };
   } else {
     const text = String(body.text ?? "").trim();
     if (!text) return json({ error: "Message is empty" }, 400);

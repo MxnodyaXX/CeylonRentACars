@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Check, CheckCheck, Clock, AlertTriangle, FileText, MapPin, Lock, MessageCircle, Image as ImageIcon } from 'lucide-react';
+import { Send, Check, CheckCheck, Clock, AlertTriangle, FileText, MapPin, Lock, MessageCircle, Image as ImageIcon, Paperclip, X, Loader2 } from 'lucide-react';
 import { toast } from '../../store/useToast';
 import { useAuthStore } from '../../store/useAuthStore';
 import {
-  WA_TEMPLATES, WaMessage, fillTemplate, loadMessages, markRead, mediaUrl, sendTemplate, sendText,
+  WA_TEMPLATES, WaMessage, fileLimitMb, fillTemplate, loadMessages, markRead, mediaUrl, sendFile, sendTemplate, sendText,
   subscribeMessages, upsertMessage, waPhone, windowInfo,
 } from '../../lib/whatsappInbox';
+
+const ACCEPT = 'image/jpeg,image/png,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,video/mp4,audio/*';
+const size = (b: number) => (b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
 
 const time = (d: string) => new Date(d).toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
 const day = (d: string) => new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
@@ -85,6 +88,17 @@ export default function WhatsAppChat({
   const [sending, setSending] = useState(false);
   const [tplName, setTplName] = useState(WA_TEMPLATES[0].name);
   const listRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const preview = useMemo(() => (file && /^image\//.test(file.type) ? URL.createObjectURL(file) : ''), [file]);
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
+  const pick = (f?: File | null) => {
+    if (!f) return;
+    if (f.size > fileLimitMb(f) * 1024 * 1024) { toast.error('File too large', `WhatsApp allows up to ${fileLimitMb(f)} MB for this type.`); return; }
+    setFile(f);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -112,12 +126,12 @@ export default function WhatsAppChat({
 
   const send = async () => {
     const body = text.trim();
-    if (!body) return;
+    if (!body && !file) return;
     setSending(true);
     try {
-      const m = await sendText(to, body, staff);
+      const m = file ? await sendFile(to, file, body, staff) : await sendText(to, body, staff);
       if (m) setMessages((l) => upsertMessage(l, m));
-      setText('');
+      setText(''); setFile(null);
     } catch (e) {
       toast.error('WhatsApp message not sent', (e as Error).message);
     } finally { setSending(false); }
@@ -138,7 +152,15 @@ export default function WhatsAppChat({
   let lastDay = '';
 
   return (
-    <div className={`flex flex-col ${height} rounded-xl overflow-hidden border border-navy-100`}>
+    <div className={`relative flex flex-col ${height} rounded-xl overflow-hidden border border-navy-100`}
+         onDragOver={(e) => { if (win.open && e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }}
+         onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
+         onDrop={(e) => { if (!win.open) return; e.preventDefault(); setDragging(false); pick(e.dataTransfer.files?.[0]); }}>
+      {dragging && (
+        <div className="absolute inset-0 z-10 bg-emerald-600/15 border-2 border-dashed border-emerald-600 rounded-xl flex items-center justify-center pointer-events-none">
+          <p className="bg-white rounded-xl px-4 py-2 text-sm font-semibold text-emerald-700 shadow">Drop to attach</p>
+        </div>
+      )}
       {/* Thread */}
       <div ref={listRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-2 bg-[#efeae2]"
            style={{ backgroundImage: 'radial-gradient(rgba(0,0,0,.035) 1px, transparent 1px)', backgroundSize: '14px 14px' }}>
@@ -169,16 +191,35 @@ export default function WhatsAppChat({
             <p className="text-[11px] text-emerald-700 flex items-center gap-1">
               <Clock size={11} /> Chat window open — free replies until {win.closesAt!.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
             </p>
+            {file && (
+              <div className="flex items-center gap-3 rounded-xl bg-navy-50 p-2">
+                {preview
+                  ? <img src={preview} alt="" className="w-14 h-14 rounded-lg object-cover flex-shrink-0" />
+                  : <span className="w-14 h-14 rounded-lg bg-white flex items-center justify-center flex-shrink-0"><FileText size={22} className="text-brand-500" /></span>}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-navy-800 truncate">{file.name}</p>
+                  <p className="text-[11px] text-navy-400">{size(file.size)} · {preview ? 'Photo' : 'Document'} — type a caption below (optional)</p>
+                </div>
+                <button type="button" onClick={() => setFile(null)} className="p-1.5 rounded-lg hover:bg-white" aria-label="Remove attachment"><X size={16} /></button>
+              </div>
+            )}
             <div className="flex items-end gap-2">
+              <input ref={fileRef} type="file" accept={ACCEPT} className="hidden"
+                     onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ''; }} />
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={sending} aria-label="Attach photo or document" title="Attach photo or document"
+                      className="w-11 h-11 flex-shrink-0 rounded-full text-navy-500 flex items-center justify-center hover:bg-navy-50 disabled:opacity-40">
+                <Paperclip size={19} />
+              </button>
               <textarea
                 className="input resize-none !py-2 max-h-40" rows={Math.min(6, Math.max(1, text.split('\n').length))}
-                placeholder="Type a message…  (Enter to send, Shift+Enter for a new line)"
+                placeholder={file ? 'Add a caption…' : 'Type a message…  (Enter to send, Shift+Enter for a new line)'}
                 value={text} onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+                onPaste={(e) => { const f = Array.from(e.clipboardData.files)[0]; if (f) { e.preventDefault(); pick(f); } }}
               />
-              <button type="button" onClick={send} disabled={sending || !text.trim()} aria-label="Send"
+              <button type="button" onClick={send} disabled={sending || (!text.trim() && !file)} aria-label="Send"
                       className="w-11 h-11 flex-shrink-0 rounded-full bg-emerald-600 text-white flex items-center justify-center hover:bg-emerald-700 disabled:opacity-40">
-                <Send size={17} />
+                {sending ? <Loader2 size={17} className="animate-spin" /> : <Send size={17} />}
               </button>
             </div>
           </>
