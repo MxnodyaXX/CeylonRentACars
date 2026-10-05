@@ -236,7 +236,8 @@ export function useApprovedTemplates() {
   useEffect(() => {
     let alive = true;
     loadTemplates()
-      .then((l) => { const ok = l.filter((t) => t.status === 'APPROVED'); if (alive && ok.length) setList(ok); })
+      // hello_world is Meta's sample — approved on every account but only sendable from the test number
+      .then((l) => { const ok = l.filter((t) => t.status === 'APPROVED' && t.name !== 'hello_world'); if (alive && ok.length) setList(ok); })
       .catch(() => {});
     return () => { alive = false; };
   }, []);

@@ -15,6 +15,7 @@ import AllVehicles from './components/AllVehicles';
 import FeedbackPage from './components/FeedbackPage';
 import BookingPage from './components/BookingPage';
 import AlternativesPage from './components/AlternativesPage';
+import AssistantChat from './components/AssistantChat';
 import { useLinkInterception, useRoute } from './lib/router';
 
 function Toast() {
@@ -68,6 +69,7 @@ export default function App() {
       )}
       <Footer />
       <VehicleModal />
+      <AssistantChat />
       <Toast />
     </>
   );

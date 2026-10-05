@@ -25,9 +25,8 @@ serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const token = Deno.env.get("WHATSAPP_TOKEN");
-  const waba = Deno.env.get("WHATSAPP_WABA_ID");
   const version = Deno.env.get("WHATSAPP_API_VERSION") ?? "v21.0";
-  if (!token || !waba) return json({ error: "Set the WHATSAPP_TOKEN and WHATSAPP_WABA_ID secrets (see WHATSAPP.md)." }, 500);
+  if (!token) return json({ error: "Set the WHATSAPP_TOKEN secret (see WHATSAPP.md)." }, 500);
 
   let body: Record<string, any>;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
@@ -38,6 +37,31 @@ serve(async (req) => {
     });
     return { ok: r.ok, data: await r.json().catch(() => ({})) };
   };
+
+  // Use WHATSAPP_WABA_ID if it really is a WhatsApp Business Account; otherwise find the account
+  // the token can manage (preferring the one that owns WHATSAPP_PHONE_NUMBER_ID).
+  const isWaba = async (id: string) => !!id && (await g(`${id}/phone_numbers?fields=id&limit=50`)).ok;
+  let waba = (Deno.env.get("WHATSAPP_WABA_ID") ?? "").trim();
+  if (!(await isWaba(waba))) {
+    const dbg = await g(`debug_token?input_token=${encodeURIComponent(token)}`);
+    const ids: string[] = [...new Set<string>((dbg.data?.data?.granular_scopes ?? [])
+      .filter((s: any) => /^whatsapp_business_(management|messaging)$/.test(s.scope))
+      .flatMap((s: any) => s.target_ids ?? []))];
+    const phoneId = Deno.env.get("WHATSAPP_PHONE_NUMBER_ID") ?? "";
+    let found = "";
+    for (const id of ids) {
+      const r = await g(`${id}/phone_numbers?fields=id&limit=50`);
+      if (!r.ok) continue;
+      if (!found) found = id;
+      if ((r.data?.data ?? []).some((p: any) => p.id === phoneId)) { found = id; break; }
+    }
+    if (!found) {
+      return json({ error: waba
+        ? `WHATSAPP_WABA_ID (${waba}) is not a WhatsApp Business Account ID, and the token can't see any WhatsApp account. Assign the WhatsApp account to the system user (WHATSAPP.md step 6.5).`
+        : "Couldn't find the WhatsApp Business Account — set the WHATSAPP_WABA_ID secret." }, 400);
+    }
+    waba = found;
+  }
   const fail = (r: { data: any }, fallback: string) =>
     json({ error: r.data?.error?.error_user_msg || r.data?.error?.message || fallback }, 400);
 
