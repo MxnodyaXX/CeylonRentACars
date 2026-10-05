@@ -3,7 +3,7 @@ import { Send, Check, CheckCheck, Clock, AlertTriangle, FileText, MapPin, Lock, 
 import { toast } from '../../store/useToast';
 import { useAuthStore } from '../../store/useAuthStore';
 import {
-  WA_TEMPLATES, WaMessage, fileLimitMb, fillTemplate, loadMessages, markRead, mediaUrl, sendFile, sendTemplate, sendText,
+  AUTO_VARS, WaMessage, fileLimitMb, useApprovedTemplates, fillTemplate, loadMessages, markRead, mediaUrl, sendFile, sendTemplate, sendText,
   subscribeMessages, upsertMessage, waPhone, windowInfo,
 } from '../../lib/whatsappInbox';
 
@@ -86,7 +86,9 @@ export default function WhatsAppChat({
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [tplName, setTplName] = useState(WA_TEMPLATES[0].name);
+  const templates = useApprovedTemplates();
+  const [tplName, setTplName] = useState('');
+  const [vars, setVars] = useState<Record<string, string>>({});   // values typed by staff
   const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -122,7 +124,9 @@ export default function WhatsAppChat({
   useEffect(() => { if (draft) { setText(draft); onDraftUsed?.(); } }, [draft]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const win = useMemo(() => windowInfo(messages), [messages]);
-  const tpl = WA_TEMPLATES.find((t) => t.name === tplName) ?? WA_TEMPLATES[0];
+  const tpl = templates.find((t) => t.name === tplName) ?? templates[0];
+  const values: Record<string, string> = { ...context, ...vars };
+  const missing = tpl ? tpl.params.filter((p) => !values[p]?.trim()) : [];
 
   const send = async () => {
     const body = text.trim();
@@ -140,7 +144,7 @@ export default function WhatsAppChat({
   const sendTpl = async () => {
     setSending(true);
     try {
-      const m = await sendTemplate(to, tpl, context, staff);
+      const m = await sendTemplate(to, tpl, values, staff);
       if (m) setMessages((l) => upsertMessage(l, m));
       toast.success('Template sent', 'You can chat freely once the customer replies.');
     } catch (e) {
@@ -229,15 +233,26 @@ export default function WhatsAppChat({
               <Lock size={11} /> {win.lastIn ? 'More than 24 hours since the customer last wrote' : 'The customer hasn’t messaged yet'} — WhatsApp only allows an approved template. Free chat opens when they reply.
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <select className="input !py-2 flex-1 min-w-[200px]" value={tplName} onChange={(e) => setTplName(e.target.value)}>
-                {WA_TEMPLATES.map((t) => <option key={t.name} value={t.name}>{t.label}</option>)}
+              <select className="input !py-2 flex-1 min-w-[200px]" value={tpl?.name ?? ''} onChange={(e) => { setTplName(e.target.value); setVars({}); }}>
+                {templates.map((t) => <option key={t.name} value={t.name}>{t.label}</option>)}
               </select>
-              <button type="button" onClick={sendTpl} disabled={sending}
+              <button type="button" onClick={sendTpl} disabled={sending || !tpl || missing.length > 0}
+                      title={missing.length ? `Fill in: ${missing.join(', ')}` : undefined}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
                 <Send size={15} /> {sending ? 'Sending…' : 'Send template'}
               </button>
             </div>
-            <p className="text-xs text-navy-500 bg-navy-50 rounded-lg px-3 py-2 whitespace-pre-wrap">{fillTemplate(tpl, context)}</p>
+            {tpl && tpl.params.some((p) => !context[p]) && (
+              <div className="grid sm:grid-cols-2 gap-2">
+                {tpl.params.filter((p) => !context[p]).map((p) => (
+                  <label key={p} className="text-[11px] text-navy-500">
+                    {AUTO_VARS[p] ?? p.replace(/_/g, ' ')}
+                    <input className="input !py-1.5 mt-0.5" value={vars[p] ?? ''} onChange={(e) => setVars((v) => ({ ...v, [p]: e.target.value }))} />
+                  </label>
+                ))}
+              </div>
+            )}
+            {tpl && <p className="text-xs text-navy-500 bg-navy-50 rounded-lg px-3 py-2 whitespace-pre-wrap">{fillTemplate(tpl, values)}</p>}
             {text && <p className="text-[11px] text-navy-400 flex items-center gap-1"><ImageIcon size={11} /> Your draft is kept — send it once the customer replies.</p>}
           </>
         )}

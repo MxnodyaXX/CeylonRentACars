@@ -3,7 +3,7 @@
    Messages page and inquiry chat can be tried before Meta is connected.
    Nothing is sent to anyone. Switch on/off from the Messages page.
    ===================================================================== */
-import type { WaChat, WaMessage } from './whatsappInbox';
+import type { WaChat, WaMessage, WaTemplate } from './whatsappInbox';
 import { useStore } from '../store/useStore';
 
 const KEY = 'crc-wa-demo';
@@ -138,3 +138,37 @@ export async function demoSend(to: string, body: string, staff?: string, templat
   }, 5000);
   return msg;
 }
+
+/* ---------------- Templates (demo) ---------------- */
+type DemoTemplate = WaTemplate;
+let templates: DemoTemplate[] = [
+  {
+    name: 'booking_request_update', language: 'en', label: 'Booking request — start the chat', status: 'APPROVED', category: 'UTILITY',
+    params: ['name', 'vehicle', 'dates', 'reference'],
+    text: 'Dear {{1}}, thank you for your booking request {{4}} for the {{2}} ({{3}}) with Ceylon Rent A Cars. Please reply to this message so we can confirm the details with you.',
+  },
+  {
+    name: 'inquiry_followup', language: 'en', label: 'Follow-up reminder', status: 'APPROVED', category: 'UTILITY',
+    params: ['name', 'reference'],
+    text: 'Dear {{1}}, we are following up on your request {{2}} with Ceylon Rent A Cars. Reply to this message and we will be happy to help.',
+  },
+  {
+    name: 'summer_discount', language: 'en', label: 'Summer discount', status: 'REJECTED', category: 'MARKETING', named: true,
+    params: ['name'], rejectedReason: 'INVALID_FORMAT',
+    text: '{{name}} get 20% off!!!',
+  },
+];
+
+export async function demoTemplates() { return templates.map((t) => ({ ...t })); }
+
+export async function demoCreateTemplate(t: { name: string; category: 'UTILITY' | 'MARKETING'; body: string }) {
+  if (templates.some((x) => x.name === t.name)) throw new Error('A template with this name already exists.');
+  const params = [...new Set([...t.body.matchAll(/\{\{([a-z0-9_]+)\}\}/g)].map((m) => m[1]))];
+  const label = t.name.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+  templates.push({ name: t.name, language: 'en', label, text: t.body, params, named: true, status: 'PENDING', category: t.category });
+  // Meta usually reviews within minutes — the demo approves after 8 seconds
+  setTimeout(() => { templates = templates.map((x) => (x.name === t.name ? { ...x, status: 'APPROVED' } : x)); }, 8000);
+  return { status: 'PENDING', category: t.category };
+}
+
+export async function demoDeleteTemplate(name: string) { templates = templates.filter((t) => t.name !== name); return { ok: true }; }

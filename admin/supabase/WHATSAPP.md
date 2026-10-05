@@ -151,20 +151,23 @@ Send yourself a WhatsApp from another phone to test that it appears live.
 
 ## 8. Message templates (to start a chat or reply after 24 h)
 
-Free text is allowed only within **24 hours of the customer's last message**. Outside that, send an approved
-template. Create these in **WhatsApp Manager → Message templates**: category **Utility**, language **English**.
-Names, language and `{{n}}` order must match exactly, because the admin fills them in automatically.
+Create and manage templates in the admin: **Messages → Message templates** (admins only).
 
-**`booking_request_update`** (`en`)
+One-time setup:
+
+```powershell
+npx supabase functions deploy whatsapp-templates --no-verify-jwt
+npx supabase secrets set WHATSAPP_WABA_ID=<WhatsApp Business Account ID from the WhatsApp setup page>
+npx supabase functions deploy whatsapp-send --no-verify-jwt
 ```
-Dear {{1}}, thank you for your booking request {{4}} for the {{2}} ({{3}}) with Ceylon Rent A Cars. Please reply to this message so we can confirm the details with you.
-```
-**`inquiry_followup`** (`en`)
-```
-Dear {{1}}, we are following up on your request {{2}} with Ceylon Rent A Cars. Reply to this message and we will be happy to help.
-```
-If Meta files one under *Marketing*, reword it to be about the specific booking and resubmit.
-Add a payment method in WhatsApp Manager → Billing before sending templates to customers.
+
+Then click a ready-made template (or write your own), and click **Submit to Meta for approval**.
+The status changes from *In review* to *Approved*, usually within minutes. Approved templates appear
+in every chat automatically. Green variables (name, vehicle, dates, reference) fill in from the inquiry;
+other variables (e.g. pickup time) are typed by staff when sending.
+
+Choose **Utility** for messages about a specific booking (cheaper, approved faster). Add a payment
+method in WhatsApp Manager → Billing before sending templates to customers.
 
 ---
 

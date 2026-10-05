@@ -5,7 +5,10 @@
    ===================================================================== */
 import { useEffect, useState } from 'react';
 import { supabase, supabaseEnabled } from './supabase';
-import { demoOn, demoLoadChats, demoLoadMessages, demoMarkRead, demoMediaUrl, demoSend, demoSubscribe } from './whatsappDemo';
+import {
+  demoOn, demoLoadChats, demoLoadMessages, demoMarkRead, demoMediaUrl, demoSend, demoSubscribe,
+  demoTemplates, demoCreateTemplate, demoDeleteTemplate,
+} from './whatsappDemo';
 
 /** The inbox is switched on once the Meta setup is done (VITE_WHATSAPP_ENABLED=true in .env.local) */
 export const whatsappLive = supabaseEnabled && import.meta.env.VITE_WHATSAPP_ENABLED === 'true';
@@ -126,7 +129,10 @@ export const sendText = (to: string, text: string, staff?: string) =>
 export const sendTemplate = (to: string, t: WaTemplate, values: Record<string, string>, staff?: string) =>
   whatsappDemo ? demoSend(to, fillTemplate(t, values), staff, t.name) : invokeSend({
     to: waPhone(to), staff,
-    template: { name: t.name, language: t.language, params: t.params.map((p) => values[p] ?? ''), preview: fillTemplate(t, values) },
+    template: {
+      name: t.name, language: t.language, named: !!t.named, preview: fillTemplate(t, values),
+      params: t.named ? t.params.map((p) => ({ name: p, value: values[p] ?? '' })) : t.params.map((p) => values[p] ?? ''),
+    },
   });
 
 /** Photo / video / audio / document with an optional caption (inside the 24-hour window) */
@@ -143,19 +149,29 @@ export async function sendFile(to: string, file: File, caption?: string, staff?:
 /** WhatsApp size limits per type (MB) */
 export const fileLimitMb = (f: File) => (/^image\/(jpeg|png)$/.test(f.type) ? 5 : /^(video|audio)\//.test(f.type) ? 16 : 25);
 
-/* ---------------- Approved templates ----------------
-   Templates must be created and approved in WhatsApp Manager with EXACTLY these names,
-   languages and {{1}}, {{2}}… placeholders (see WHATSAPP.md). They are the only messages
-   allowed when more than 24 hours have passed since the customer's last message. */
+/* ---------------- Templates ----------------
+   The only messages allowed when more than 24 hours have passed since the customer's last
+   message. Managed in the admin (Messages → Templates), which creates them in Meta with NAMED
+   variables ({{name}}, {{vehicle}}…) that are filled from the inquiry automatically. */
 
 export interface WaTemplate {
   name: string;
   language: string;
   label: string;
-  params: ('name' | 'vehicle' | 'dates' | 'reference')[];   // values for {{1}}, {{2}}…
-  text: string;                                              // the approved body, for preview
+  params: string[];          // variables in order: names ({{name}}) or, for older templates, what {{1}}, {{2}}… mean
+  named?: boolean;           // created with named variables
+  text: string;              // the body, for preview
+  status?: string;           // APPROVED | PENDING | REJECTED | PAUSED | DISABLED
+  category?: string;         // UTILITY | MARKETING | AUTHENTICATION
+  rejectedReason?: string;
 }
 
+/** Variables the admin fills in automatically from the inquiry */
+export const AUTO_VARS: Record<string, string> = {
+  name: 'Customer first name', vehicle: 'Vehicle', dates: 'Rental dates', reference: 'Booking reference',
+};
+
+/** Built-in meaning of the two original (numbered) templates */
 export const WA_TEMPLATES: WaTemplate[] = [
   {
     name: 'booking_request_update', language: 'en', label: 'Booking request — start the chat',
@@ -167,15 +183,65 @@ export const WA_TEMPLATES: WaTemplate[] = [
     params: ['name', 'reference'],
     text: 'Dear {{1}}, we are following up on your request {{2}} with Ceylon Rent A Cars. Reply to this message and we will be happy to help.',
   },
-  {
-    name: 'hello_world', language: 'en_US', label: 'Test message (Meta sample)',
-    params: [],
-    text: 'Hello World — welcome and congratulations! This message demonstrates your ability to send a WhatsApp message notification from the Cloud API.',
-  },
 ];
 
 export const fillTemplate = (t: WaTemplate, v: Record<string, string>) =>
-  t.params.reduce((s, p, i) => s.split(`{{${i + 1}}}`).join(v[p] || `[${p}]`), t.text);
+  t.params.reduce((s, p, i) => s.split(t.named ? `{{${p}}}` : `{{${i + 1}}}`).join(v[p] || `[${p}]`), t.text);
+
+export const varsIn = (text: string) => [...new Set([...text.matchAll(/\{\{([a-z0-9_]+)\}\}/g)].map((m) => m[1]))];
+
+const humanize = (n: string) => n.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+
+/** Meta's template record → WaTemplate */
+function fromMeta(r: Record<string, any>): WaTemplate {
+  const text: string = (r.components ?? []).find((c: any) => c.type === 'BODY')?.text ?? '';
+  const named = r.parameter_format === 'NAMED' || varsIn(text).some((v) => !/^\d+$/.test(v));
+  const builtIn = WA_TEMPLATES.find((t) => t.name === r.name);
+  return {
+    name: r.name, language: r.language, label: builtIn?.label ?? humanize(r.name), text, named,
+    params: named ? varsIn(text) : builtIn?.params ?? varsIn(text).sort((a, b) => +a - +b).map((n) => `var${n}`),
+    status: r.status, category: r.category, rejectedReason: r.rejected_reason && r.rejected_reason !== 'NONE' ? r.rejected_reason : undefined,
+  };
+}
+
+async function invokeTemplates(body: Record<string, unknown>) {
+  const { data, error } = await supabase.functions.invoke('whatsapp-templates', { body });
+  if (error) {
+    let msg = error.message;
+    try { const ctx = (error as { context?: Response }).context; if (ctx) msg = (await ctx.json()).error ?? msg; } catch { /* keep generic */ }
+    throw new Error(msg);
+  }
+  return data;
+}
+
+export async function loadTemplates(): Promise<WaTemplate[]> {
+  if (whatsappDemo) return demoTemplates();
+  const data = await invokeTemplates({ action: 'list' });
+  return (data?.templates ?? []).map(fromMeta).sort((a: WaTemplate, b: WaTemplate) => a.label.localeCompare(b.label));
+}
+
+export async function createTemplate(t: { name: string; category: 'UTILITY' | 'MARKETING'; body: string; examples: Record<string, string> }) {
+  if (whatsappDemo) return demoCreateTemplate(t);
+  return invokeTemplates({ action: 'create', language: 'en', ...t }) as Promise<{ status?: string; category?: string }>;
+}
+
+export async function deleteTemplate(name: string) {
+  if (whatsappDemo) return demoDeleteTemplate(name);
+  return invokeTemplates({ action: 'delete', name });
+}
+
+/** Approved templates for the chat's picker (falls back to the built-in two if Meta can't be reached) */
+export function useApprovedTemplates() {
+  const [list, setList] = useState<WaTemplate[]>(WA_TEMPLATES);
+  useEffect(() => {
+    let alive = true;
+    loadTemplates()
+      .then((l) => { const ok = l.filter((t) => t.status === 'APPROVED'); if (alive && ok.length) setList(ok); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return list;
+}
 
 /* ---------------- Unread badge ---------------- */
 

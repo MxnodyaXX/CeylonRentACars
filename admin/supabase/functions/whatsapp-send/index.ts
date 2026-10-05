@@ -39,7 +39,8 @@ const MEDIA_KIND = (mime: string) =>
 function explain(code: number | undefined, fallback: string) {
   if (code === 131047) return "More than 24 hours since the customer's last message — send an approved template instead.";
   if (code === 131026) return "This number can't receive WhatsApp messages (not on WhatsApp, or an old app version).";
-  if (code === 132001) return "Template not found or not approved yet — check the name/language in WhatsApp Manager.";
+  if (code === 132001) return "Template not found or not approved yet — create it in WhatsApp Manager → Message templates with exactly this name and language English (en), then wait for 'Active'.";
+  if (code === 131058) return "hello_world only works on Meta's test number — use your own approved templates.";
   if (code === 132000) return "The template's number of parameters doesn't match.";
   if (code === 190) return "WhatsApp access token expired or invalid — update the WHATSAPP_TOKEN secret.";
   return fallback;
@@ -76,12 +77,16 @@ serve(async (req) => {
   let row: Record<string, unknown>;
   if (body.template?.name) {
     const t = body.template;
-    const params: string[] = Array.isArray(t.params) ? t.params.map((p: unknown) => String(p ?? "").slice(0, 900)) : [];
+    // Named variables arrive as [{ name, value }], numbered ones as ["value1", "value2", …]
+    const list: unknown[] = Array.isArray(t.params) ? t.params : [];
+    const parameters = list.map((p: any) => t.named
+      ? { type: "text", parameter_name: String(p?.name ?? ""), text: String(p?.value ?? "").slice(0, 900) || "-" }
+      : { type: "text", text: String(p ?? "").slice(0, 900) || "-" });
     payload = {
       messaging_product: "whatsapp", to, type: "template",
       template: {
         name: String(t.name), language: { code: String(t.language ?? "en") },
-        ...(params.length ? { components: [{ type: "body", parameters: params.map((text) => ({ type: "text", text })) }] } : {}),
+        ...(parameters.length ? { components: [{ type: "body", parameters }] } : {}),
       },
     };
     row = { kind: "template", template: String(t.name), body: t.preview ? String(t.preview).slice(0, 4000) : null };

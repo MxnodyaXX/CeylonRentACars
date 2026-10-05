@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Search, MessageCircle, ArrowLeft, ExternalLink, AlertTriangle, PlayCircle, X } from 'lucide-react';
+import { Search, MessageCircle, ArrowLeft, ExternalLink, AlertTriangle, PlayCircle, X, FileText } from 'lucide-react';
+import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import WhatsAppChat from '../components/ui/WhatsAppChat';
 import { useStore } from '../store/useStore';
@@ -29,6 +30,7 @@ export default function Messages() {
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const active = params.get('phone') ?? '';
+  const isAdmin = useAuthStore((s) => s.isAdmin)();
 
   useEffect(() => {
     if (!whatsappEnabled) return;
@@ -97,6 +99,11 @@ export default function Messages() {
   return (
     <div>
       <Header title="Messages" subtitle="WhatsApp conversations with customers" />
+      {isAdmin && (
+        <div className="flex justify-end -mt-2 mb-3">
+          <Link to="/whatsapp-templates" className="btn-secondary !py-1.5 text-xs flex items-center gap-1.5"><FileText size={14} /> Message templates</Link>
+        </div>
+      )}
       {whatsappDemo && (
         <div className="card !p-3 mb-3 flex items-center gap-3 text-sm bg-sky-50 border border-sky-200 text-sky-800">
           <PlayCircle size={18} className="flex-shrink-0" />
