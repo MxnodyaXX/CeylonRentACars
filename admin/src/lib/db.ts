@@ -192,6 +192,7 @@ function iFromDb(r: Record<string, unknown>): Inquiry {
     alternativeOf: (r.alternative_of as string) ?? undefined,
     alternativeChosen: (r.alternative_chosen as string) ?? undefined,
     alternativesOffered: Array.isArray(r.alternatives_offered) ? (r.alternatives_offered as string[]) : undefined,
+    vehicleHistory: Array.isArray(r.vehicle_history) ? (r.vehicle_history as Inquiry['vehicleHistory']) : undefined,
   }
 }
 

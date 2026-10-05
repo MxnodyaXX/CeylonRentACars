@@ -181,6 +181,16 @@ export interface Inquiry {
   alternativeOf?: string;                   // this inquiry is the customer's alternative choice for that inquiry
   alternativeChosen?: string;               // the customer moved from this inquiry to that one
   alternativesOffered?: string[];           // vehicle ids offered to the customer as alternatives
+  vehicleHistory?: VehicleChange[];         // earlier vehicles of this inquiry (oldest first); requestedVehicle is the current one
+}
+
+/** A vehicle the inquiry had before it moved to another one */
+export interface VehicleChange {
+  vehicle: string;
+  vehicleId?: string;
+  replacedAt: string;
+  reason?: string;
+  quote?: InquiryQuote | null;
 }
 
 export interface InquiryQuote {

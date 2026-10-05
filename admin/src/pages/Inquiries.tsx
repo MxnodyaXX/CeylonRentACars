@@ -262,6 +262,11 @@ export default function Inquiries() {
                 {inq.lostReason}
               </div>
             )}
+            {(inq.vehicleHistory?.length ?? 0) > 0 && (
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg px-3 py-2 mb-3">
+                ↻ Alternative chosen — vehicle choice {inq.vehicleHistory!.length + 1} (was {inq.vehicleHistory![inq.vehicleHistory!.length - 1].vehicle.replace(/\s*\(.*\)$/, '')})
+              </div>
+            )}
             {inq.alternativeOf && (
               <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mb-3">
                 ✓ Alternative chosen by customer

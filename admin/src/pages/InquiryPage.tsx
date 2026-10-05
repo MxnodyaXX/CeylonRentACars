@@ -12,6 +12,8 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import Select from '../components/ui/Select';
 import { ContactLog } from '../components/ui/InquiryContact';
+import WhatsAppChat from '../components/ui/WhatsAppChat';
+import { whatsappEnabled } from '../lib/whatsappInbox';
 import InquiryQuoteBuilder from '../components/ui/InquiryQuoteBuilder';
 import { FollowUp, addFollowUp, intlDigits, loadFollowUps, parseRequest, stageOf } from '../lib/inquiryFollowups';
 import {
@@ -116,7 +118,16 @@ export default function InquiryPage() {
     openWa(tpl.find((t) => t.id === 'alternatives')!.text);
   };
 
-  const openWa = (text: string) => { setChannel('WhatsApp'); window.open(`https://wa.me/${intlDigits(inq.customerPhone)}?text=${encodeURIComponent(text)}`, '_blank'); };
+  // With the WhatsApp inbox on, replies are typed into the chat below instead of opening the WhatsApp app
+  const [waDraft, setWaDraft] = useState<string>();
+  const openWa = (text: string) => {
+    if (whatsappEnabled) {
+      setWaDraft(text);
+      document.getElementById('wa-chat')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    setChannel('WhatsApp'); window.open(`https://wa.me/${intlDigits(inq.customerPhone)}?text=${encodeURIComponent(text)}`, '_blank');
+  };
   const copy = async (text: string, what: string) => {
     try { await navigator.clipboard.writeText(text); toast.success(`${what} copied`, ''); } catch { prompt(`Copy ${what.toLowerCase()}:`, text); }
   };
@@ -215,7 +226,18 @@ export default function InquiryPage() {
           );
         })() : inq.status === 'Lost' && inq.lostReason && <p className="mt-3 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2 flex items-center gap-2"><AlertTriangle size={14} /> Lost: {inq.lostReason}</p>}
 
-        {/* This inquiry IS the alternative the customer chose */}
+        {/* Customer switched vehicle within this inquiry */}
+        {(inq.vehicleHistory?.length ?? 0) > 0 && (
+          <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex flex-wrap items-center gap-3">
+            <Repeat size={16} className="text-blue-600 flex-shrink-0" />
+            <p className="text-sm text-blue-900 flex-1 min-w-[220px]">
+              The customer chose an <b>alternative vehicle</b>: now <b>{inq.requestedVehicle}</b> (vehicle choice {inq.vehicleHistory!.length + 1}),
+              previously <b>{inq.vehicleHistory![inq.vehicleHistory!.length - 1].vehicle}</b>. Re-check availability, fit and price for the new vehicle.
+            </p>
+          </div>
+        )}
+
+        {/* (older data) this inquiry was created as the alternative of another one */}
         {inq.alternativeOf && (() => {
           const prev = inquiries.find((i) => i.id === inq.alternativeOf);
           return (
@@ -263,6 +285,27 @@ export default function InquiryPage() {
                 </p>
               ))}
             </section>
+          )}
+
+          {(inq.vehicleHistory?.length ?? 0) > 0 && (
+            <Section icon={Repeat} title="Vehicle choices">
+              <ol className="relative border-l-2 border-navy-100 ml-2 space-y-3">
+                {inq.vehicleHistory!.map((h, i) => (
+                  <li key={i} className="ml-4">
+                    <span className="absolute -left-[7px] mt-1.5 w-3 h-3 rounded-full bg-navy-300 ring-4 ring-white" />
+                    <p className="text-sm text-navy-500"><span className="font-semibold text-navy-400">Choice {i + 1}:</span> <s>{h.vehicle}</s></p>
+                    <p className="text-[11px] text-navy-400">
+                      Replaced {prettyDate(h.replacedAt)}{h.reason ? ` — ${h.reason}` : ''}
+                      {h.quote ? ` · earlier quote ${rs(h.quote.total)} (${h.quote.status})` : ''}
+                    </p>
+                  </li>
+                ))}
+                <li className="ml-4">
+                  <span className="absolute -left-[7px] mt-1.5 w-3 h-3 rounded-full bg-brand-500 ring-4 ring-white" />
+                  <p className="text-sm font-bold text-navy-800">Choice {inq.vehicleHistory!.length + 1}: {inq.requestedVehicle} <span className="ml-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700 bg-emerald-50 rounded-full px-2 py-0.5">Current</span></p>
+                </li>
+              </ol>
+            </Section>
           )}
 
           <Section icon={ClipboardCheck} title="Request">
@@ -392,6 +435,24 @@ export default function InquiryPage() {
               onSent={quoteSent}
             />
           </Section>
+
+          {whatsappEnabled && inq.customerPhone && (
+            <div id="wa-chat">
+              <Section icon={MessageCircle} title="WhatsApp chat">
+                <WhatsAppChat
+                  phone={inq.customerPhone}
+                  draft={waDraft}
+                  onDraftUsed={() => setWaDraft(undefined)}
+                  context={{
+                    name: inq.customerName.trim().split(' ')[0],
+                    vehicle: inq.requestedVehicle.replace(/\s*\(.*\)$/, ''),
+                    dates: inq.startDate && inq.endDate ? `${prettyDate(inq.startDate)} – ${prettyDate(inq.endDate)}` : '',
+                    reference: req.reference ?? 'your inquiry',
+                  }}
+                />
+              </Section>
+            </div>
+          )}
 
           <Section icon={MessagesSquare} title="Contact log">
             <ContactLog

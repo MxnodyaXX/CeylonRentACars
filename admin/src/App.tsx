@@ -13,6 +13,8 @@ import Vehicles from './pages/Vehicles';
 import Bookings from './pages/Bookings';
 import Inquiries from './pages/Inquiries';
 import InquiryPage from './pages/InquiryPage';
+import Messages from './pages/Messages';
+import WhatsAppSetup from './pages/WhatsAppSetup';
 import Commissions from './pages/Commissions';
 import Owners from './pages/Owners';
 import Expenses from './pages/Expenses';
@@ -87,6 +89,8 @@ export default function App() {
           {/* Permission-gated pages — redirect to home if not allowed */}
           <Route path="/inquiries"  element={isAdmin() || can('canViewInquiries')   ? <Inquiries />  : <Navigate to="/" replace />} />
           <Route path="/inquiries/:id" element={isAdmin() || can('canViewInquiries') ? <InquiryPage /> : <Navigate to="/" replace />} />
+          <Route path="/whatsapp-setup" element={isAdmin() ? <WhatsAppSetup /> : <Navigate to="/" replace />} />
+          <Route path="/messages" element={isAdmin() || can('canViewInquiries') ? <Messages /> : <Navigate to="/" replace />} />
           <Route path="/expenses"   element={isAdmin() || can('canViewExpenses')    ? <Expenses />   : <Navigate to="/" replace />} />
           <Route path="/drivers"    element={isAdmin() || can('canViewDrivers')     ? <Drivers />    : <Navigate to="/" replace />} />
           <Route path="/handovers"  element={isAdmin() || can('canViewHandovers')   ? <Handovers />  : <Navigate to="/" replace />} />

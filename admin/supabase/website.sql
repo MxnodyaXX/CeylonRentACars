@@ -138,6 +138,53 @@ alter table inquiries add column if not exists vehicle_id text;
 alter table inquiries add column if not exists alternative_of     text;   -- on the NEW inquiry: the original inquiry id
 alter table inquiries add column if not exists alternative_chosen text;   -- on the ORIGINAL inquiry: the new inquiry id
 alter table inquiries add column if not exists alternatives_offered jsonb; -- vehicle ids the team offered (only these can be chosen)
+-- Every vehicle the inquiry had before its current one: [{ vehicle, vehicleId, replacedAt, reason, quote }]
+alter table inquiries add column if not exists vehicle_history jsonb not null default '[]'::jsonb;
+
+-- Internal: move an inquiry to another vehicle, keeping the previous one (and its quote) in vehicle_history.
+-- Vehicle-specific checks (availability, fit, price) and the old quote are reset; the estimate is recalculated.
+create or replace function _switch_inquiry_vehicle(p_inquiry_id text, p_vehicle_id text, p_reason text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_inq     inquiries%rowtype;
+  v_vehicle vehicles%rowtype;
+  v_days    int;
+  v_est     text;
+begin
+  select * into v_inq from inquiries where id = p_inquiry_id for update;
+  select * into v_vehicle from vehicles where id = p_vehicle_id;
+
+  v_days := case when coalesce(v_inq.start_date, '') <> '' and coalesce(v_inq.end_date, '') <> ''
+                 then greatest(1, v_inq.end_date::date - v_inq.start_date::date) end;
+  v_est := case when v_days is not null
+                then 'Days: ' || v_days || ' · Estimate: Rs '
+                     || to_char(coalesce(v_vehicle.web_price, v_vehicle.daily_rent) * v_days, 'FM999,999,990') end;
+
+  update inquiries set
+    vehicle_history = coalesce(v_inq.vehicle_history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+      'vehicle',    v_inq.requested_vehicle,
+      'vehicleId',  v_inq.vehicle_id,
+      'replacedAt', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+      'reason',     p_reason,
+      'quote',      v_inq.quote
+    )),
+    vehicle_id        = p_vehicle_id,
+    requested_vehicle = trim(v_vehicle.brand || ' ' || v_vehicle.model) || coalesce(' (' || nullif(v_vehicle.vehicle_number, '') || ')', ''),
+    preferred_brand   = v_vehicle.brand,
+    quote             = null,
+    checklist         = coalesce(v_inq.checklist, '{}'::jsonb) - 'available' - 'fits' - 'price',
+    alternatives_offered = null,
+    notes = case
+      when v_est is null then v_inq.notes
+      when coalesce(v_inq.notes, '') ~ 'Days:' then regexp_replace(v_inq.notes, 'Days:[^\n]*', v_est)
+      else concat_ws(E'\n', nullif(v_inq.notes, ''), v_est)
+    end
+  where id = p_inquiry_id;
+end $$;
+
+-- Only the two website functions below may call this
+revoke execute on function _switch_inquiry_vehicle(text, text, text) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Booking page (website /book)
@@ -155,7 +202,7 @@ grant select on vehicle_busy_dates to anon, authenticated;
 
 -- Validated insert of a booking request (checks dates against live bookings); returns the reference number.
 -- p_alternative_of: the original inquiry id when the customer booked from the /alternatives page —
--- the new request is linked to it, and the original is closed as "Moved to alternative".
+-- then the SAME inquiry is updated to the new vehicle (no new inquiry) and keeps its reference.
 drop function if exists submit_booking_request(text, text, text, text, text, date, text, date, text, text, text, text, text, numeric);
 create or replace function submit_booking_request(
   p_vehicle_id text, p_name text, p_phone text, p_email text, p_country text,
@@ -170,9 +217,9 @@ declare
   v_name  text := left(trim(coalesce(p_name, '')), 80);
   v_phone text := left(trim(coalesce(p_phone, '')), 30);
   v_ref   text := 'CRC-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 6));
-  v_id    text;
   v_days  int;
   v_linked boolean := false;
+  v_old   text;
 begin
   if length(v_name) < 2 then raise exception 'Please enter your full name'; end if;
   if length(regexp_replace(v_phone, '\D', '', 'g')) < 7 then raise exception 'Please enter a valid phone or WhatsApp number'; end if;
@@ -192,7 +239,7 @@ begin
     raise exception 'Sorry, this vehicle is already booked for some of those dates';
   end if;
 
-  -- Link to the original inquiry only if it's still open and it's the same customer (phone or first name)
+  -- Same customer continuing their open inquiry with an alternative vehicle?
   if nullif(trim(p_alternative_of), '') is not null then
     select * into v_parent from inquiries where id = trim(p_alternative_of) and status = 'Pending';
     if found and (
@@ -204,12 +251,40 @@ begin
   end if;
 
   v_days := greatest(1, p_end_date - p_start_date);
-  v_id := 'web_' || lower(substr(v_ref, 5));
+
+  if v_linked then
+    -- Update the original inquiry: keep its reference, take the (possibly adjusted) trip details from the form
+    v_ref := coalesce(substring(v_parent.notes from 'CRC-[A-Z0-9]+'), v_ref);
+    v_old := v_parent.requested_vehicle;
+    update inquiries set
+      start_date = p_start_date::text,
+      end_date   = p_end_date::text,
+      notes = concat_ws(E'\n',
+        'Website booking request ' || v_ref,
+        'Type: ' || coalesce(nullif(p_mode, ''), 'Self drive'),
+        'Pickup: ' || coalesce(nullif(left(p_pickup, 300), ''), '—') || ' · ' || p_start_date || coalesce(' ' || nullif(left(p_start_time, 5), ''), ''),
+        'Return: ' || coalesce(nullif(left(p_return, 300), ''), '—') || ' · ' || p_end_date || coalesce(' ' || nullif(left(p_end_time, 5), ''), ''),
+        'Days: ' || v_days,
+        case when nullif(trim(p_email), '') is not null then 'Email: ' || left(trim(p_email), 120) end,
+        case when nullif(trim(p_country), '') is not null then 'Country: ' || left(trim(p_country), 40) end,
+        case when nullif(trim(p_message), '') is not null then 'Message: ' || left(trim(p_message), 1000) end
+      )
+    where id = v_parent.id;
+
+    perform _switch_inquiry_vehicle(v_parent.id, p_vehicle_id, 'Not available — customer chose an alternative on the booking page');
+
+    insert into inquiry_followups (inquiry_id, channel, outcome, response, staff)
+    values (v_parent.id, 'Website', 'Interested',
+            'Customer chose an alternative: ' || trim(v_vehicle.brand || ' ' || v_vehicle.model)
+              || ' (' || p_start_date || ' → ' || p_end_date || '), replacing ' || v_old || '.',
+            'Website');
+    return v_ref;
+  end if;
 
   insert into inquiries (id, customer_name, customer_phone, requested_vehicle, preferred_brand,
-                         start_date, end_date, referral, status, notes, created_at, vehicle_id, alternative_of)
+                         start_date, end_date, referral, status, notes, created_at, vehicle_id)
   values (
-    v_id,
+    'web_' || lower(substr(v_ref, 5)),
     v_name, v_phone,
     trim(v_vehicle.brand || ' ' || v_vehicle.model) || coalesce(' (' || nullif(v_vehicle.vehicle_number, '') || ')', ''),
     v_vehicle.brand,
@@ -217,7 +292,6 @@ begin
     'Website', 'Pending',
     concat_ws(E'\n',
       'Website booking request ' || v_ref,
-      case when v_linked then 'Alternative chosen by customer — original request: ' || v_parent.requested_vehicle end,
       'Type: ' || coalesce(nullif(p_mode, ''), 'Self drive'),
       'Pickup: ' || coalesce(nullif(left(p_pickup, 300), ''), '—') || ' · ' || p_start_date || coalesce(' ' || nullif(left(p_start_time, 5), ''), ''),
       'Return: ' || coalesce(nullif(left(p_return, 300), ''), '—') || ' · ' || p_end_date || coalesce(' ' || nullif(left(p_end_time, 5), ''), ''),
@@ -227,22 +301,8 @@ begin
       case when nullif(trim(p_message), '') is not null then 'Message: ' || left(trim(p_message), 1000) end
     ),
     to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-    p_vehicle_id,
-    case when v_linked then v_parent.id end
+    p_vehicle_id
   );
-
-  if v_linked then
-    update inquiries
-       set status = 'Lost',
-           lost_reason = 'Moved to alternative ' || v_ref,
-           alternative_chosen = v_id
-     where id = v_parent.id;
-    insert into inquiry_followups (inquiry_id, channel, outcome, response, staff)
-    values (v_parent.id, 'Website', 'Interested',
-            'Customer chose an alternative: ' || trim(v_vehicle.brand || ' ' || v_vehicle.model)
-              || ' (' || p_start_date || ' → ' || p_end_date || '). Continued in request ' || v_ref || '.',
-            'Website');
-  end if;
 
   return v_ref;
 end $$;
@@ -268,79 +328,48 @@ alter table inquiry_followups disable row level security;
 
 -- ---------------------------------------------------------------------------
 -- Alternatives page: the customer picks one of the vehicles the team offered.
--- No form — the new request reuses the original inquiry's dates, locations and
--- contact details. Only vehicles listed in alternatives_offered can be chosen.
+-- No form and no new inquiry — the SAME inquiry moves to the chosen vehicle
+-- (its 2nd, 3rd… choice); the previous vehicle and its quote stay in vehicle_history.
+-- Only vehicles listed in alternatives_offered can be chosen.
 -- ---------------------------------------------------------------------------
 create or replace function choose_alternative(p_inquiry_id text, p_vehicle_id text)
 returns text
 language plpgsql security definer set search_path = public as $$
 declare
-  v_parent  inquiries%rowtype;
+  v_inq     inquiries%rowtype;
   v_vehicle vehicles%rowtype;
-  v_ref  text := 'CRC-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 6));
-  v_id   text;
-  v_days int;
-  v_rate numeric;
-  v_kept text;
+  v_choice  int;
 begin
-  select * into v_parent from inquiries where id = p_inquiry_id;
+  select * into v_inq from inquiries where id = p_inquiry_id;
   if not found then raise exception 'We could not find your booking request — please contact us.'; end if;
-  if v_parent.alternative_chosen is not null then raise exception 'You have already chosen an alternative for this request — our team will be in touch.'; end if;
-  if v_parent.status <> 'Pending' then raise exception 'This booking request is already closed — please contact us.'; end if;
-  if not (coalesce(v_parent.alternatives_offered, '[]'::jsonb) ? p_vehicle_id) then
-    raise exception 'This vehicle was not part of your offer — please contact us.';
+  if v_inq.status <> 'Pending' then
+    raise exception 'This booking request has already been confirmed or closed — please message us on WhatsApp if you would like to change the vehicle.';
+  end if;
+  if not (coalesce(v_inq.alternatives_offered, '[]'::jsonb) ? p_vehicle_id) then
+    raise exception 'This offer has changed — please contact us and we will help you choose.';
   end if;
 
   select * into v_vehicle from vehicles where id = p_vehicle_id;
   if not found then raise exception 'This vehicle is no longer available — please contact us.'; end if;
 
-  if v_parent.start_date <> '' and v_parent.end_date <> '' and exists (
+  if coalesce(v_inq.start_date, '') <> '' and coalesce(v_inq.end_date, '') <> '' and exists (
     select 1 from bookings b
     where b.vehicle_id = p_vehicle_id and b.status in ('Confirmed', 'Ongoing')
-      and b.start_date::date <= v_parent.end_date::date and b.end_date::date >= v_parent.start_date::date
+      and b.start_date::date <= v_inq.end_date::date and b.end_date::date >= v_inq.start_date::date
   ) then
     raise exception 'Sorry, this vehicle was just booked for your dates — please choose another option.';
   end if;
 
-  v_days := case when v_parent.start_date <> '' and v_parent.end_date <> ''
-                 then greatest(1, v_parent.end_date::date - v_parent.start_date::date) else null end;
-  v_rate := coalesce(v_vehicle.web_price, v_vehicle.daily_rent);
-  v_id := 'web_' || lower(substr(v_ref, 5));
-
-  -- Keep the original details (type, pickup, return, email, country, message); drop its header and old estimate
-  select string_agg(line, E'\n') into v_kept
-  from regexp_split_to_table(coalesce(v_parent.notes, ''), E'\n') as line
-  where line <> '' and line !~ '^(Website booking request|Alternative chosen by customer|Days:)';
-
-  insert into inquiries (id, customer_name, customer_phone, requested_vehicle, preferred_brand,
-                         start_date, end_date, referral, status, notes, created_at, vehicle_id, alternative_of)
-  values (
-    v_id, v_parent.customer_name, v_parent.customer_phone,
-    trim(v_vehicle.brand || ' ' || v_vehicle.model) || coalesce(' (' || nullif(v_vehicle.vehicle_number, '') || ')', ''),
-    v_vehicle.brand,
-    v_parent.start_date, v_parent.end_date,
-    coalesce(nullif(v_parent.referral, ''), 'Website'), 'Pending',
-    concat_ws(E'\n',
-      'Website booking request ' || v_ref,
-      'Alternative chosen by customer — original request: ' || v_parent.requested_vehicle,
-      nullif(v_kept, ''),
-      case when v_days is not null then 'Days: ' || v_days || ' · Estimate: Rs ' || to_char(v_rate * v_days, 'FM999,999,990') end
-    ),
-    to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-    p_vehicle_id,
-    v_parent.id
-  );
-
-  update inquiries
-     set status = 'Lost', lost_reason = 'Moved to alternative ' || v_ref, alternative_chosen = v_id
-   where id = v_parent.id;
+  v_choice := jsonb_array_length(coalesce(v_inq.vehicle_history, '[]'::jsonb)) + 2;
+  perform _switch_inquiry_vehicle(v_inq.id, p_vehicle_id, 'Not available — customer chose an alternative on the website');
 
   insert into inquiry_followups (inquiry_id, channel, outcome, response, staff)
-  values (v_parent.id, 'Website', 'Interested',
+  values (v_inq.id, 'Website', 'Interested',
           'Customer chose an alternative on the website: ' || trim(v_vehicle.brand || ' ' || v_vehicle.model)
-            || '. Continued in request ' || v_ref || '.', 'Website');
+            || ' (vehicle choice ' || v_choice || '), replacing ' || v_inq.requested_vehicle || '.',
+          'Website');
 
-  return v_ref;
+  return coalesce(substring(v_inq.notes from 'CRC-[A-Z0-9]+'), v_inq.id);
 end $$;
 
 grant execute on function choose_alternative(text, text) to anon, authenticated;

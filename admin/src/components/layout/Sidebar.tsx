@@ -3,10 +3,11 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Car, CalendarDays, MessageSquare,
   Percent, Users, Receipt, UserCheck, Bell, Settings, ShieldCheck, Truck, Contact, HandCoins, CreditCard, AlertTriangle, Globe,
-  ChevronsLeft, ChevronDown, MessageSquareHeart, LucideIcon,
+  ChevronsLeft, ChevronDown, MessageCircle, Smartphone, MessageSquareHeart, LucideIcon,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
+import { useWhatsAppUnread } from '../../lib/whatsappInbox';
 import { useAuthStore } from '../../store/useAuthStore';
 
 type Link = { to: string; icon: LucideIcon; label: string };
@@ -18,6 +19,7 @@ const groups: { title: string; links: Link[] }[] = [
     { to: '/vehicles',      icon: Car,             label: 'Vehicles'    },
     { to: '/bookings',      icon: CalendarDays,    label: 'Bookings'    },
     { to: '/inquiries',     icon: MessageSquare,   label: 'Inquiries'   },
+    { to: '/messages',      icon: MessageCircle,   label: 'Messages'    },
     { to: '/handovers',     icon: Truck,           label: 'Handovers'   },
     { to: '/notifications', icon: Bell,            label: 'Alerts'      },
     { to: '/incomplete',    icon: AlertTriangle,   label: 'Incomplete'  },
@@ -35,12 +37,13 @@ const groups: { title: string; links: Link[] }[] = [
   ] },
   { title: 'Admin', links: [
     { to: '/website',       icon: Globe,           label: 'Website'     },
+    { to: '/whatsapp-setup', icon: Smartphone,     label: 'WhatsApp setup' },
     { to: '/feedback',      icon: MessageSquareHeart, label: 'Feedback' },
     { to: '/permissions',   icon: ShieldCheck,     label: 'Permissions' },
   ] },
 ];
 
-const ADMIN_ONLY = ['/owners', '/credit', '/website', '/feedback', '/permissions'];
+const ADMIN_ONLY = ['/owners', '/credit', '/website', '/feedback', '/permissions', '/whatsapp-setup'];
 
 /* 5 primary links shown in the mobile pill */
 const mobileNav = [
@@ -87,6 +90,7 @@ export default function Sidebar() {
     ).length,
   );
   const draftCount  = useStore((s) => s.drafts.length);
+  const waUnread    = useWhatsAppUnread();
 
   const [expanded, setExpanded] = useState(readExpanded);
   const [openGroups, setOpenGroups] = useState<string[]>(readOpenGroups);
@@ -136,7 +140,7 @@ export default function Sidebar() {
     if (to === '/drivers')     return can('canViewDrivers');
     if (to === '/customers')   return can('canViewCustomers');
     if (to === '/referrals')   return can('canViewReferrals');
-    if (to === '/inquiries')   return can('canViewInquiries');
+    if (to === '/inquiries' || to === '/messages') return can('canViewInquiries');
     if (to === '/incomplete')  return can('canViewIncomplete');
     return false;
   };
@@ -154,8 +158,8 @@ export default function Sidebar() {
 
   const renderItem = ({ to, icon: Icon, label }: Link) => {
     const active = isActive(to, location.pathname);
-    const count  = to === '/notifications' ? unread : to === '/incomplete' ? draftCount : 0;
-    const countColor = to === '/incomplete' ? 'bg-amber-500' : 'bg-brand-500';
+    const count  = to === '/notifications' ? unread : to === '/incomplete' ? draftCount : to === '/messages' ? waUnread : 0;
+    const countColor = to === '/incomplete' ? 'bg-amber-500' : to === '/messages' ? 'bg-emerald-600' : 'bg-brand-500';
     return (
       <NavLink
         key={to}
