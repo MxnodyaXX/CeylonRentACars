@@ -1672,7 +1672,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   position: fixed; z-index: 140; right: 20px; bottom: calc(20px + env(safe-area-inset-bottom));
   width: min(410px, calc(100vw - 32px)); height: min(640px, calc(100vh - 110px));
   display: flex; flex-direction: column; border-radius: 22px; overflow: hidden;
-  background: rgba(14, 14, 17, .985); border: 1px solid var(--line-2);
+  background: #0e0e11; border: 1px solid var(--line-2);
   box-shadow: 0 30px 80px rgba(0, 0, 0, .7), 0 0 0 1px rgba(225, 29, 42, .12);
   opacity: 0; visibility: hidden; transform: translateY(16px) scale(.98); transform-origin: bottom right;
   transition: opacity .25s, transform .35s var(--ease), visibility .35s;
@@ -1738,3 +1738,52 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   .ai-panel, .ai-launch { transition: none; }
   .ai-typing i { animation: none; }
 }
+
+/* Assistant: formatted replies, word reveal, thinking state */
+.ai-panel__list { position: relative; }
+.ai-rich { background: var(--surface-2); color: var(--text); padding: 11px 14px; border-radius: 16px; border-top-left-radius: 5px; font-size: 14px; line-height: 1.55; }
+.ai-msg .ai-rich p { margin: 0; padding: 0; background: none; border-radius: 0; }
+.ai-rich p + p, .ai-rich p + ul, .ai-rich ul + p { margin-top: 8px; }
+.ai-rich ul { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.ai-rich li { position: relative; padding: 7px 10px 7px 26px; border-radius: 10px; background: rgba(255, 255, 255, .035); border: 1px solid var(--line); }
+.ai-rich li::before { content: ""; position: absolute; left: 11px; top: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--red-hi); box-shadow: 0 0 8px rgba(255, 51, 65, .6); }
+.ai-rich strong { color: #fff; font-weight: 700; }
+.ai-msg.is-error .ai-rich { background: rgba(225, 29, 42, .1); border: 1px solid rgba(225, 29, 42, .35); }
+
+/* Word-by-word reveal of a new reply */
+.ai-w { display: inline-block; opacity: 0; filter: blur(4px); transform: translateY(3px); animation: ai-word .38s var(--ease) forwards; }
+@keyframes ai-word { to { opacity: 1; filter: blur(0); transform: none; } }
+.ai-msg.is-fresh .ai-rich { animation: ai-bubble .35s var(--ease) both; }
+@keyframes ai-bubble { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.ai-card-in { opacity: 0; animation: ai-card .5s var(--ease) forwards; }
+@keyframes ai-card { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+/* Thinking: glowing spark + rotating status line with a shimmer */
+.ai-thinking { flex-direction: row; align-items: center; gap: 10px; padding: 10px 14px 10px 10px; border-radius: 16px; border-top-left-radius: 5px; background: var(--surface-2); max-width: none; }
+.ai-thinking__orb { position: relative; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #fff; flex-shrink: 0;
+  background: conic-gradient(from 0deg, var(--red-deep), var(--red-hi), #ff8a93, var(--red), var(--red-deep)); animation: ai-spin 2.4s linear infinite; }
+.ai-thinking__orb::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 51, 65, .45), transparent 70%); animation: ai-pulse 1.6s ease-in-out infinite; z-index: -1; }
+.ai-thinking__orb .ic { width: 15px; height: 15px; animation: ai-spin 2.4s linear infinite reverse; }
+.ai-thinking__text { font-size: 13.5px; font-weight: 600; background: linear-gradient(90deg, var(--muted) 0%, #fff 50%, var(--muted) 100%); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: ai-shimmer 1.6s linear infinite, ai-line .35s var(--ease) both; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@keyframes ai-pulse { 0%, 100% { opacity: .4; transform: scale(.9); } 50% { opacity: 1; transform: scale(1.15); } }
+@keyframes ai-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@keyframes ai-line { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-w, .ai-card-in { animation: none; opacity: 1; filter: none; transform: none; }
+  .ai-msg.is-fresh .ai-rich, .ai-thinking__orb, .ai-thinking__orb .ic, .ai-thinking__orb::after { animation: none; }
+  .ai-thinking__text { animation: none; -webkit-text-fill-color: var(--muted); }
+}
+
+/* Assistant: vehicle cards inline in the reply (one card per recommended vehicle) */
+.ai-rich li.ai-rich__car { padding: 0; background: none; border: 0; }
+.ai-rich li.ai-rich__car::before { display: none; }
+.ai-rich .ai-car { background: var(--surface); }
+.ai-car { grid-template-columns: 92px 1fr; align-items: center; }
+.ai-car__img { grid-row: auto; width: 92px; height: 70px; }
+.ai-car__info strong small { font-weight: 500; color: var(--muted); font-size: 12px; }
+.ai-car__why { grid-column: 1 / -1; font-size: 13.5px; line-height: 1.5; color: var(--text); padding: 2px 2px 0; }
+.ai-car__actions { grid-column: 1 / -1; }
+.ai-car__actions .btn { padding: 8px 10px; }

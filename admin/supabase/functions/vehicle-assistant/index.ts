@@ -3,7 +3,7 @@
 // vehicles from the REAL fleet (catalog_vehicles), checking real booking dates (vehicle_busy_dates).
 //
 // Body:    { messages: [{ role: "user" | "assistant", content: string }, ...] }   (plain text history)
-// Returns: { reply: string, vehicles: string[] }   — vehicles = ids to show as cards under the reply
+// Returns: { reply: string, vehicles: string[] }   — reply contains [[car:ID]] markers the chat turns into vehicle cards
 //
 // Deploy:  supabase functions deploy vehicle-assistant --no-verify-jwt
 // Secret:  supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
@@ -60,8 +60,7 @@ Your job: help each customer choose the right vehicle from OUR fleet for their t
 
 How to help:
 - Find out what matters, a question or two at a time (never a long questionnaire): how many people and how much luggage, the dates, where they will travel (city driving, hill country, long tours, airport transfer), self drive or with a driver, and a budget if they have one.
-- Recommend 1-3 vehicles that genuinely fit, and say briefly why each fits (seats, luggage, fuel economy, comfort for hill roads, price).
-- Every time you recommend vehicles, call show_vehicles with their ids so the customer sees cards with photos and a Book button.
+- Recommend 1-3 vehicles that genuinely fit, and say briefly why each fits (luggage, fuel economy, comfort for hill roads, value).
 - When you know the dates, call check_availability before recommending, and only recommend vehicles that are free. If the ideal one is booked, say so and offer the closest alternatives.
 - Prices are per day in Sri Lankan rupees (LKR). You can estimate a total as price x days, and say the final quote is confirmed by our team.
 
@@ -69,7 +68,18 @@ Rules:
 - Only recommend vehicles from the fleet list below, using their exact ids. Never invent vehicles, prices, discounts or policies.
 - Rental modes: Self drive (licence plus International Driving Permit needed), With driver (English-speaking driver), Airport pickup (meet and greet at Colombo airport CMB).
 - For questions you can't answer from this information (deposit, insurance details, special requests, payment), say our team will confirm on WhatsApp at +94 77 972 6761 or by email hello@ceylonrentacars.lk.
-- Keep replies short and friendly: 1-4 sentences, plain text, no markdown headings or tables. Reply in the customer's language.
+- Reply in the customer's language, friendly and short (about 40-90 words).
+
+Formatting (the chat shows simple formatting):
+- Start with a one-line direct answer.
+- Each vehicle you recommend goes on its own line in this exact form:
+  - [[car:ID]] why it fits this trip, plus the estimated total if you know the days
+  Example: "- [[car:ab12cd34]] Easy to park in Colombo and very light on fuel. About **LKR 35,000** for 7 days."
+  The chat turns [[car:ID]] into a card with the photo, name, seats, gearbox, fuel, daily price and Book button — so do NOT repeat the vehicle's name, seats, gearbox, fuel or daily price in that line. Never list a recommended vehicle in any other way.
+- If you mention another vehicle in passing, just use its name (no marker) — but prefer giving it its own [[car:ID]] line if you suggest it.
+- Use **bold** only for key numbers (totals, dates).
+- Put a blank line between paragraphs. End with at most one short question.
+- No headings, tables, links or emojis, and never mention "cards" or "below".
 - Stay on topic: vehicle rental and travel in Sri Lanka. Politely decline anything else.`;
 
 const tools: Anthropic.Beta.BetaTool[] = [
@@ -88,20 +98,18 @@ const tools: Anthropic.Beta.BetaTool[] = [
     },
     strict: true,
   },
-  {
-    name: "show_vehicles",
-    description: "Show vehicle cards (photo, price, Book button) under your reply. Call this with the 1-3 vehicles you recommend, best first.",
-    input_schema: {
-      type: "object",
-      properties: {
-        vehicle_ids: { type: "array", items: { type: "string" }, description: "Fleet ids, best match first (1-3)." },
-      },
-      required: ["vehicle_ids"],
-      additionalProperties: false,
-    },
-    strict: true,
-  },
 ];
+
+/** Keeps [[car:ID]] markers only for real fleet ids (others are dropped); returns the ids in order */
+function cards(reply: string, known: Set<string>) {
+  const ids: string[] = [];
+  const text = reply.replace(/\[\[car:([A-Za-z0-9_-]+)\]\]\s*/g, (_m, id: string) => {
+    if (!known.has(id)) return "";
+    if (!ids.includes(id)) ids.push(id);
+    return `[[car:${id}]] `;
+  });
+  return { reply: text, vehicles: ids };
+}
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -162,7 +170,7 @@ serve(async (req) => {
   ];
 
   const messages = [...history];
-  let shown: string[] = [];
+  const said: string[] = [];   // text from every round
 
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -186,8 +194,11 @@ serve(async (req) => {
         .map((b) => b.text).join("\n").trim();
       const calls = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
 
+      if (text) said.push(text);
       if (response.stop_reason !== "tool_use" || !calls.length || round === MAX_TOOL_ROUNDS) {
-        return json({ reply: text || "Could you tell me a little more about your trip?", vehicles: shown });
+        // A full final answer stands alone; only a very short one gets the earlier rounds' text too
+        const reply = text.split(/\s+/).length >= 25 ? text : said.join("\n\n");
+        return json(cards(reply || "Could you tell me a little more about your trip?", known));
       }
 
       messages.push({ role: "assistant", content: response.content });
@@ -196,10 +207,6 @@ serve(async (req) => {
         let result: unknown;
         if (call.name === "check_availability") {
           result = await checkAvailability(call.input, known);
-        } else if (call.name === "show_vehicles") {
-          const ids = ((call.input as any)?.vehicle_ids ?? []).map(String).filter((id: string) => known.has(id)).slice(0, 3);
-          shown = ids;
-          result = ids.length ? { shown: ids } : { error: "None of these ids are in the fleet." };
         } else {
           result = { error: `Unknown tool ${call.name}` };
         }
@@ -207,7 +214,7 @@ serve(async (req) => {
       }
       messages.push({ role: "user", content: results });
     }
-    return json({ reply: "Could you tell me a little more about your trip?", vehicles: shown });
+    return json(cards(said.join("\n\n") || "Could you tell me a little more about your trip?", known));
   } catch (e) {
     console.error("[vehicle-assistant]", e);
     if (e instanceof Anthropic.RateLimitError) return json({ error: "The assistant is busy — please try again in a moment." }, 429);

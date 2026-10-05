@@ -26,19 +26,104 @@ const STARTERS = [
 ];
 
 const load = () => { try { return JSON.parse(sessionStorage.getItem(STORE)) || [GREETING]; } catch { return [GREETING]; } };
-const save = (m) => { try { sessionStorage.setItem(STORE, JSON.stringify(m.slice(-40))); } catch { /* private mode */ } };
+// `fresh` (animate this reply) is never stored, so restored chats don't replay their animations
+const save = (m) => { try { sessionStorage.setItem(STORE, JSON.stringify(m.slice(-40).map(({ fresh, ...rest }) => rest))); } catch { /* private mode */ } };
 
-function VehicleCard({ v }) {
+const WORD_MS = 22;   // reveal speed: one word every 22 ms
+
+/** Splits the reply into paragraphs and "- " bullet lists; **bold** inline. No HTML is injected. */
+function parseBlocks(text) {
+  const blocks = [];
+  text.replace(/\r/g, '').split(/\n{2,}/).forEach((chunk) => {
+    let para = [];
+    const flushPara = () => { if (para.length) { blocks.push({ type: 'p', text: para.join(' ') }); para = []; } };
+    chunk.split('\n').forEach((line) => {
+      const t = line.trim();
+      if (!t) return;
+      const item = t.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+      if (item) {
+        flushPara();
+        const last = blocks[blocks.length - 1];
+        if (last?.type === 'ul' && last.open) last.items.push(item[1]);
+        else blocks.push({ type: 'ul', items: [item[1]], open: true });
+      } else {
+        if (blocks[blocks.length - 1]?.type === 'ul') blocks[blocks.length - 1].open = false;
+        para.push(t);
+      }
+    });
+    flushPara();
+    if (blocks[blocks.length - 1]?.type === 'ul') blocks[blocks.length - 1].open = false;
+  });
+  return blocks;
+}
+
+/**
+ * Formatted reply; when `animate`, each word fades in one after another (counter shared across blocks).
+ * A "- [[car:ID]] reason" line becomes that vehicle's card with the reason inside it.
+ */
+function Rich({ text, animate, byId }) {
+  const counter = { n: 0 };
+  const words = (s) => s.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).flatMap((part, pi) => {
+    const bold = /^\*\*[^*]+\*\*$/.test(part);
+    const body = bold ? part.slice(2, -2) : part;
+    return body.split(/(\s+)/).map((w, wi) => {
+      if (!w) return null;
+      if (/^\s+$/.test(w)) return w;
+      const key = `${pi}-${wi}`;
+      const style = animate ? { animationDelay: `${counter.n++ * WORD_MS}ms` } : undefined;
+      const span = <span key={key} className={animate ? 'ai-w' : undefined} style={style}>{w}</span>;
+      return bold ? <strong key={key}>{span}</strong> : span;
+    });
+  });
+  const item = (it, j) => {
+    const car = it.match(CAR);
+    const v = car && byId.get(car[1]);
+    if (car && !v) return car[2] ? <li key={j}>{words(car[2])}</li> : null;   // fleet not loaded / vehicle removed
+    if (!v) return <li key={j}>{words(it)}</li>;
+    const delay = animate ? { animationDelay: `${counter.n * WORD_MS}ms` } : undefined;
+    return (
+      <li key={j} className="ai-rich__car">
+        <VehicleCard v={v} className={animate ? 'ai-card-in' : ''} style={delay}>{car[2] ? words(car[2]) : null}</VehicleCard>
+      </li>
+    );
+  };
   return (
-    <div className="ai-car">
+    <div className="ai-rich">
+      {parseBlocks(text).map((b, i) => (b.type === 'ul'
+        ? <ul key={i}>{b.items.map(item)}</ul>
+        : <p key={i}>{words(b.text.replace(/\[\[car:[^\]]+\]\]\s*/g, ''))}</p>))}
+    </div>
+  );
+}
+const wordCount = (text) => text.replace(/\*\*|\[\[car:[^\]]+\]\]/g, '').split(/\s+/).filter(Boolean).length;
+
+/** Status lines shown while the assistant works */
+const THINKING = ['Reading your trip details…', 'Checking our fleet…', 'Comparing seats, fuel and prices…', 'Checking availability…', 'Picking the best match…'];
+
+function Thinking() {
+  const [i, setI] = useState(0);
+  useEffect(() => { const t = setInterval(() => setI((n) => Math.min(n + 1, THINKING.length - 1)), 1600); return () => clearInterval(t); }, []);
+  return (
+    <div className="ai-msg ai-msg--assistant ai-thinking" role="status" aria-live="polite">
+      <span className="ai-thinking__orb"><Icon name="spark" /></span>
+      <span key={i} className="ai-thinking__text">{THINKING[i]}</span>
+    </div>
+  );
+}
+
+/** One recommended vehicle: photo + specs + the assistant's reason + Details / Book — shown once, inline */
+function VehicleCard({ v, children, className = '', style }) {
+  return (
+    <div className={`ai-car ${className}`} style={style}>
       <button type="button" className="ai-car__img" onClick={() => openVehicle(v)} aria-label={`View ${v.name}`}>
         {v.img ? <img src={v.img} alt="" loading="lazy" /> : <Icon name="car" />}
       </button>
       <div className="ai-car__info">
-        <strong>{v.name}</strong>
+        <strong>{v.name}{v.year ? <small> {v.year}</small> : null}</strong>
         <span className="ai-car__meta"><Icon name="seat" /> {v.seats} · {v.transKind === 'automatic' ? 'Auto' : 'Manual'} · {v.fuel}</span>
         <span className="ai-car__price"><Price lkr={v.price} /> <small>/ day</small></span>
       </div>
+      {children && <div className="ai-car__why">{children}</div>}
       <div className="ai-car__actions">
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => openVehicle(v)}>Details</button>
         <a className="btn btn--red btn--sm" href={`/book?v=${encodeURIComponent(v.id)}`}>Book</a>
@@ -46,6 +131,8 @@ function VehicleCard({ v }) {
     </div>
   );
 }
+
+const CAR = /^\[\[car:([A-Za-z0-9_-]+)\]\]\s*[:\-–—]?\s*(.*)$/;
 
 export default function AssistantChat() {
   const { path } = useRoute();
@@ -58,7 +145,15 @@ export default function AssistantChat() {
   const inputRef = useRef(null);
 
   useEffect(() => save(messages), [messages]);
-  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' }); }, [messages, busy, open]);
+  // Scroll to the newest message; a long reply is shown from its first line, not its end
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const items = list.querySelectorAll('.ai-msg');
+    const last = items[items.length - 1];
+    const top = last && last.offsetHeight > list.clientHeight - 40 ? last.offsetTop - 12 : list.scrollHeight;
+    list.scrollTo({ top, behavior: 'smooth' });
+  }, [messages, busy, open]);
   useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 250); }, [open]);
   useEffect(() => {
     if (!open) return undefined;
@@ -84,9 +179,11 @@ export default function AssistantChat() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'The assistant is unavailable right now.');
-      setMessages((m) => [...m, { role: 'assistant', content: data.reply, vehicles: data.vehicles ?? [] }]);
+      setMessages((m) => [...m, { role: 'assistant', content: data.reply, vehicles: data.vehicles ?? [], fresh: true }]);
     } catch (e) {
-      setMessages((m) => [...m, { role: 'assistant', content: `${e.message} You can also chat with our team on WhatsApp.`, error: true }]);
+      // "Failed to fetch" = offline, or the assistant isn't reachable — don't show browser jargon to customers
+      const why = e instanceof TypeError ? "Sorry, I can't connect right now." : e.message;
+      setMessages((m) => [...m, { role: 'assistant', content: `${why} You can also chat with our team on WhatsApp.`, error: true }]);
     } finally { setBusy(false); }
   };
 
@@ -111,18 +208,26 @@ export default function AssistantChat() {
         </header>
 
         <div className="ai-panel__list" ref={listRef}>
-          {messages.map((m, i) => (
-            <div key={i} className={`ai-msg ai-msg--${m.role}${m.error ? ' is-error' : ''}`}>
-              <p>{m.content}</p>
-              {m.vehicles?.length > 0 && (
-                <div className="ai-cars">
-                  {m.vehicles.map((id) => byId.get(String(id))).filter(Boolean).map((v) => <VehicleCard key={v.id} v={v} />)}
-                </div>
-              )}
-              {m.error && <a className="ai-msg__wa" href={wa} target="_blank" rel="noreferrer"><Icon name="chat" /> WhatsApp us</a>}
-            </div>
-          ))}
-          {busy && <div className="ai-msg ai-msg--assistant ai-typing" aria-label="Assistant is typing"><i /><i /><i /></div>}
+          {messages.map((m, i) => {
+            const animate = !!m.fresh && m.role === 'assistant';
+            const after = animate ? wordCount(m.content) * WORD_MS + 150 : 0;
+            // Older replies listed vehicles separately: show only those not already inline as cards
+            const extra = (m.vehicles ?? []).filter((id) => !m.content.includes(`[[car:${id}]]`)).map((id) => byId.get(String(id))).filter(Boolean);
+            return (
+              <div key={i} className={`ai-msg ai-msg--${m.role}${m.error ? ' is-error' : ''}${animate ? ' is-fresh' : ''}`}>
+                {m.role === 'assistant' ? <Rich text={m.content} animate={animate} byId={byId} /> : <p>{m.content}</p>}
+                {extra.length > 0 && (
+                  <div className="ai-cars">
+                    {extra.map((v, j) => (
+                      <VehicleCard key={v.id} v={v} className={animate ? 'ai-card-in' : ''} style={animate ? { animationDelay: `${after + j * 110}ms` } : undefined} />
+                    ))}
+                  </div>
+                )}
+                {m.error && <a className="ai-msg__wa" href={wa} target="_blank" rel="noreferrer"><Icon name="chat" /> WhatsApp us</a>}
+              </div>
+            );
+          })}
+          {busy && <Thinking />}
           {messages.length === 1 && !busy && (
             <div className="ai-starters">
               {STARTERS.map((s) => <button key={s} type="button" onClick={() => send(s)}>{s}</button>)}
