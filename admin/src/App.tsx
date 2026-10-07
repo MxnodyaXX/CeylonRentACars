@@ -13,6 +13,7 @@ import Vehicles from './pages/Vehicles';
 import Bookings from './pages/Bookings';
 import Inquiries from './pages/Inquiries';
 import InquiryPage from './pages/InquiryPage';
+import InquiryConsultation from './pages/InquiryConsultation';
 import Messages from './pages/Messages';
 import WhatsAppSetup from './pages/WhatsAppSetup';
 import WhatsAppTemplates from './pages/WhatsAppTemplates';
@@ -90,6 +91,7 @@ export default function App() {
           {/* Permission-gated pages — redirect to home if not allowed */}
           <Route path="/inquiries"  element={isAdmin() || can('canViewInquiries')   ? <Inquiries />  : <Navigate to="/" replace />} />
           <Route path="/inquiries/:id" element={isAdmin() || can('canViewInquiries') ? <InquiryPage /> : <Navigate to="/" replace />} />
+          <Route path="/inquiries/:id/consultation" element={isAdmin() || can('canViewInquiries') ? <InquiryConsultation /> : <Navigate to="/" replace />} />
           <Route path="/whatsapp-templates" element={isAdmin() ? <WhatsAppTemplates /> : <Navigate to="/messages" replace />} />
           <Route path="/whatsapp-setup" element={isAdmin() ? <WhatsAppSetup /> : <Navigate to="/" replace />} />
           <Route path="/messages" element={isAdmin() || can('canViewInquiries') ? <Messages /> : <Navigate to="/" replace />} />

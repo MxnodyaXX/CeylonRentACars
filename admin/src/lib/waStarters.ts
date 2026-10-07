@@ -32,7 +32,7 @@ export interface Starter {
 export interface StarterGroup { title: string; items: Starter[] }
 
 const SIGN = 'Kind regards,\nCeylon Rent A Cars';
-const HELP = 'For help at any time, call or WhatsApp us on +94 77 972 6761.';
+const HELP = 'For help at any time, reply to this message or call us on +94 77 972 6761.';
 
 /** Builds a message in the house style: paragraphs separated by a blank line, then the sign-off */
 const msg = (...paragraphs: string[]) => ['Dear {{name}},', ...paragraphs, SIGN].join('\n\n');
@@ -163,7 +163,7 @@ export const STARTER_GROUPS: StarterGroup[] = [
         body: msg(
           'Here are the pickup details for your booking.',
           details(['Booking', '{{reference}}'], ['Location', '{{pickup_location}}'], ['Map', '{{map_link}}']),
-          'When you arrive, please call or WhatsApp us on +94 77 972 6761.') },
+          'When you arrive, please message us here or call +94 77 972 6761.') },
       { title: 'Vehicle ready', name: 'vehicle_ready', when: 'Vehicle is prepared and ready',
         body: msg(
           'Your vehicle has been cleaned, checked and is ready for pickup.',
@@ -228,7 +228,7 @@ export const STARTER_GROUPS: StarterGroup[] = [
         body: msg(
           'Here are the return details for your vehicle.',
           details(['Booking', '{{reference}}'], ['Return location', '{{return_location}}'], ['Map', '{{map_link}}']),
-          'When you arrive, please call or WhatsApp us on +94 77 972 6761.') },
+          'When you arrive, please message us here or call +94 77 972 6761.') },
       { title: 'Return overdue', name: 'return_overdue', when: 'Vehicle has not been returned',
         body: msg(
           'Our records show that your rental vehicle has not been returned yet.',

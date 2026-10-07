@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { Price } from '../context/AppContext';
 import { fetchBusyDates, submitBookingRequest, useCatalog } from '../lib/fleet';
-import { CONTACT, PICKUP_LOCATIONS } from '../data/site';
+import { CONTACT, PICKUP_LOCATIONS, waLink } from '../data/site';
 import MapPicker, { MAPS_KEY } from './MapPicker';
 import Dropdown from './ui/Dropdown';
 import { DatePicker, TimePicker, label12 } from './ui/DateTime';
@@ -173,7 +173,7 @@ export default function BookingPage({ search = '' }) {
 
   /* ---------- Confirmation ---------- */
   if (status === 'done') {
-    const wa = `https://wa.me/${CONTACT.tel.replace(/\D/g, '')}?text=${encodeURIComponent(`Hi, I just sent booking request ${reference} for the ${vehicle?.name}.`)}`;
+    const wa = waLink(`Hi, I just sent booking request ${reference} for the ${vehicle?.name}.`);
     return (
       <main className="feedback-page">
         <div className="container">

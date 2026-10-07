@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Phone, MessageCircle, Mail, Copy, Flame, Snowflake, Thermometer, Sparkles, Timer, AlertTriangle, Info,
   CheckCircle2, Circle, MapPin, CalendarDays, User, Globe, Car, History, Repeat, XCircle, ArrowRight, ClipboardCheck,
-  Receipt, MessagesSquare,
+  Receipt, MessagesSquare, PhoneCall, ClipboardList,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
@@ -21,8 +21,10 @@ import {
   temperatureOf, templates, timeIn,
 } from '../lib/inquiryReview';
 import type { InquiryQuote } from '../types';
+import StartInquiryModal from '../components/ui/StartInquiryModal';
+import { LOST_REASONS as CONSULT_LOST_REASONS, advance, bookingFromAgreement, currentChoice, stageInfo, stageOf as pipelineStage } from '../lib/consultation';
 
-export const LOST_REASONS = ['No vehicle available', 'Dates not available', 'Budget mismatch', 'No response from customer', 'Customer cancelled', 'Found elsewhere', 'Other'];
+export const LOST_REASONS = CONSULT_LOST_REASONS;
 
 const TEMP = {
   New: { icon: Sparkles, cls: 'bg-brand-500 text-white' },
@@ -60,6 +62,7 @@ export default function InquiryPage() {
   const [lostReason, setLostReason] = useState(LOST_REASONS[0]);
   const [lostCustom, setLostCustom] = useState('');
   const [, tick] = useState(0);
+  const [startOpen, setStartOpen] = useState(false);
 
   useEffect(() => {
     loadFollowUps().then((l) => { setLogReady(l !== null); setFollowUps((l ?? []).filter((f) => f.inquiryId === id)); }).catch(() => {});
@@ -106,7 +109,7 @@ export default function InquiryPage() {
     toast.success(q.status === 'accepted' ? 'Quote accepted' : 'Quote saved', `Total ${rs(q.total)}`);
   };
   const quoteSent = async (q: InquiryQuote, via: 'WhatsApp' | 'Email') => {
-    patchInquiry(inq.id, { quote: q });
+    patchInquiry(inq.id, { quote: q, stage: advance(inq.stage, 'QUOTATION_SENT') });
     if (!logReady) return;
     try { logAdded(await addFollowUp({ inquiryId: inq.id, channel: via, outcome: 'Quote sent', response: `Quote ${rs(q.total)} (deposit ${rs(q.deposit)}) sent via ${via}.`, staff })); }
     catch { /* the quote itself is saved; logging is best-effort */ }
@@ -114,7 +117,7 @@ export default function InquiryPage() {
 
   // Remember which vehicles were offered — the customer can only choose one of these on the website
   const offerAlternatives = () => {
-    if (alt.list.length) patchInquiry(inq.id, { alternativesOffered: alt.list.map((v) => v.id) });
+    if (alt.list.length) patchInquiry(inq.id, { alternativesOffered: alt.list.map((v) => v.id), stage: advance(inq.stage, 'OPTIONS_SENT') });
     openWa(tpl.find((t) => t.id === 'alternatives')!.text);
   };
 
@@ -133,23 +136,32 @@ export default function InquiryPage() {
   };
 
   const convert = () => {
+    // Terms agreed in the consultation → the booking is prefilled from exactly what the customer accepted
+    const agreed = inq.consultation?.agreement;
+    if (agreed) {
+      updateInquiry(inq.id, { status: 'Converted', stage: 'BOOKED' });
+      navigate('/bookings', { state: { fromInquiry: bookingFromAgreement(inq, agreed, email) } });
+      return;
+    }
     if (!ready && !confirm(`Only ${done} of ${CHECKLIST.length} checks are done. Convert to a booking anyway?`)) return;
     const st = timeIn(req.fields.Pickup), et = timeIn(req.fields.Return);
     const last = followUps.find((f) => f.response && f.outcome !== 'Quote sent');
-    updateInquiry(inq.id, { status: 'Converted' });
+    const cons = inq.consultation;
+    const hm = (dt?: string) => (dt && dt.length >= 16 ? dt.slice(11, 16) : undefined);
+    updateInquiry(inq.id, { status: 'Converted', stage: 'BOOKED' });
     navigate('/bookings', {
       state: {
         fromInquiry: {
           customerName: inq.customerName,
           customerPhone: inq.customerPhone,
           customerEmail: email,
-          startDate: inq.startDate,
-          endDate: inq.endDate,
-          vehicleId: alt.requested?.id,
-          startTime: st ? `${pad2(st[0])}:${pad2(st[1])}` : undefined,
-          endTime: et ? `${pad2(et[0])}:${pad2(et[1])}` : undefined,
-          pickupLocation: req.fields.Pickup ? placeIn(req.fields.Pickup) : undefined,
-          dropLocation: req.fields.Return ? placeIn(req.fields.Return) : undefined,
+          startDate: cons?.pickupAt?.slice(0, 10) || inq.startDate,
+          endDate: cons?.returnAt?.slice(0, 10) || inq.endDate,
+          vehicleId: currentChoice(inq).vehicleId ?? alt.requested?.id,   // latest choice — staff or website
+          startTime: hm(cons?.pickupAt) ?? (st ? `${pad2(st[0])}:${pad2(st[1])}` : undefined),
+          endTime: hm(cons?.returnAt) ?? (et ? `${pad2(et[0])}:${pad2(et[1])}` : undefined),
+          pickupLocation: cons?.pickupLocation || (req.fields.Pickup ? placeIn(req.fields.Pickup) : undefined),
+          dropLocation: (cons?.differentReturn ? cons.returnLocation : cons?.pickupLocation) || (req.fields.Return ? placeIn(req.fields.Return) : undefined),
           totalAmount: inq.quote?.total,
           notes: [
             inq.requestedVehicle && `Requested: ${inq.requestedVehicle}`,
@@ -157,6 +169,7 @@ export default function InquiryPage() {
             req.fields.Type && `Type: ${req.fields.Type}`,
             inq.quote && `Quote: ${rs(inq.quote.total)} (deposit ${rs(inq.quote.deposit)})`,
             last?.response && `Customer: ${last.response}`,
+            cons?.summary && `\n${cons.summary}`,
           ].filter(Boolean).join('\n'),
         },
       },
@@ -165,7 +178,7 @@ export default function InquiryPage() {
 
   const confirmLost = () => {
     const reason = lostReason === 'Other' ? (lostCustom.trim() || 'Other') : lostReason;
-    updateInquiry(inq.id, { status: 'Lost', lostReason: reason });
+    updateInquiry(inq.id, { status: 'Lost', lostReason: reason, stage: 'LOST' });
     setLostOpen(false);
   };
 
@@ -188,6 +201,7 @@ export default function InquiryPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl md:text-2xl font-extrabold text-navy-800 truncate">{inq.customerName}</h1>
               <StatusBadge status={inq.status} />
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${stageInfo(pipelineStage(inq)).cls}`}>{stageInfo(pipelineStage(inq)).label}</span>
               {req.reference && <span className="text-[11px] font-mono font-bold bg-navy-50 border border-navy-100 rounded-md px-2 py-0.5">{req.reference}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap mt-2">
@@ -202,7 +216,16 @@ export default function InquiryPage() {
             </div>
           </div>
           {pending && (
-            <div className="flex gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+              {inq.consultation ? (
+                <Link to={`/inquiries/${inq.id}/consultation`} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold bg-violet-600 text-white hover:bg-violet-700">
+                  <ClipboardList size={16} /> {inq.consultation.completedAt ? 'Open consultation' : 'Continue consultation'}
+                </Link>
+              ) : (
+                <button onClick={() => setStartOpen(true)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold bg-brand-500 text-white hover:bg-brand-600 shadow-[0_6px_16px_rgba(225,29,42,.3)]">
+                  <PhoneCall size={16} /> Start inquiry
+                </button>
+              )}
               <button onClick={convert} className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors ${ready ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-[0_6px_16px_rgba(5,150,105,.3)]' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
                 <CheckCircle2 size={16} /> Convert to booking
               </button>
@@ -275,6 +298,33 @@ export default function InquiryPage() {
               ))}
             </div>
           </Section>
+
+          {inq.consultation && (
+            <Section icon={ClipboardList} title="Consultation"
+                     right={<Link to={`/inquiries/${inq.id}/consultation`} className="text-xs font-semibold text-brand-500 hover:underline">{inq.consultation.completedAt ? 'Open' : 'Continue'} →</Link>}>
+              {inq.consultation.agreement ? (() => {
+                const a = inq.consultation!.agreement!;
+                return (
+                  <div className="rounded-xl border-2 border-teal-300 bg-teal-50/50 px-3 py-2.5 mb-3 text-sm">
+                    <p className="font-bold text-teal-800 flex items-center gap-1.5"><CheckCircle2 size={15} /> Customer confirmed the terms</p>
+                    <p className="text-navy-700 mt-1">{a.vehicle} · <b>{rs(a.total)}</b> · advance {rs(a.advanceAmount)} ({a.paymentMethod}) · balance {rs(Math.max(0, a.total - a.advanceAmount))} {a.balanceDue.toLowerCase()}{a.depositAmount ? ` · deposit ${rs(a.depositAmount)}` : ''}</p>
+                    {pending && <button type="button" onClick={convert} className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700"><CalendarDays size={15} /> Create booking with these terms</button>}
+                  </div>
+                );
+              })() : (inq.consultation.agreementHistory?.length ?? 0) > 0 && pending && (
+                <p className="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2 mb-3 flex items-center gap-1.5"><Repeat size={13} /> The customer changed their mind after confirming — confirm the new terms in the consultation.</p>
+              )}
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {inq.consultation.leadQuality && <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-navy-700 text-white">{inq.consultation.leadQuality}</span>}
+                {inq.consultation.nextAction && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800">Next: {inq.consultation.nextAction}{inq.consultation.nextFollowUpAt ? ` · ${prettyDate(inq.consultation.nextFollowUpAt)}` : ''}</span>}
+                <span className="text-[11px] text-navy-400">{inq.consultation.attempts.length} contact attempt{inq.consultation.attempts.length === 1 ? '' : 's'}{inq.consultation.completedAt ? ` · finished ${prettyDate(inq.consultation.completedAt)}` : ' · in progress'}</span>
+              </div>
+              {inq.consultation.summary
+                ? <pre className="text-xs text-navy-700 bg-navy-50/70 rounded-xl p-3 whitespace-pre-wrap font-sans leading-relaxed max-h-72 overflow-y-auto">{inq.consultation.summary}</pre>
+                : <p className="text-sm text-navy-500">The summary is created when the consultation is finished.</p>}
+              {inq.consultation.internalNotes && <p className="text-xs text-navy-600 bg-amber-50/60 rounded-lg px-3 py-2 mt-2"><b>Internal:</b> {inq.consultation.internalNotes}</p>}
+            </Section>
+          )}
 
           {flags.length > 0 && (
             <section className="rounded-xl2 border border-amber-200 bg-amber-50 p-4 space-y-2">
@@ -475,6 +525,8 @@ export default function InquiryPage() {
           <button type="button" onClick={convert} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold ${ready ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700'}`}><CalendarDays size={15} /> Convert</button>
         </div>
       )}
+
+      <StartInquiryModal inquiry={inq} open={startOpen} onClose={() => setStartOpen(false)} onLogged={logAdded} />
 
       <Modal open={lostOpen} onClose={() => setLostOpen(false)} title="Mark as Lost">
         <div className="space-y-4">

@@ -101,4 +101,13 @@ export const FOOTER_COLUMNS = [
   { title: 'Support', links: [['Help Centre', '#faq'], ['Leave Feedback', '/feedback'], ['Emergency Support', '#'], ['Terms', '#'], ['Privacy', '#']] },
 ];
 
-export const CONTACT = { email: 'hello@ceylonrentacars.lk', phone: '077 972 6761', tel: '+94779726761' };
+// phone/tel = phone calls; whatsapp/waTel = the company WhatsApp Business number (chats, WhatsApp calls)
+export const CONTACT = {
+  email: 'hello@ceylonrentacars.lk',
+  phone: '077 972 6761', tel: '+94779726761',
+  whatsapp: '071 733 3313', waTel: '+94717333313',
+};
+
+/** wa.me link to the company WhatsApp, optionally with a pre-filled message */
+export const waLink = (text) =>
+  `https://wa.me/${CONTACT.waTel.replace(/\D/g, '')}${text ? `?text=${encodeURIComponent(text)}` : ''}`;

@@ -34,6 +34,7 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
     mileage: numOpt(r.mileage), createdAt: r.created_at as string,
     fuelEfficiency: numOpt(r.fuel_efficiency),
     tankCapacity: numOpt(r.tank_capacity),
+    hillSuitable: typeof r.hill_suitable === 'boolean' ? r.hill_suitable : null,
     webFeatured: r.web_featured === true,
     webOrder: numOpt(r.web_order),
     webCategory: (r.web_category as string) ?? undefined,
@@ -55,6 +56,7 @@ function vToDb(v: Vehicle) {
     // only sent when filled, so inserts still work before website.sql adds the columns
     ...(v.fuelEfficiency != null && { fuel_efficiency: v.fuelEfficiency }),
     ...(v.tankCapacity != null && { tank_capacity: v.tankCapacity }),
+    ...(v.hillSuitable != null && { hill_suitable: v.hillSuitable }),
   }
 }
 
@@ -193,6 +195,8 @@ function iFromDb(r: Record<string, unknown>): Inquiry {
     alternativeChosen: (r.alternative_chosen as string) ?? undefined,
     alternativesOffered: Array.isArray(r.alternatives_offered) ? (r.alternatives_offered as string[]) : undefined,
     vehicleHistory: Array.isArray(r.vehicle_history) ? (r.vehicle_history as Inquiry['vehicleHistory']) : undefined,
+    consultation: (r.consultation as Inquiry['consultation']) ?? undefined,
+    stage: (r.stage as Inquiry['stage']) ?? undefined,
   }
 }
 
@@ -397,6 +401,7 @@ export const db = {
     if (u.dailyRent !== undefined) row.daily_rent = u.dailyRent
     if (u.extraKmRate !== undefined) row.extra_km_rate = u.extraKmRate
     if (u.includedKmPerDay !== undefined) row.included_km_per_day = u.includedKmPerDay
+    if (u.hillSuitable !== undefined) row.hill_suitable = u.hillSuitable
     if (u.status !== undefined) row.status = u.status
     if (u.insurance !== undefined) row.insurance = u.insurance
     if (u.revenue !== undefined) row.revenue = u.revenue
@@ -494,6 +499,8 @@ export const db = {
     if (u.checklist !== undefined) row.checklist = u.checklist
     if (u.quote !== undefined) row.quote = u.quote
     if (u.alternativesOffered !== undefined) row.alternatives_offered = u.alternativesOffered
+    if (u.consultation !== undefined) row.consultation = u.consultation
+    if (u.stage !== undefined) row.stage = u.stage
     return supabase.from('inquiries').update(row).eq('id', id)
   },
 

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { chooseAlternative, useCatalog } from '../lib/fleet';
 import { VehicleRow } from './AllVehicles';
-import { CONTACT } from '../data/site';
+import { CONTACT, waLink } from '../data/site';
 
 const pretty = d => (d ? new Date(d + 'T00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const isDate = d => /^\d{4}-\d{2}-\d{2}$/.test(d || '');
@@ -27,7 +27,7 @@ export default function AlternativesPage({ search = '' }) {
   const list = ids.map(id => vehicles.find(v => v.id === id)).filter(Boolean);
   const bookQuery = `${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}`
     + `${original ? `&alt=${encodeURIComponent(original)}` : ''}${name ? `&n=${encodeURIComponent(name)}` : ''}${ref ? `&ref=${encodeURIComponent(ref)}` : ''}`;
-  const wa = `https://wa.me/${CONTACT.tel.replace(/\D/g, '')}?text=${encodeURIComponent(`Hi, about my booking request${ref ? ` ${ref}` : ''} — I'd like one of the alternative vehicles.`)}`;
+  const wa = waLink(`Hi, about my booking request${ref ? ` ${ref}` : ''} — I'd like one of the alternative vehicles.`);
 
   // One-tap choice (no form): the original request's dates, locations and contact details are reused
   const [confirming, setConfirming] = useState(null);   // vehicle id awaiting "Yes, choose it"

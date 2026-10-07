@@ -1,6 +1,6 @@
 import { Icon } from './Icon';
 import { CurrencySelect, Logo } from './Header';
-import { CONTACT, FOOTER_COLUMNS } from '../data/site';
+import { CONTACT, FOOTER_COLUMNS, waLink } from '../data/site';
 
 const SOCIALS = [
   { icon: 'fb', label: 'Facebook' },
@@ -34,9 +34,12 @@ export default function Footer() {
             <ul className="contact">
               <li><Icon name="mail" size="sm" /><a href={`mailto:${CONTACT.email}`}>{CONTACT.email}</a></li>
               <li><Icon name="phone" size="sm" /><a href={`tel:${CONTACT.tel}`}>{CONTACT.phone}</a></li>
+              <li><Icon name="chat" size="sm" /><a href={waLink()} target="_blank" rel="noreferrer">WhatsApp {CONTACT.whatsapp}</a></li>
             </ul>
             <div className="socials">
-              {SOCIALS.map(s => <a key={s.icon} href="#" aria-label={s.label}><Icon name={s.icon} /></a>)}
+              {SOCIALS.map(s => s.icon === 'chat'
+                ? <a key={s.icon} href={waLink()} target="_blank" rel="noreferrer" aria-label={s.label}><Icon name={s.icon} /></a>
+                : <a key={s.icon} href="#" aria-label={s.label}><Icon name={s.icon} /></a>)}
             </div>
           </div>
 

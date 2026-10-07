@@ -4,7 +4,7 @@ import { Price } from '../context/AppContext';
 import { fleetEnabled, useCatalog } from '../lib/fleet';
 import { openVehicle } from './VehicleModal';
 import { useRoute } from '../lib/router';
-import { CONTACT } from '../data/site';
+import { waLink } from '../data/site';
 
 /*
  * "Find my car" — AI assistant (Supabase Edge Function `vehicle-assistant`, powered by Claude).
@@ -228,7 +228,7 @@ export default function AssistantChat() {
   };
 
   const reset = () => { setMessages([GREETING]); setText(''); };
-  const wa = `https://wa.me/${CONTACT.tel.replace(/\D/g, '')}?text=${encodeURIComponent('Hi, I need help choosing a vehicle.')}`;
+  const wa = waLink('Hi, I need help choosing a vehicle.');
 
   return (
     <>

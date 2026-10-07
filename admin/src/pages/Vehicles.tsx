@@ -240,6 +240,7 @@ export default function Vehicles() {
         // Only send the spec fields if they changed (keeps edits working before website.sql adds them)
         if (details.fuelEfficiency === (selected?.fuelEfficiency ?? undefined)) delete details.fuelEfficiency;
         if (details.tankCapacity === (selected?.tankCapacity ?? undefined)) delete details.tankCapacity;
+        if ((details.hillSuitable ?? null) === (selected?.hillSuitable ?? null)) delete details.hillSuitable;
         updateVehicle(vehicleId, { ...details, ...imageUpdates });
       } else if (Object.keys(imageUpdates).length > 0) {
         updateVehicle(vehicleId, imageUpdates);
@@ -572,6 +573,11 @@ export default function Vehicles() {
           <Field label="Extra km rate (Rs/km)">
             <input className="input" type="number" value={form.extraKmRate ?? 50} onChange={(e) => set('extraKmRate', +e.target.value)} placeholder="50" />
           </Field>
+          <Field label="Hill country (Kandy, Nuwara Eliya, Ella…)">
+            <Select value={form.hillSuitable == null ? '' : form.hillSuitable ? 'yes' : 'no'}
+              onChange={(v) => set('hillSuitable', v === '' ? null : v === 'yes')} placeholder="Not set" nullable
+              options={[{ value: 'yes', label: 'Suitable for hill roads' }, { value: 'no', label: 'Not suitable for hill roads' }]} />
+          </Field>
           <Field label="Status">
             <Select value={form.status} onChange={(v) => set('status', v as VehicleStatus)}
               options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))} />
@@ -743,6 +749,7 @@ export default function Vehicles() {
                   ['Daily Rent',    `Rs ${selected.dailyRent.toLocaleString()}`],
                   ['Included km',   `${selected.includedKmPerDay ?? 100} km/day`],
                   ['Extra km rate', `Rs ${selected.extraKmRate ?? 50}/km`],
+                  ['Hill country',  selected.hillSuitable == null ? 'Not set' : selected.hillSuitable ? 'Suitable' : 'Not suitable'],
                   ['Color',         selected.color ?? '—'],
                   ['Fuel',          selected.fuelType ?? '—'],
                   ['Transmission',  selected.transmission ?? '—'],

@@ -45,6 +45,7 @@ export interface Vehicle {
   mileage?: number;
   fuelEfficiency?: number | null;   // km per litre
   tankCapacity?: number | null;     // litres
+  hillSuitable?: boolean | null;    // OK for steep hill-country roads (Kandy, Nuwara Eliya, Ella…); null = not set
   createdAt: string;
   // Ceylon Rent A Cars website listing (managed on the Website page)
   webFeatured?: boolean;
@@ -182,6 +183,126 @@ export interface Inquiry {
   alternativeChosen?: string;               // the customer moved from this inquiry to that one
   alternativesOffered?: string[];           // vehicle ids offered to the customer as alternatives
   vehicleHistory?: VehicleChange[];         // earlier vehicles of this inquiry (oldest first); requestedVehicle is the current one
+  consultation?: Consultation;              // what staff confirmed with the customer — the original fields above are never overwritten
+  stage?: InquiryStage;                     // pipeline stage (status stays Pending / Converted / Lost)
+}
+
+export type InquiryStage =
+  | 'NEW' | 'CONTACTING' | 'CONSULTATION' | 'OPTIONS_SENT' | 'QUOTATION_SENT' | 'CUSTOMER_DECISION' | 'CONFIRMED' | 'BOOKED'
+  | 'FOLLOW_UP_REQUIRED' | 'LOST' | 'CANCELLED' | 'NO_RESPONSE';
+
+/** Every time the customer picks (or changes to) a vehicle — so changes of mind stay on record */
+export interface VehicleChoice {
+  vehicleId: string;
+  vehicle: string;
+  at: string;
+  by: string;
+  source: 'Staff' | 'Website';
+  note?: string;
+}
+
+/** What the customer finally agreed to — the basis of the booking */
+export interface BookingAgreement {
+  vehicleId: string;
+  vehicle: string;
+  pickupAt?: string;
+  returnAt?: string;
+  pickupLocation?: string;
+  returnLocation?: string;
+  mode?: string;
+  distanceKm?: number;
+  dailyRate: number;
+  days: number;
+  extraKmCost: number;
+  extras: number;            // driver, child seat, airport fee… (from the quote)
+  discount: number;
+  total: number;
+  advanceAmount: number;     // paid now to secure the booking
+  paymentMethod: string;     // Cash / Card / Bank transfer / Online
+  balanceDue: string;        // Before pickup / At pickup / At return
+  depositAmount: number;     // refundable security deposit
+  depositType: 'cash' | 'vehicle' | 'other';
+  confirmedVia: string;      // Call / WhatsApp / Email / In person
+  confirmedAt: string;
+  confirmedBy: string;
+  notes?: string;
+  supersededAt?: string;     // set when the customer later changed their mind
+  supersededReason?: string;
+}
+
+/** One attempt to reach the customer from "Start inquiry" */
+export interface ContactAttempt {
+  at: string;
+  by: string;
+  method: string;            // WhatsApp call / Normal call / WhatsApp chat / Other
+  status: string;            // Connected / No answer / Busy / Call back requested / Wrong number
+  note?: string;
+}
+
+/**
+ * Inquiry Consultation — the customer's CONFIRMED requirement, the company's proposal
+ * and the outcome. Kept beside (never instead of) what the customer originally submitted.
+ */
+export interface Consultation {
+  startedAt: string;
+  startedBy: string;
+  completedAt?: string;
+  attempts: ContactAttempt[];
+  // 1 + 3. Confirmed requirement & pickup / return
+  pickupLocation?: string;
+  pickupAt?: string;           // yyyy-MM-ddTHH:mm
+  returnLocation?: string;
+  returnAt?: string;
+  differentReturn?: boolean;
+  airportDelivery?: boolean;
+  requirement?: string;        // e.g. "Vehicle for 7 passengers + luggage"
+  // 2. Travel purpose (changes what a "good" vehicle is), passengers & travel
+  purpose?: string;            // one of PURPOSES in lib/consultation
+  companyName?: string;        // business / company rentals
+  invoiceRequired?: boolean;   // company needs a tax invoice
+  adults?: number;
+  children?: number;
+  infants?: number;
+  largeBags?: number;
+  smallBags?: number;
+  childSeats?: number;
+  distanceKm?: number;         // customer's estimate of the total km for the whole rental (asked before the budget)
+  areas?: string;
+  usage?: 'City' | 'Long distance' | 'Mixed';
+  highway?: boolean;
+  hillCountry?: boolean;       // trip includes hill country; undefined = detect from the route
+  // 4. Priorities
+  priorities?: string[];
+  // 8. Budget
+  budgetPerDay?: number;
+  budgetMaxPerDay?: number;
+  budgetFlexible?: boolean;
+  // 9. Driving
+  mode?: 'Self drive' | 'With driver' | 'Airport pickup';
+  nationality?: string;
+  licence?: 'Sri Lankan' | 'Foreign' | 'None';
+  idp?: boolean;
+  driverAge?: number;
+  // 10. Special requirements
+  special?: string[];
+  specialNotes?: string;
+  // 11. Notes
+  customerNotes?: string;
+  internalNotes?: string;
+  // 6. Proposal
+  suggested?: string[];        // vehicle ids sent to the customer
+  manualIds?: string[];        // vehicles staff added to the send list by hand
+  excludedIds?: string[];      // system suggestions staff unticked
+  selectedVehicleId?: string;  // what the customer chose (latest)
+  choiceLog?: VehicleChoice[]; // every pick / change of mind, oldest first
+  // 15. Decision & booking
+  agreement?: BookingAgreement;           // current confirmed terms
+  agreementHistory?: BookingAgreement[];  // earlier terms the customer later changed
+  // 12–14. Outcome
+  leadQuality?: 'Hot' | 'Warm' | 'Cold' | 'Follow-up required' | 'Not interested';
+  nextAction?: string;
+  nextFollowUpAt?: string;     // yyyy-MM-ddTHH:mm
+  summary?: string;            // generated when the consultation is finished
 }
 
 /** A vehicle the inquiry had before it moved to another one */

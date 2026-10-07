@@ -181,7 +181,12 @@ export default function Bookings() {
 
   // Auto-open booking form when navigated from an inquiry conversion
   useEffect(() => {
-    const inq = (location.state as { fromInquiry?: { customerName: string; customerPhone: string; startDate: string; endDate: string; notes: string; vehicleId?: string; startTime?: string; endTime?: string; pickupLocation?: string; dropLocation?: string; customerEmail?: string; totalAmount?: number } } | null)?.fromInquiry;
+    const inq = (location.state as { fromInquiry?: {
+      customerName: string; customerPhone: string; startDate: string; endDate: string; notes: string; vehicleId?: string;
+      startTime?: string; endTime?: string; pickupLocation?: string; dropLocation?: string; customerEmail?: string; totalAmount?: number;
+      // from the agreed booking terms (inquiry consultation)
+      paidAmount?: number; depositAmount?: number; depositType?: 'cash' | 'vehicle' | 'other'; totalKm?: number;
+    } } | null)?.fromInquiry;
     if (!inq) return;
     const f = emptyForm();
     f.customerName  = inq.customerName  ?? '';
@@ -196,6 +201,9 @@ export default function Bookings() {
     if (inq.dropLocation)   f.dropLocation   = inq.dropLocation;
     if (inq.customerEmail)  f.customerEmail  = inq.customerEmail;
     if (inq.totalAmount)    f.totalAmount    = inq.totalAmount;
+    if (inq.paidAmount)     f.paidAmount     = inq.paidAmount;
+    if (inq.depositAmount)  { f.depositAmount = inq.depositAmount; f.depositType = inq.depositType ?? 'cash'; }
+    if (inq.totalKm)        f.quotation = { ...f.quotation, totalKm: inq.totalKm };
     setForm(f);
     setModal('add');
     setAvailability(null);

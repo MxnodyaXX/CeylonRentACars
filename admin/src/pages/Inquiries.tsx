@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import Header from '../components/layout/Header';
 import StatusBadge from '../components/ui/StatusBadge';
+import { stageInfo } from '../lib/consultation';
 import Modal from '../components/ui/Modal';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
@@ -225,7 +226,9 @@ export default function Inquiries() {
                   const r = responseInfo(inq.createdAt, mine);
                   return (
                     <>
-                      <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${STAGE_STYLE[st.stage]}`}>{st.stage}{t.level !== 'New' ? ` · ${t.level}` : ''}</span>
+                      {inq.stage && inq.stage !== 'NEW'
+                        ? <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${stageInfo(inq.stage).cls}`}>{stageInfo(inq.stage).label}{inq.consultation?.leadQuality ? ` · ${inq.consultation.leadQuality}` : t.level !== 'New' ? ` · ${t.level}` : ''}</span>
+                        : <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${STAGE_STYLE[st.stage]}`}>{st.stage}{t.level !== 'New' ? ` · ${t.level}` : ''}</span>}
                       {!r.contacted && r.late && <span className="text-[10px] font-bold text-red-600">⚠ {r.time} waiting</span>}
                     </>
                   );

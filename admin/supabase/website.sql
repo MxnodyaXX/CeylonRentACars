@@ -140,6 +140,13 @@ alter table inquiries add column if not exists alternative_chosen text;   -- on 
 alter table inquiries add column if not exists alternatives_offered jsonb; -- vehicle ids the team offered (only these can be chosen)
 -- Every vehicle the inquiry had before its current one: [{ vehicle, vehicleId, replacedAt, reason, quote }]
 alter table inquiries add column if not exists vehicle_history jsonb not null default '[]'::jsonb;
+-- Inquiry Consultation: what staff CONFIRMED with the customer (the original columns are never overwritten),
+-- the proposal and the outcome. stage = pipeline step: NEW, CONTACTING, CONSULTATION, OPTIONS_SENT,
+-- QUOTATION_SENT, CUSTOMER_DECISION, BOOKED, FOLLOW_UP_REQUIRED, LOST, CANCELLED, NO_RESPONSE
+alter table inquiries add column if not exists consultation jsonb;
+alter table inquiries add column if not exists stage text;
+-- Vehicle is fine on steep hill-country roads (Kandy, Nuwara Eliya, Ella…); null = not set yet
+alter table vehicles add column if not exists hill_suitable boolean;
 
 -- Internal: move an inquiry to another vehicle, keeping the previous one (and its quote) in vehicle_history.
 -- Vehicle-specific checks (availability, fit, price) and the old quote are reset; the estimate is recalculated.

@@ -23,6 +23,11 @@ export const OUTCOMES: { value: string; tone: 'green' | 'amber' | 'red' | 'grey'
   { value: 'Requested changes', tone: 'amber' },
   { value: 'Needs more time', tone: 'amber' },
   { value: 'No answer', tone: 'grey' },
+  // contact statuses from "Start inquiry"
+  { value: 'Connected', tone: 'blue' },
+  { value: 'Busy', tone: 'grey' },
+  { value: 'Call back requested', tone: 'amber' },
+  { value: 'Wrong number', tone: 'red' },
   { value: 'Not interested', tone: 'red' },
 ];
 
