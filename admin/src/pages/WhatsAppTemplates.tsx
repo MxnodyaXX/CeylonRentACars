@@ -1,31 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Plus, RefreshCw, Trash2, Loader2, CheckCircle2, Clock, XCircle, Sparkles, Info } from 'lucide-react';
+import { ArrowLeft, Plus, RefreshCw, Trash2, Loader2, CheckCircle2, Clock, XCircle, Sparkles, Info, Search, ChevronDown, Send } from 'lucide-react';
 import Header from '../components/layout/Header';
 import { toast } from '../store/useToast';
 import { AUTO_VARS, WaTemplate, createTemplate, deleteTemplate, loadTemplates, varsIn, whatsappDemo } from '../lib/whatsappInbox';
+import { STARTER_GROUPS, STARTER_SAMPLES, Starter } from '../lib/waStarters';
 
-/** Ready-made car-rental templates (Utility = cheapest, approved fastest) */
-const STARTERS: { title: string; name: string; body: string }[] = [
-  { title: 'Booking confirmed', name: 'booking_confirmed',
-    body: 'Dear {{name}}, your booking {{reference}} for the {{vehicle}} ({{dates}}) is confirmed. Thank you for choosing Ceylon Rent A Cars. Reply to this message if you have any questions.' },
-  { title: 'Pickup reminder', name: 'pickup_reminder',
-    body: 'Dear {{name}}, this is a reminder that your {{vehicle}} will be ready for pickup on {{pickup_time}} at {{pickup_location}} (booking {{reference}}). Reply to this message if anything changes.' },
-  { title: 'Return reminder', name: 'return_reminder',
-    body: 'Dear {{name}}, a reminder that the {{vehicle}} (booking {{reference}}) is due back on {{return_time}}. Reply to this message if you would like to extend your rental.' },
-  { title: 'Payment received', name: 'payment_received',
-    body: 'Dear {{name}}, we have received your payment of {{amount}} for booking {{reference}}. Thank you for choosing Ceylon Rent A Cars.' },
-  { title: 'Alternative vehicles', name: 'vehicle_alternatives',
-    body: 'Dear {{name}}, the {{vehicle}} is not available for {{dates}}. Please see the vehicles we can offer instead for request {{reference}} here: {{link}} and reply to this message with any questions.' },
-  { title: 'Feedback request', name: 'feedback_request',
-    body: 'Dear {{name}}, thank you for renting the {{vehicle}} with Ceylon Rent A Cars (booking {{reference}}). Please share your feedback here: {{link}} and reply to this message if you need anything.' },
-];
-
-const SAMPLES: Record<string, string> = {
-  name: 'Manodya', vehicle: 'Toyota Raize', dates: '8 Oct 2026 - 9 Oct 2026', reference: 'CRC-5D453B',
-  pickup_time: '8 Oct, 9:00 AM', pickup_location: 'Bandaranaike Airport', return_time: '9 Oct, 6:00 PM',
-  amount: 'LKR 25,000', link: 'https://ceylon-rent-a-cars.vercel.app',
-};
+const STARTERS = STARTER_GROUPS.flatMap((g) => g.items);
+const SAMPLES = STARTER_SAMPLES;
 
 const STATUS: Record<string, { cls: string; icon: JSX.Element; label: string }> = {
   APPROVED: { cls: 'bg-emerald-50 text-emerald-700', icon: <CheckCircle2 size={13} />, label: 'Approved' },
@@ -88,8 +70,8 @@ export default function WhatsAppTemplates() {
     requestAnimationFrame(() => { el.focus(); el.setSelectionRange(a + token.length, a + token.length); });
   };
 
-  const applyStarter = (s: (typeof STARTERS)[number]) => {
-    setTitle(s.title); setName(s.name); setNameEdited(false); setBody(s.body); setCategory('UTILITY'); setSamples({});
+  const applyStarter = (s: Starter) => {
+    setTitle(s.title); setName(s.name); setNameEdited(false); setBody(s.body); setCategory(s.category ?? 'UTILITY'); setSamples({});
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -105,6 +87,34 @@ export default function WhatsAppTemplates() {
     } catch (e) {
       toast.error('Template not created', (e as Error).message);
     } finally { setSaving(false); }
+  };
+
+  // Ready-made list: search, open steps, and "submit all in this step"
+  const [query, setQuery] = useState('');
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set([STARTER_GROUPS[0].title]));
+  const [bulk, setBulk] = useState<{ group: string; done: number; total: number } | null>(null);
+  const added = (s: Starter) => list.some((t) => t.name === s.name);
+  const addedCount = STARTERS.filter(added).length;
+  const q = query.trim().toLowerCase();
+  const match = (s: Starter) => !q || `${s.title} ${s.when} ${s.body}`.toLowerCase().includes(q);
+  const toggleGroup = (g: string) => setOpenGroups((o) => { const n = new Set(o); if (n.has(g)) n.delete(g); else n.add(g); return n; });
+
+  const submitGroup = async (g: (typeof STARTER_GROUPS)[number]) => {
+    const todo = g.items.filter((s) => !added(s));
+    if (!todo.length || !confirm(`Submit ${todo.length} template${todo.length === 1 ? '' : 's'} from "${g.title}" to Meta for approval?`)) return;
+    setBulk({ group: g.title, done: 0, total: todo.length });
+    const failed: string[] = [];
+    for (const [k, s] of todo.entries()) {
+      try {
+        const examples = Object.fromEntries(varsIn(s.body).map((v) => [v, SAMPLES[v] || v.replace(/_/g, ' ')]));
+        await createTemplate({ name: s.name, category: s.category ?? 'UTILITY', body: s.body, examples });
+      } catch (e) { failed.push(`${s.title}: ${(e as Error).message}`); }
+      setBulk({ group: g.title, done: k + 1, total: todo.length });
+    }
+    setBulk(null);
+    refresh();
+    if (failed.length) toast.error(`${failed.length} not submitted`, failed.join(' · '));
+    else toast.success(`${todo.length} templates sent for review`, 'Usually approved within minutes — the status updates on the right.');
   };
 
   const remove = async (t: WaTemplate) => {
@@ -192,20 +202,63 @@ export default function WhatsAppTemplates() {
             {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Submit to Meta for approval
           </button>
 
-          <div className="border-t border-navy-100 pt-4">
-            <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5 mb-2"><Sparkles size={15} className="text-amber-500" /> Ready-made templates — click to use</p>
-            <div className="grid sm:grid-cols-2 gap-2">
-              {STARTERS.map((s) => {
-                const exists = list.some((t) => t.name === s.name);
-                return (
-                  <button key={s.name} type="button" disabled={exists} onClick={() => applyStarter(s)}
-                          className="text-left rounded-xl border border-navy-100 px-3 py-2 hover:bg-navy-50 disabled:opacity-50">
-                    <p className="text-sm font-semibold text-navy-800">{s.title} {exists && <span className="text-[10px] text-emerald-700">· added</span>}</p>
-                    <p className="text-[11px] text-navy-500 line-clamp-2">{s.body}</p>
-                  </button>
-                );
-              })}
+          <div className="border-t border-navy-100 pt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5 flex-1"><Sparkles size={15} className="text-amber-500" /> Ready-made templates — in customer-journey order</p>
+              <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 rounded-full px-2 py-0.5">{addedCount} / {STARTERS.length} added</span>
             </div>
+            <div className="flex items-center gap-2 bg-navy-50 rounded-xl px-3 py-2">
+              <Search size={15} className="text-navy-400" />
+              <input className="bg-transparent outline-none text-sm flex-1" placeholder="Search templates (e.g. deposit, overdue, licence)"
+                     value={query} onChange={(e) => setQuery(e.target.value)} />
+            </div>
+
+            {STARTER_GROUPS.map((g, gi) => {
+              const items = g.items.filter(match);
+              if (!items.length) return null;
+              const open = !!q || openGroups.has(g.title);
+              const done = g.items.filter(added).length;
+              const busy = bulk?.group === g.title;
+              return (
+                <div key={g.title} className="rounded-xl border border-navy-100 overflow-hidden">
+                  <button type="button" onClick={() => toggleGroup(g.title)} className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-navy-50 text-left">
+                    <span className="w-6 h-6 rounded-full bg-navy-700 text-white text-[11px] font-bold flex items-center justify-center flex-shrink-0">{gi + 1}</span>
+                    <span className="flex-1 font-semibold text-sm text-navy-800">{g.title}</span>
+                    <span className={`text-[11px] font-semibold ${done === g.items.length ? 'text-emerald-700' : 'text-navy-400'}`}>{done}/{g.items.length}</span>
+                    <ChevronDown size={16} className={`text-navy-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+                  </button>
+                  {open && (
+                    <div className="px-3 pb-3 space-y-2">
+                      <div className="grid sm:grid-cols-2 gap-2">
+                        {items.map((s) => {
+                          const exists = added(s);
+                          return (
+                            <button key={s.name} type="button" disabled={exists || !!bulk} onClick={() => applyStarter(s)}
+                                    className="text-left rounded-xl border border-navy-100 px-3 py-2 hover:bg-navy-50 disabled:opacity-50">
+                              <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5 flex-wrap">
+                                {s.title}
+                                {s.category === 'MARKETING' && <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5">Marketing</span>}
+                                {exists && <span className="text-[10px] text-emerald-700">· added</span>}
+                              </p>
+                              <p className="text-[11px] text-sky-700 mt-0.5">When: {s.when}</p>
+                              <p className="text-[11px] text-navy-500 line-clamp-2 mt-0.5">{s.body}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {done < g.items.length && (
+                        <button type="button" onClick={() => submitGroup(g)} disabled={!!bulk}
+                                className="btn-secondary !py-1.5 text-xs flex items-center gap-1.5 disabled:opacity-50">
+                          {busy ? <><Loader2 size={13} className="animate-spin" /> Submitting {bulk!.done}/{bulk!.total}…</>
+                                : <><Send size={13} /> Submit all {g.items.length - done} in this step</>}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {q && !STARTERS.some(match) && <p className="text-sm text-navy-400">No ready-made template matches “{query}”.</p>}
           </div>
         </section>
 
