@@ -5,6 +5,7 @@ import Header from '../components/layout/Header';
 import { toast } from '../store/useToast';
 import { AUTO_VARS, WaTemplate, createTemplate, deleteTemplate, loadTemplates, varsIn, whatsappDemo } from '../lib/whatsappInbox';
 import { STARTER_GROUPS, STARTER_SAMPLES, Starter } from '../lib/waStarters';
+import { Rich } from '../components/ui/WhatsAppChat';
 
 const STARTERS = STARTER_GROUPS.flatMap((g) => g.items);
 const SAMPLES = STARTER_SAMPLES;
@@ -169,7 +170,7 @@ export default function WhatsAppTemplates() {
                 <button type="submit" className="text-xs px-2.5 py-1 rounded-full bg-navy-50 text-navy-700 font-semibold hover:bg-navy-100">+ Add</button>
               </form>
             </div>
-            <textarea ref={bodyRef} className="input min-h-[120px]" placeholder="Dear {{name}}, …" value={body} onChange={(e) => setBody(e.target.value)} />
+            <textarea ref={bodyRef} className="input min-h-[240px] font-mono !text-[13px] leading-relaxed" placeholder="Dear {{name}}, …" value={body} onChange={(e) => setBody(e.target.value)} />
             <p className="text-[11px] text-navy-400 mt-1">Green variables fill in from the inquiry. Other variables (e.g. pickup time) are typed by staff when sending.</p>
           </div>
 
@@ -189,7 +190,7 @@ export default function WhatsAppTemplates() {
 
           {body.trim() && (
             <div className="rounded-xl p-3 bg-[#efeae2]">
-              <div className="max-w-[85%] ml-auto rounded-2xl rounded-tr-sm px-3 py-2 bg-[#d9fdd3] text-sm text-navy-800 whitespace-pre-wrap shadow-sm">{preview}</div>
+              <div className="max-w-[85%] ml-auto rounded-2xl rounded-tr-sm px-3 py-2 bg-[#d9fdd3] text-sm text-navy-800 whitespace-pre-wrap shadow-sm"><Rich text={preview} /></div>
             </div>
           )}
 
@@ -288,7 +289,7 @@ export default function WhatsAppTemplates() {
                     <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 flex items-center gap-1 ${st.cls}`}>{st.icon} {st.label}</span>
                     <button type="button" onClick={() => remove(t)} className="p-1 rounded-lg text-navy-400 hover:text-red-600 hover:bg-red-50" aria-label="Delete template"><Trash2 size={15} /></button>
                   </div>
-                  <p className="text-xs text-navy-600 mt-2 whitespace-pre-wrap">{t.text}</p>
+                  <p className="text-xs text-navy-600 mt-2 whitespace-pre-wrap"><Rich text={t.text} /></p>
                   {t.status === 'REJECTED' && (
                     <p className="text-[11px] text-red-700 mt-1">Rejected{t.rejectedReason ? ` (${t.rejectedReason.replace(/_/g, ' ').toLowerCase()})` : ''} — delete it and create it again with clearer wording about a booking.</p>
                   )}

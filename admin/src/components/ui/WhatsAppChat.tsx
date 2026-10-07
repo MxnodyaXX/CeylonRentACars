@@ -23,7 +23,8 @@ function Ticks({ m }: { m: WaMessage }) {
 }
 
 /* WhatsApp-style *bold* / _italic_ and clickable links */
-function Rich({ text }: { text: string }) {
+/** WhatsApp formatting: *bold*, _italic_ and clickable links (used for previews too) */
+export function Rich({ text }: { text: string }) {
   const parts = text.split(/(https?:\/\/\S+|\*[^*\n]+\*|_[^_\n]+_)/g);
   return (
     <>
@@ -252,7 +253,7 @@ export default function WhatsAppChat({
                 ))}
               </div>
             )}
-            {tpl && <p className="text-xs text-navy-500 bg-navy-50 rounded-lg px-3 py-2 whitespace-pre-wrap">{fillTemplate(tpl, values)}</p>}
+            {tpl && <p className="text-xs text-navy-600 bg-navy-50 rounded-lg px-3 py-2 whitespace-pre-wrap max-h-48 overflow-y-auto"><Rich text={fillTemplate(tpl, values)} /></p>}
             {text && <p className="text-[11px] text-navy-400 flex items-center gap-1"><ImageIcon size={11} /> Your draft is kept — send it once the customer replies.</p>}
           </>
         )}
