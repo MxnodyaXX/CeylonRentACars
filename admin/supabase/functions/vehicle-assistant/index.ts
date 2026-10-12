@@ -225,6 +225,11 @@ serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
   if (limited(ip)) return json({ error: "Too many messages — please wait a few minutes, or chat with us on WhatsApp." }, 429);
+  // Shared limits in the database (security/04_assistant_limits.sql): per visitor + a site-wide daily
+  // ceiling on the AI bill. If that function isn't installed yet, the in-memory limit above still applies.
+  const { data: allowed, error: limitError } = await db.rpc("assistant_allow", { p_ip: ip });
+  if (limitError) console.warn("[assistant] database limit unavailable:", limitError.message);
+  else if (allowed === false) return json({ error: "The assistant is busy right now — please chat with us on WhatsApp or try again later." }, 429);
   if (!Deno.env.get("ANTHROPIC_API_KEY")) return json({ error: "The assistant isn't set up yet (ANTHROPIC_API_KEY)." }, 500);
 
   let body: any;

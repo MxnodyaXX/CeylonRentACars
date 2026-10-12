@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node rls.test.mjs && node staff-users.test.mjs && node password.test.mjs"
+    "test": "node rls.test.mjs && node staff-users.test.mjs && node password.test.mjs && node webhooks.test.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.2.17",

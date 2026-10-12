@@ -2,14 +2,16 @@
 // Receives Text.lk delivery reports and updates the matching sms_log row.
 //
 // Deploy:   supabase functions deploy sms-delivery-webhook --no-verify-jwt
+// Secret:   supabase secrets set SMS_WEBHOOK_SECRET=<random>   (shared with sms-inbound)
 // Configure: paste the function URL into Text.lk → Sender ID → Delivery Report Webhook URL
-//   https://<project-ref>.supabase.co/functions/v1/sms-delivery-webhook
+//   https://<project-ref>.supabase.co/functions/v1/sms-delivery-webhook?key=<SMS_WEBHOOK_SECRET>
 //
 // Text.lk posts a delivery report containing the message uid and a status. Field
 // names vary by account, so we accept JSON or form-encoded and probe common keys.
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { keyMatches } from "../_shared/secret.ts";
 
 const admin = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -35,6 +37,10 @@ const normalizeStatus = (raw?: string): string => {
 
 serve(async (req) => {
   if (req.method !== "POST") return new Response("ok"); // health check
+  // Only Text.lk knows the secret in the webhook URL — anyone else is turned away
+  if (!keyMatches(req, "SMS_WEBHOOK_SECRET")) {
+    return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
 
   // Parse JSON or form body
   let body: Record<string, unknown> = {};

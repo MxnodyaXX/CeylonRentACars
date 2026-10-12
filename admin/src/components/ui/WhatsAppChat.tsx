@@ -3,8 +3,8 @@ import { Send, Check, CheckCheck, Clock, AlertTriangle, FileText, MapPin, Lock, 
 import { toast } from '../../store/useToast';
 import { useAuthStore } from '../../store/useAuthStore';
 import {
-  AUTO_VARS, WaMessage, fileLimitMb, useApprovedTemplates, fillTemplate, loadMessages, markRead, mediaUrl, sendFile, sendTemplate, sendText,
-  subscribeMessages, upsertMessage, waPhone, windowInfo,
+  AUTO_VARS, WaMessage, fileLimitMb, useApprovedTemplates, fillTemplate, loadMessages, markRead, openMedia, sendFile, sendTemplate, sendText,
+  subscribeMessages, upsertMessage, useMedia, waPhone, windowInfo,
 } from '../../lib/whatsappInbox';
 
 const ACCEPT = 'image/jpeg,image/png,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,video/mp4,audio/*';
@@ -38,6 +38,18 @@ export function Rich({ text }: { text: string }) {
   );
 }
 
+/** Customer photo — loaded with the admin's login, never a public link */
+function MediaImage({ mediaId }: { mediaId: string }) {
+  const { url, error } = useMedia(mediaId);
+  if (error) return <p className="mb-1 rounded-lg bg-black/5 px-3 py-2 text-xs text-navy-500"><ImageIcon size={13} className="inline mr-1" />Photo not available</p>;
+  if (!url) return <div className="mb-1 flex h-32 w-48 items-center justify-center rounded-lg bg-black/5"><Loader2 size={16} className="animate-spin text-navy-400" /></div>;
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="block mb-1">
+      <img src={url} alt="Photo from customer" className="rounded-lg max-h-64 object-cover" />
+    </a>
+  );
+}
+
 function Bubble({ m }: { m: WaMessage }) {
   const out = m.direction === 'out';
   const isImage = m.mediaId && (m.kind === 'image' || m.mediaMime?.startsWith('image/'));
@@ -46,15 +58,13 @@ function Bubble({ m }: { m: WaMessage }) {
       <div className={`max-w-[80%] rounded-2xl px-3 py-2 shadow-sm ${out ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'} ${m.status === 'failed' ? 'ring-1 ring-red-300' : ''}`}>
         {m.kind === 'template' && <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 mb-0.5">Template · {m.template}</p>}
         {isImage && (
-          <a href={mediaUrl(m.mediaId!)} target="_blank" rel="noreferrer" className="block mb-1">
-            <img src={mediaUrl(m.mediaId!)} alt="Photo from customer" className="rounded-lg max-h-64 object-cover" loading="lazy" />
-          </a>
+          <MediaImage mediaId={m.mediaId!} />
         )}
         {m.mediaId && !isImage && (
-          <a href={mediaUrl(m.mediaId)} target="_blank" rel="noreferrer"
-             className="flex items-center gap-2 mb-1 rounded-lg bg-black/5 px-3 py-2 text-sm font-semibold text-navy-700 hover:bg-black/10">
+          <button type="button" onClick={() => openMedia(m.mediaId!).catch((e) => toast.error('File not available', (e as Error).message))}
+             className="flex items-center gap-2 mb-1 rounded-lg bg-black/5 px-3 py-2 text-sm font-semibold text-navy-700 hover:bg-black/10 text-left">
             <FileText size={16} /> {m.mediaName ?? `${m.kind} file`}
-          </a>
+          </button>
         )}
         {m.kind === 'location' && <MapPin size={14} className="inline mr-1 text-brand-500" />}
         {m.body && <p className="text-sm text-navy-800 whitespace-pre-wrap break-words"><Rich text={m.body} /></p>}

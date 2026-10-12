@@ -15,6 +15,7 @@ import AllVehicles from './components/AllVehicles';
 import FeedbackPage from './components/FeedbackPage';
 import BookingPage from './components/BookingPage';
 import AlternativesPage from './components/AlternativesPage';
+import PortalPage from './components/PortalPage';
 import AssistantChat from './components/AssistantChat';
 import { useLinkInterception, useRoute } from './lib/router';
 import { usePageSeo } from './lib/seo';
@@ -63,6 +64,8 @@ export default function App() {
         <BookingPage search={search} />
       ) : path === '/alternatives' ? (
         <AlternativesPage search={search} />
+      ) : path === '/my-bookings' ? (
+        <PortalPage search={search} />
       ) : (
         <main>
           <Hero revealed={revealed} />

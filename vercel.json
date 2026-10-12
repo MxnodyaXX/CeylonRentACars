@@ -4,6 +4,7 @@
     { "source": "/feedback", "destination": "/feedback/index.html" },
     { "source": "/book", "destination": "/book/index.html" },
     { "source": "/alternatives", "destination": "/alternatives/index.html" },
+    { "source": "/my-bookings", "destination": "/my-bookings/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

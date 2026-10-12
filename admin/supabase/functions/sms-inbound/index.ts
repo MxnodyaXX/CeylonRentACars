@@ -4,13 +4,15 @@
 //   START / UNSTOP / SUBSCRIBE   → remove phone from sms_opt_out (re-subscribe)
 //
 // Deploy:    supabase functions deploy sms-inbound --no-verify-jwt
+// Secret:    supabase secrets set SMS_WEBHOOK_SECRET=<random>   (shared with sms-delivery-webhook)
 // Configure: set this URL as the Incoming/Inbound SMS webhook in your Text.lk account
-//   https://<project-ref>.supabase.co/functions/v1/sms-inbound
+//   https://<project-ref>.supabase.co/functions/v1/sms-inbound?key=<SMS_WEBHOOK_SECRET>
 //
 // NOTE: requires inbound SMS to be enabled on your Text.lk plan/number.
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { keyMatches } from "../_shared/secret.ts";
 
 const admin = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -39,6 +41,10 @@ const OPT_IN  = ["start", "unstop", "subscribe", "optin", "opt-in"];
 
 serve(async (req) => {
   if (req.method !== "POST") return new Response("ok"); // health check
+  // Only Text.lk knows the secret in the webhook URL — anyone else is turned away
+  if (!keyMatches(req, "SMS_WEBHOOK_SECRET")) {
+    return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+  }
 
   let body: Record<string, unknown> = {};
   try {

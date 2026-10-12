@@ -66,8 +66,49 @@ export function windowInfo(messages: WaMessage[]) {
   return { open: closesAt.getTime() > Date.now(), closesAt, lastIn };
 }
 
-export const mediaUrl = (mediaId: string) => whatsappDemo ? demoMediaUrl(mediaId) :
-  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-media?id=${encodeURIComponent(mediaId)}`;
+/**
+ * A customer's photo / document as a blob: URL for this browser tab. The file is fetched with the
+ * admin's login (whatsapp-media refuses everyone else), so there is no shareable link to leak.
+ * Revoke it with URL.revokeObjectURL when it's no longer shown.
+ */
+export async function fetchMedia(mediaId: string): Promise<string> {
+  if (whatsappDemo) return demoMediaUrl(mediaId);
+  const { data } = await supabase.auth.getSession();
+  const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-media?id=${encodeURIComponent(mediaId)}`, {
+    headers: {
+      Authorization: `Bearer ${data.session?.access_token ?? ''}`,
+      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+    },
+  });
+  if (!res.ok) throw new Error((await res.text().catch(() => '')) || 'File not available');
+  return URL.createObjectURL(await res.blob());
+}
+
+/** fetchMedia for a component: the blob URL (or an error), cleaned up on unmount */
+export function useMedia(mediaId?: string) {
+  const [state, setState] = useState<{ url?: string; error?: string }>({});
+  useEffect(() => {
+    if (!mediaId) return;
+    let url: string | undefined, gone = false;
+    fetchMedia(mediaId)
+      .then((u) => { url = u; if (gone) URL.revokeObjectURL(u); else setState({ url: u }); })
+      .catch((e) => { if (!gone) setState({ error: (e as Error).message }); });
+    return () => { gone = true; if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
+  }, [mediaId]);
+  return state;
+}
+
+/** Open a document in a new tab (the tab is opened first so pop-up blockers allow it) */
+export async function openMedia(mediaId: string) {
+  const tab = window.open('', '_blank');
+  try {
+    const url = await fetchMedia(mediaId);
+    if (tab) tab.location.href = url; else window.location.assign(url);
+  } catch (e) {
+    tab?.close();
+    throw e;
+  }
+}
 
 /* ---------------- Loading ---------------- */
 

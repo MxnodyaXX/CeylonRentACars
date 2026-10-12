@@ -1,17 +1,31 @@
 // Supabase Edge Function: whatsapp-media
 // Streams a customer's photo / document from Meta to the admin (Meta media URLs need the access token,
-// so the browser can't load them directly). Only media ids stored in whatsapp_messages are served.
+// so the browser can't load them directly). Only media ids stored in whatsapp_messages are served,
+// and only to a signed-in admin — customer documents (licences, passports) never have a public link.
 //
 // Deploy:   supabase functions deploy whatsapp-media --no-verify-jwt
-// Usage:    <img src="https://<ref>.supabase.co/functions/v1/whatsapp-media?id=<media_id>">
+// Usage:    fetch(".../functions/v1/whatsapp-media?id=<media_id>", { headers: { Authorization: "Bearer <session token>" } })
+//           — the admin turns the answer into a blob: URL (lib/whatsappInbox.ts → fetchMedia)
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { serviceClient, staffCaller } from "../_shared/staff.ts";
 
-const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-const cors = { "Access-Control-Allow-Origin": "*" };
+const db = serviceClient();
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+};
 
 serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  // WhatsApp chats are admin-only in the database, so their files are too
+  const caller = await staffCaller(req, db);
+  if (!caller || (caller.kind === "staff" && caller.role !== "admin")) {
+    return new Response("Sign in to the admin to see this file.", { status: 401, headers: cors });
+  }
+
   const id = new URL(req.url).searchParams.get("id") ?? "";
   if (!/^\d+$/.test(id)) return new Response("Bad id", { status: 400, headers: cors });
 
@@ -34,8 +48,8 @@ serve(async (req) => {
     headers: {
       ...cors,
       "Content-Type": info.mime_type ?? file.headers.get("content-type") ?? "application/octet-stream",
-      "Cache-Control": "private, max-age=3600",
-      ...(known.media_name ? { "Content-Disposition": `inline; filename="${String(known.media_name).replace(/"/g, "")}"` } : {}),
+      "Cache-Control": "private, no-store",
+      ...(known.media_name ? { "Content-Disposition": `inline; filename="${String(known.media_name).replace(/["\r\n]/g, "")}"` } : {}),
     },
   });
 });

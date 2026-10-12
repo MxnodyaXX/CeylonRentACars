@@ -31,6 +31,11 @@ export const PAGES = {
     description: 'Vehicle options suggested for your rental in Sri Lanka.',
     noindex: true,
   },
+  '/my-bookings': {
+    title: 'My Bookings | Ceylon Rent A Cars',
+    description: 'Sign in with your phone number to see your bookings, payments and booking requests.',
+    noindex: true,
+  },
 };
 
 export const ROBOTS_INDEX = 'index, follow, max-image-preview:large';

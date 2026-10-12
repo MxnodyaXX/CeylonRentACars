@@ -76,7 +76,7 @@ export default function Header() {
 
           <div className="header__actions">
             <CurrencySelect />
-            <a href="#" className="btn btn--ghost btn--sm hide-sm">Sign In</a>
+            <a href="/my-bookings" className="btn btn--ghost btn--sm hide-sm">My Bookings</a>
             <a href="#" className="btn btn--red btn--sm hide-md">List Your Vehicle</a>
             <button
               className="burger"
@@ -108,7 +108,7 @@ export default function Header() {
             {NAV_LINKS.map(l => <a key={l.href} href={l.href}>{l.label}</a>)}
           </nav>
           <div className="drawer__foot">
-            <a href="#" className="btn btn--ghost btn--block">Sign In</a>
+            <a href="/my-bookings" className="btn btn--ghost btn--block">My Bookings</a>
             <a href="#" className="btn btn--red btn--block">List Your Vehicle</a>
           </div>
         </div>

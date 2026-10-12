@@ -97,6 +97,10 @@ const claims = {
   B: { sub: '00000000-0000-0000-0000-0000000000b1', role: 'authenticated', app_metadata: { role: 'owner', owner_id: 'oB' } },
   Ainq: { sub: '00000000-0000-0000-0000-0000000000a1', role: 'authenticated', app_metadata: { role: 'owner', owner_id: 'oA', permissions: { canViewInquiries: true } } },
   customer: { sub: '00000000-0000-0000-0000-0000000000c1', role: 'authenticated', app_metadata: {} },
+  custA: { sub: '00000000-0000-0000-0000-0000000000c2', role: 'authenticated', phone: '94711000001', app_metadata: { role: 'customer' } },
+  lead: { sub: '00000000-0000-0000-0000-0000000000c3', role: 'authenticated', phone: '94719999999', app_metadata: { role: 'customer' } },
+  stranger: { sub: '00000000-0000-0000-0000-0000000000c4', role: 'authenticated', phone: '94770000000', app_metadata: { role: 'customer' } },
+  ownerWithPhone: { sub: '00000000-0000-0000-0000-0000000000c5', role: 'authenticated', phone: '94711000001', app_metadata: { role: 'owner', owner_id: 'oB' } },
 };
 async function as(who, fn, ip = '10.0.0.1') {
   await db.exec('reset role');
@@ -262,6 +266,72 @@ await db.exec(sql('security/rollback/02_rollback_public_functions.sql'));
 ok((await as('anon', () => tryQ(`select submit_booking_request('vA','Old Path','0770000999','',null,current_date+70,'10:00',current_date+71,'10:00','x','x','Self drive','',1)`))) === null, 'previous booking function works again');
 await db.exec(sql('security/02_public_functions.sql'));
 ok((await as('anon', () => tryQ(`select choose_alternative('web_abc123','vA',null)`), '9.9.9.9')) !== null, 're-running 02 restores the token check');
+
+console.log('\n04 — AI chat limits');
+await db.exec(sql('security/04_assistant_limits.sql'));
+await db.exec(sql('security/04_assistant_limits.sql'));   // safe to re-run
+ok(!!(await as('anon', () => tryQ(`select assistant_allow('1.2.3.4')`))), 'website visitors cannot call it (or reset limits)');
+ok(!!(await as('A', () => tryQ(`select assistant_allow('1.2.3.4')`))), 'signed-in staff cannot call it either');
+const allow = async (ip) => { await db.exec('set role service_role'); try { return (await db.query('select assistant_allow($1) a', [ip])).rows[0].a; } finally { await db.exec('reset role'); } };
+let firstNo = 0;
+for (let i = 1; i <= 26 && !firstNo; i++) if (!(await allow('7.7.7.7'))) firstNo = i;
+ok(firstNo === 26, `per visitor: 25 messages allowed, the 26th refused (refused at #${firstNo})`);
+ok(await allow('8.8.8.8'), 'another visitor is not affected');
+await db.exec(`update private.rate_limits set hits = 1500 where bucket = 'assistant:all'`);
+ok(!(await allow('9.9.9.1')), 'site-wide daily ceiling stops everyone');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 04');
+await db.exec(sql('security/rollback/04_rollback_assistant_limits.sql'));
+ok((await db.query(`select to_regprocedure('public.assistant_allow(text)') f`)).rows[0].f === null, 'rollback removes it');
+
+console.log('\n05 — customer portal');
+await db.exec(sql('security/05_customer_portal.sql'));
+await db.exec(sql('security/05_customer_portal.sql'));   // safe to re-run
+const mine = (who, fn) => as(who, async () => (await db.query(`select * from ${fn}()`)).rows);
+await db.exec(`update bookings set payments = '[{"id":"p1","at":"2026-10-01T10:00:00Z","kind":"Advance","amount":5000,"method":"Cash","receiptNo":"R-1","note":"staff only note","by":"Admin"}]' where id = 'bA'`);
+const custA = await mine('custA', 'my_bookings');
+ok(custA.length === 1 && custA[0].id === 'bA', 'customer sees their own booking (phone typed 0711000001, login +94711000001)');
+ok(custA[0].reference === 'MRAC-BA' && custA[0].vehicle === 'Toyota Aqua' && Number(custA[0].balance) === 12000, 'with reference, car and balance');
+ok(!('internal_notes' in custA[0]) && !('notes' in custA[0]) && !('referral' in custA[0]), 'no staff notes or referral details');
+ok(custA[0].payments.length === 1 && custA[0].payments[0].amount === 5000 && custA[0].payments[0].receipt_no === 'R-1', 'payments listed (amount, method, receipt no)');
+ok(!JSON.stringify(custA[0].payments).includes('staff only note') && !JSON.stringify(custA[0].payments).includes('Admin'), "…without staff notes or who entered them");
+const prof = await mine('custA', 'my_profile');
+ok(prof.length === 1 && prof[0].name === 'Customer of A' && prof[0].phone === '+94711000001', 'profile: name from their customer record + phone');
+ok((await mine('stranger', 'my_profile'))[0]?.name == null, 'profile: unknown number has no name');
+ok((await mine('ownerWithPhone', 'my_profile')).length === 0, 'profile: staff logins get nothing');
+ok(!!(await as('anon', () => tryQ('select * from my_profile()'))), 'profile: visitors cannot call it');
+ok((await mine('custA', 'my_requests')).every((r) => r.id !== 'web_abc123'), "doesn't see someone else's request");
+const lead = await mine('lead', 'my_requests');
+ok(lead.some((r) => r.id === 'web_abc123' && r.reference === 'CRC-ABC123'), 'customer sees their own booking request with its CRC reference');
+ok((await mine('lead', 'my_bookings')).length === 0, '…and no bookings that aren\'t theirs');
+ok((await mine('stranger', 'my_bookings')).length === 0 && (await mine('stranger', 'my_requests')).length === 0, 'a number with no history sees nothing');
+ok((await mine('ownerWithPhone', 'my_bookings')).length === 0, 'staff logins get nothing from the portal functions');
+ok(!!(await as('anon', () => tryQ('select * from my_bookings()'))), 'website visitors (not signed in) cannot call it');
+for (const t of ['bookings', 'customers', 'inquiries']) {
+  ok((await as('custA', () => ids(`select id from ${t}`))).length === 0, `customer login still has no direct access to ${t}`);
+}
+const status = async (phone, ip = '5.5.5.5') => { await db.exec('set role service_role'); try { return (await db.query('select portal_phone_status($1, $2) s', [phone, ip])).rows[0].s; } finally { await db.exec('reset role'); } };
+ok(await status('+94 71 100 0001') === 'ok', 'login check: known customer number → ok');
+ok(await status('0719999999') === 'ok', 'login check: number from a booking request → ok');
+ok(await status('0770000000') === 'unknown', 'login check: unknown number → unknown (no SMS sent)');
+ok(await status('12') === 'invalid', 'login check: not a phone number → invalid');
+let lim = '';
+for (let i = 0; i < 6; i++) lim = await status('0711000002', '6.6.6.' + i);
+ok(lim === 'limited', 'login check: 6th code request for one number within an hour → limited');
+lim = '';
+for (let i = 0; i < 11; i++) lim = await status('07700001' + String(i).padStart(2, '0'), '7.7.7.7');
+ok(lim === 'limited', 'login check: 11th try from one connection within an hour → limited (no number guessing)');
+ok(!!(await as('anon', () => tryQ(`select portal_phone_status('0711000001', 'x')`))), 'website visitors cannot call the login check');
+ok(!!(await as('custA', () => tryQ(`select portal_sms_allow('0711000001')`))), 'signed-in customers cannot call the SMS limit');
+await db.exec('set role service_role');
+const smsOk = [];
+for (let i = 0; i < 9; i++) smsOk.push((await db.query(`select portal_sms_allow('+94711000009') a`)).rows[0].a);
+await db.exec('reset role');
+ok(smsOk.slice(0, 8).every(Boolean) && smsOk[8] === false, 'at most 8 codes a day per number');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 05');
+await db.exec(sql('security/rollback/05_rollback_customer_portal.sql'));
+ok((await db.query(`select to_regprocedure('public.my_bookings()') f`)).rows[0].f === null, 'rollback removes the portal functions');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

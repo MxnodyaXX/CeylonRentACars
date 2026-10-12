@@ -23,7 +23,7 @@ checked in the browser (`admin` / `admin123`). SMS / WhatsApp functions could be
   ```
   cd admin/supabase/security/tests
   npm install
-  npm test          # expect: 115 passed · 42 passed · 13 passed, 0 failed
+  npm test          # expect: 145 passed · 42 passed · 13 passed · 33 passed, 0 failed
   ```
 - [ ] Pick a quiet time (about 30–45 min). Have the owners' phone numbers ready (step 7).
 
@@ -155,12 +155,57 @@ if you ever do, run `01`, `02` and `verify.sql` straight after.
 - "Must change password" is enforced by the admin app, not the database — the temporary password only works for its own owner's data anyway.
 - An admin who creates a login through **Create User Profile** sets that password themselves (no forced change).
 
-## Follow-ups (not in this change)
+## Part 2 — closing the last gaps (after steps 1–10)
 
-- `whatsapp-media` serves a customer's WhatsApp photo to anyone who has its media id → add a signed token (WhatsApp is paused for now).
-- `sms-inbound` and `sms-delivery-webhook` accept posts from anyone (could fake opt-outs / delivery statuses) → add a secret in the webhook URL.
-- `vehicle-assistant` (website AI chat) has no rate limit → cost risk.
-- Customer portal (phone SMS code login) — after this lockdown and the new SMS sender ID.
+| Gap | Fix |
+|---|---|
+| `whatsapp-media` gave a customer's WhatsApp photo / document to anyone with the link | Only a signed-in **admin** gets files; the admin loads them with its login (no shareable link exists) |
+| `sms-inbound` / `sms-delivery-webhook` accepted posts from anyone (fake opt-outs / delivery statuses) | Need `?key=<SMS_WEBHOOK_SECRET>` in the URL; refuse everything if the secret isn't set |
+| Website AI chat limit lived in memory (reset on every restart) | Limits in the database (`04_assistant_limits.sql`): 25 per 10 min and 80 per day per visitor, **1500 per day for the whole site** |
+
+- [ ] Run `04_assistant_limits.sql` in the SQL Editor (undo: `rollback/04_rollback_assistant_limits.sql`).
+- [ ] Webhook secret (make one the same way as CRON_SECRET):
+  ```
+  npx supabase secrets set SMS_WEBHOOK_SECRET=<random>
+  ```
+- [ ] Deploy:
+  ```
+  npx supabase functions deploy vehicle-assistant --no-verify-jwt
+  npx supabase functions deploy whatsapp-media --no-verify-jwt
+  npx supabase functions deploy sms-inbound --no-verify-jwt
+  npx supabase functions deploy sms-delivery-webhook --no-verify-jwt
+  ```
+- [ ] **Text.lk dashboard** — if inbound SMS / delivery reports are set up there, add `?key=<SMS_WEBHOOK_SECRET>` to the end of both webhook URLs (they are refused without it).
+- [ ] Push the admin (the WhatsApp chat now loads photos with the admin's login).
+- [ ] Check: the website AI chat answers; in Messages, a customer photo still shows (when WhatsApp is on).
+
+## Part 3 — customer portal ("My Bookings" on the website)
+
+Customers sign in at **/my-bookings** with their phone number + a 6-digit SMS code and see their
+bookings (car, dates, status, total / paid / balance) and booking requests. Only numbers that have
+booked or enquired get a code. Codes go out through Text.lk with the current sender ID
+(`TEXTLK_SENDER_ID`) — changing the sender ID later needs no code change.
+
+- [ ] SQL Editor → run `05_customer_portal.sql` (undo: `rollback/05_rollback_customer_portal.sql`).
+- [ ] Deploy:
+  ```
+  npx supabase functions deploy portal-login --no-verify-jwt
+  npx supabase functions deploy portal-sms --no-verify-jwt
+  ```
+- [ ] **Authentication → Sign In / Providers → Phone:** turn it **on**. Set **SMS OTP expiry** to `600` (10 min) and **OTP length** `6`.
+  If it insists on an SMS provider, pick any (e.g. Twilio) with placeholder values — the hook below replaces it.
+  Leave **Allow new users to sign up** OFF (portal-login creates customer logins itself).
+- [ ] **Authentication → Hooks → Add hook → Send SMS hook** → type **HTTPS** →
+  URL `https://oclzkjdcgjddsnkaogsc.supabase.co/functions/v1/portal-sms` → **Generate secret** → copy it → **Create**. Then:
+  ```
+  npx supabase secrets set PORTAL_SMS_HOOK_SECRET="v1,whsec_...the secret..."
+  ```
+- [ ] SMS must be **on** in admin Settings (codes aren't sent while it's paused).
+- [ ] Push the website (adds the page and the header's **My Bookings** button).
+- [ ] Test: open `/my-bookings`, enter a number that has a booking, get the SMS, enter the code → bookings show.
+  An unknown number gets "We couldn't find any bookings" and no SMS.
+
+**New sender ID later:** `npx supabase secrets set TEXTLK_SENDER_ID="<new id>"` — used by all SMS, including portal codes.
 
 ## Review notes
 
