@@ -351,3 +351,12 @@
   }
 }
 
+
+/* Date-picker calendars are drawn at page level (portalId="emrac-datepicker-portal")
+   so dialogs never clip them — keep them above the dialog layer (z-50 / z-[60]) */
+#emrac-datepicker-portal .react-datepicker-popper { z-index: 80; }
+/* react-datepicker v9 draws the weekday names below the dark header, on white — show them in grey */
+.emrac-datepicker .react-datepicker__day-names { margin-top: 6px; }
+.emrac-datepicker .react-datepicker__day-names .react-datepicker__day-name {
+  color: #A1A1AA !important; font-weight: 600; font-size: 11px; width: 32px; margin: 2px !important;
+}

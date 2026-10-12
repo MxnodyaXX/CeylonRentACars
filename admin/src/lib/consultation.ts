@@ -17,38 +17,48 @@ export const SPECIAL = ['Child seat', 'Extra driver', 'Airport pickup', 'Driver 
 export interface Purpose {
   id: string;
   hint: string;
-  ask: string[];
+  /** One natural opening question that covers route, people and bags for this kind of trip */
+  opener: string;
+  /** What to listen for in the answer */
+  listen: string;
   recommend: string;
   kmPerDay: [number, number];
   weights: { eco?: number; cost?: number; comfort?: number; luxury?: number; small?: number; luggage?: number; hill?: number };
 }
 export const PURPOSES: Purpose[] = [
   { id: 'Holiday / tour', hint: 'Tourists & visitors touring the island',
-    ask: ['Which places and hotels are on the route?', 'Self drive, or would they prefer a driver?', 'How much luggage per person?'],
+    opener: 'Which places are you planning to visit, and how many people and bags will be travelling?',
+    listen: 'Ella, Nuwara Eliya or Kandy → hill country: vehicles not suited to hill roads are flagged.',
     recommend: 'A comfortable vehicle with luggage space that handles hill roads. Foreign visitors without an IDP need a driver.',
     kmPerDay: [150, 250], weights: { comfort: 8, luggage: 2, hill: 8, eco: 3 } },
   { id: 'Business / company', hint: 'Company staff, sales & marketing teams on field work',
-    ask: ['Company name — and is a company invoice needed?', 'How many staff will use it, and for how long?', 'Roughly how many km a day?'],
+    opener: 'Which company is this for, how many staff will use the vehicle, and roughly how many km a day?',
+    listen: 'Company invoice, weekly / monthly use, mostly city or long distance.',
     recommend: 'Fuel-efficient, reliable vehicles with the lowest total cost. Offer weekly / monthly rates for longer contracts.',
     kmPerDay: [100, 200], weights: { eco: 12, cost: 10 } },
   { id: 'Daily use (1 day)', hint: 'Errands, appointments or a single day out',
-    ask: ['Exact pickup and return times?', 'Mostly city driving?'],
+    opener: 'What time do you need it from and until, and will it be mostly city driving?',
+    listen: 'Short city trips → small, economical car.',
     recommend: 'A small, economical, easy-to-park car at the lowest price.',
     kmPerDay: [50, 120], weights: { cost: 12, small: 8, eco: 4 } },
   { id: 'Airport transfer', hint: 'Arrival or departure at Colombo airport (CMB)',
-    ask: ['Flight number and landing time?', 'How many bags?', 'Meet & greet with a driver?'],
+    opener: 'What is your flight number and landing time, and how many people and bags are arriving?',
+    listen: 'Bags matter more than seats here; an onward trip after the airport → ask the route.',
     recommend: 'Enough luggage space for everyone; usually with a driver or meet & greet.',
     kmPerDay: [60, 150], weights: { luggage: 3, comfort: 4 } },
   { id: 'Wedding / event', hint: 'Weddings, homecomings, functions, VIP use',
-    ask: ['Event date, venue and timing?', 'Decorations allowed or needed?', 'With a chauffeur?'],
+    opener: 'When and where is the event, and will you need a chauffeur and decorations?',
+    listen: 'Timing on the day, decorations, bridal / VIP car.',
     recommend: 'A luxury or premium car, usually with a chauffeur. Confirm decorations and timing.',
     kmPerDay: [40, 120], weights: { luxury: 15, comfort: 6 } },
   { id: 'Visiting family', hint: 'Sri Lankans living abroad visiting home',
-    ask: ['How many family members will travel together?', 'Mostly home town or touring too?'],
+    opener: 'How many of the family will travel together, and will you mostly stay around home or tour the island too?',
+    listen: 'Elderly parents or small children → comfort and child seats; touring → ask the route.',
     recommend: 'Space for the family and their luggage, comfortable for long drives home and around.',
     kmPerDay: [100, 200], weights: { comfort: 6, luggage: 2, eco: 4 } },
   { id: 'Long-term (monthly)', hint: 'A month or longer',
-    ask: ['Start date and how many months?', 'Monthly km estimate?', 'Personal or company use?'],
+    opener: 'How many months do you need it for, roughly how many km a month, and is it personal or company use?',
+    listen: 'Company use → invoice; high monthly km → fuel economy.',
     recommend: 'An economical, reliable car. Offer a monthly rate and a service plan.',
     kmPerDay: [60, 120], weights: { eco: 10, cost: 10 } },
 ];
@@ -292,7 +302,7 @@ export function buildSummary(inq: Inquiry, c: Consultation, vehicles: Vehicle[],
   if (c.purpose) lines.push(`Travel purpose: ${c.purpose}${c.companyName ? ` — ${c.companyName}` : ''}${c.invoiceRequired ? ' (company invoice required)' : ''}`);
   const req = [
     pax ? `${pax} passengers (${c.adults ?? 0} adults${c.children ? `, ${c.children} children` : ''}${c.infants ? `, ${c.infants} infants` : ''})` : '',
-    c.largeBags || c.smallBags ? `${c.largeBags ?? 0} large + ${c.smallBags ?? 0} small bags` : '',
+    c.largeBags || c.smallBags ? `${c.largeBags ?? 0} large + ${c.smallBags ?? 0} small bags` : c.largeBags === 0 ? 'hand luggage only' : '',
     c.mode ?? '',
     c.usage ? `${c.usage.toLowerCase()} travel` : '',
     c.areas ? `route: ${c.areas}` : '',
@@ -323,9 +333,12 @@ export function buildSummary(inq: Inquiry, c: Consultation, vehicles: Vehicle[],
   if (c.selectedVehicleId) lines.push(`Customer selected: ${v(c.selectedVehicleId) ? nameOf(v(c.selectedVehicleId)!) : c.selectedVehicleId}`);
   if (inq.quote) lines.push(`Quotation: Rs ${inq.quote.total.toLocaleString('en-LK')} (deposit Rs ${inq.quote.deposit.toLocaleString('en-LK')}) — ${inq.quote.status}`);
   if (c.mode === 'Self drive') lines.push('Documents required: driving licence' + (c.licence === 'Foreign' ? ', International Driving Permit, passport' : ', NIC'));
+  const later = askLater(inq, c);
+  if (later.length) lines.push(`To confirm before quotation / booking: ${later.join(', ')}`);
   if (c.leadQuality) lines.push(`Lead quality: ${c.leadQuality}`);
   if (c.nextAction) lines.push(`Next action: ${c.nextAction}${c.nextFollowUpAt ? ` — ${fmt(c.nextFollowUpAt)}` : ''}`);
   if (c.customerNotes) { lines.push(''); lines.push(`Customer notes: ${c.customerNotes}`); }
+  if (c.capture?.trim()) { lines.push(''); lines.push(`Customer said: "${c.capture.trim()}"`); }
   return lines.join('\n');
 }
 
@@ -366,15 +379,233 @@ export function bookingFromAgreement(inq: Inquiry, a: BookingAgreement, email?: 
   };
 }
 
-/** What is still missing before the consultation can be finished */
-export function missing(c?: Consultation) {
-  const m: string[] = [];
+/* =====================================================================
+   Guided conversation — a few natural questions, not a questionnaire.
+   A question is "answered" as soon as its field is filled (by staff or by
+   the quick capture); staff can also mark it Not required or Ask later.
+   ===================================================================== */
+
+export type QStatus = 'answered' | 'na' | 'later';
+export interface Question {
+  id: string;
+  label: string;      // short name for lists ("Luggage")
+  ask: string;        // how staff can phrase it to the customer
+  why?: string;       // what the answer is used for
+  core?: boolean;     // one of the 7 main questions
+  required?: boolean; // must be answered, marked not required or left for later before finishing
+  filled: boolean;    // the field behind it already has a value
+}
+
+export function questionsFor(inq: Inquiry, c: Consultation): Question[] {
+  const pax = passengers(c);
+  const kids = (c.children ?? 0) + (c.infants ?? 0);
+  const q: Question[] = [
+    { id: 'purpose', core: true, required: true, label: 'Travel purpose', ask: 'What is the rental for — a holiday, business, an airport transfer…?', why: 'Changes what a good vehicle is', filled: !!c.purpose },
+    { id: 'passengers', core: true, required: true, label: 'Passengers', ask: 'How many people are travelling, including children?', why: 'Seating capacity', filled: pax > 0 },
+    { id: 'route', core: true, required: true, label: 'Route', ask: 'Where are you planning to travel?', why: 'Terrain (hill country) and mileage', filled: !!c.areas?.trim() },
+    { id: 'luggage', core: true, required: true, label: 'Luggage', ask: 'How much luggage will you carry?', why: 'Boot capacity', filled: c.largeBags !== undefined || c.smallBags !== undefined },
+    { id: 'mode', core: true, required: true, label: 'Self drive / driver', ask: 'Would you like to drive yourself, or have a driver?', why: 'Rental type and licence check', filled: !!c.mode },
+    { id: 'vehicle', core: true, label: 'Preferred vehicle / budget', ask: 'Do you have a preferred vehicle or a budget in mind?', why: 'Narrows the options', filled: !!(c.requirement?.trim() || c.budgetPerDay || c.budgetMaxPerDay || c.priorities?.length) },
+    { id: 'special', core: true, label: 'Special requirements', ask: 'Anything else we should know — child seats, accessibility, extra comfort?', why: 'Extras and comfort', filled: !!(c.special?.length || c.specialNotes?.trim()) },
+    // ---- follow-ups: only shown when they apply ----
+    { id: 'dates', required: true, label: 'Pickup & return time', ask: 'What date and time do you need it from, and until?', why: 'Availability and days charged', filled: !!(c.pickupAt && c.returnAt) },
+    { id: 'pickupPoint', required: true, label: 'Exact pickup point', ask: 'Where exactly should we hand over the vehicle — hotel, address or landmark?', why: 'Delivery planning', filled: !!c.pickupLocation?.trim() },
+    { id: 'distance', required: true, label: 'Expected km', ask: 'Roughly how many kilometres will you drive in total?', why: 'Extra-km cost in the quotation', filled: !!c.distanceKm },
+  ];
+  if (c.mode === 'Self drive') q.push({ id: 'licence', required: true, label: 'Driving licence', ask: 'Which driving licence do you hold — Sri Lankan or foreign?', why: 'Who can legally self-drive', filled: !!c.licence });
+  if (c.mode === 'Self drive' && c.licence === 'Foreign') q.push({ id: 'idp', required: true, label: 'International Driving Permit', ask: 'Do you have an International Driving Permit?', why: 'Required to self-drive with a foreign licence', filled: c.idp === true });
+  if (c.purpose === 'Airport transfer' || c.airportDelivery || c.mode === 'Airport pickup') q.push({ id: 'flight', label: 'Flight details', ask: 'What is your flight number and landing time?', why: 'Pickup timing if the flight is late', filled: false });
+  if (c.purpose === 'Business / company') q.push({ id: 'company', label: 'Company & invoice', ask: 'Which company is it for, and do you need a company invoice?', why: 'Invoicing', filled: !!c.companyName?.trim() });
+  if (c.purpose === 'Wedding / event') q.push({ id: 'event', label: 'Event details', ask: 'What time is the event, where, and are decorations needed?', why: 'Timing on the day', filled: false });
+  if (c.purpose === 'Long-term (monthly)') q.push({ id: 'months', label: 'Months & use', ask: 'How many months, and is it personal or company use?', why: 'Monthly rate', filled: false });
+  if (kids) q.push({ id: 'childSeats', label: 'Child seats', ask: `Will you need ${kids === 1 ? 'a child seat' : 'child seats'} for the ${kids === 1 ? 'little one' : `${kids} children`}?`, why: 'Safety and extras', filled: !!c.special?.includes('Child seat') || !!c.childSeats });
+  if (pax > 9) q.push({ id: 'bigGroup', label: 'One vehicle or two', ask: `For ${pax} people, is one large van fine, or would two vehicles suit you better?`, why: 'Large groups', filled: false });
+  if (isHillTrip(c)) q.push({ id: 'hillStay', label: 'Steep / remote stays', ask: 'Are you staying anywhere steep or remote — an estate bungalow, Knuckles, Horton Plains?', why: 'Hill-road suitability', filled: false });
+  return q;
+}
+/** Effective status: a filled field always counts as answered; otherwise what staff set */
+export const statusOf = (q: Question, c: Consultation): QStatus | undefined => (q.filled ? 'answered' : c.questions?.[q.id]);
+
+/** The next thing staff could ask, phrased naturally — combines several open questions where it can */
+export function nextAsk(inq: Inquiry, c: Consultation): { text: string; listen?: string } | undefined {
+  const qs = questionsFor(inq, c);
+  const open = qs.filter((q) => !statusOf(q, c));
+  if (!open.length) return undefined;
+  const isOpen = (id: string) => open.some((q) => q.id === id);
+  if (isOpen('purpose')) return { text: 'How can we help — what is the trip for, and how many people will be travelling?', listen: 'One answer usually covers purpose, people and places — use Quick capture.' };
+  const p = purposeOf(c);
+  if (p && ['route', 'passengers', 'luggage'].filter(isOpen).length >= 2) return { text: p.opener, listen: p.listen };
+  const [a, b] = [...open.filter((q) => q.core), ...open.filter((q) => !q.core)];
+  return { text: b ? `${a.ask} ${b.ask}` : a.ask, listen: p?.listen };
+}
+
+/* ---------- Luggage ---------- */
+
+export const LUGGAGE_PRESETS = [
+  { label: 'Hand luggage only', large: 0 },
+  { label: '1–2 suitcases', large: 2 },
+  { label: '3–4 suitcases', large: 4 },
+  { label: '5+ suitcases', large: 6 },
+] as const;
+export const luggagePreset = (large?: number) =>
+  large === undefined ? undefined : large === 0 ? 0 : large <= 2 ? 1 : large <= 4 ? 2 : 3;
+/** What kind of vehicle the bags need (matches luggageOf) */
+export function luggageNeeds(large?: number) {
+  if (!large) return 'Any vehicle';
+  if (large <= 2) return 'Any car — even a hatchback takes about 2';
+  if (large === 3) return 'Sedan, SUV or 7-seater';
+  if (large === 4) return '5-seat SUV or a van';
+  return 'Van — about 6 large bags';
+}
+
+/* ---------- Quick capture: "We're four people travelling to Ella for five days with three suitcases" ---------- */
+
+const WORD_NUM: Record<string, number> = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, twenty: 20, couple: 2, 'couple of': 2,
+};
+const NUM = '(\\d+|couple of|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|twenty)';
+const toNum = (s: string) => (/^\d+$/.test(s) ? Number(s) : WORD_NUM[s] ?? 0);
+const grab = (t: string, re: string) => { const m = t.match(new RegExp(`\\b${NUM}\\s+${re}`, 'i')); return m ? toNum(m[1].toLowerCase()) : undefined; };
+
+/** Places customers mention most — kept in the order they appear in the text */
+const PLACES = [
+  'Colombo', 'Negombo', 'Airport', 'Kandy', 'Nuwara Eliya', 'Ella', 'Haputale', 'Bandarawela', 'Badulla', 'Hatton', 'Horton Plains',
+  "Adam's Peak", 'Knuckles', 'Kitulgala', 'Sigiriya', 'Dambulla', 'Habarana', 'Anuradhapura', 'Polonnaruwa', 'Trincomalee', 'Pasikudah',
+  'Batticaloa', 'Arugam Bay', 'Jaffna', 'Yala', 'Udawalawe', 'Tissamaharama', 'Tangalle', 'Mirissa', 'Matara', 'Weligama', 'Galle',
+  'Unawatuna', 'Hikkaduwa', 'Bentota', 'Beruwala', 'Kalutara', 'Wilpattu', 'Kalpitiya', 'Pinnawala', 'Ratnapura',
+];
+const placeRe = (p: string) => new RegExp(`\\b${p.replace(/'/g, "'?").replace(/\s+/g, '\\s*')}\\b`, 'i');
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const localDt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+/**
+ * Read what the customer said and fill the matching fields. Only fills what it finds —
+ * staff can always correct a field afterwards. `start` is the known pickup (for "for five days").
+ */
+export function parseCapture(text: string, c: Consultation, start?: string): { patch: Partial<Consultation>; found: string[] } {
+  const t = ` ${text.toLowerCase().replace(/[’`]/g, "'")} `;
+  const patch: Partial<Consultation> = {};
+  const found: string[] = [];
+
+  // ---- people ----
+  const adults = grab(t, '(?:adults?|grown[- ]?ups?)');
+  const children = grab(t, '(?:kids?|children|child)');
+  let infants = grab(t, '(?:infants?|babies|baby|toddlers?)');
+  if (infants === undefined && /\b(baby|infant|toddler)\b/.test(t)) infants = 1;
+  let total = grab(t, '(?:people|persons?|pax|passengers?|travell?ers|of us|guests|staff|members|family members)')
+    ?? (t.match(new RegExp(`\\b(?:we are|we're|family of|group of|party of)\\s+${NUM}\\b`)) ? toNum(t.match(new RegExp(`\\b(?:we are|we're|family of|group of|party of)\\s+${NUM}\\b`))![1]) : undefined);
+  if (total === undefined && adults === undefined && /\b(honeymoon|my (wife|husband|partner) and i|me and my (wife|husband|partner)|a couple\b(?! of))/.test(t)) total = 2;
+  if (adults !== undefined || total !== undefined || children !== undefined || infants !== undefined) {
+    const k = (children ?? 0) + (infants ?? 0);
+    const a = adults ?? (total !== undefined ? Math.max(1, total - k) : c.adults);
+    if (a !== undefined) patch.adults = a;
+    if (children !== undefined) patch.children = children;
+    if (infants !== undefined) patch.infants = infants;
+    const sum = (a ?? 0) + (children ?? c.children ?? 0) + (infants ?? c.infants ?? 0);
+    found.push(`${sum} passenger${sum === 1 ? '' : 's'}${k ? ` (${[children ? `${children} child${children === 1 ? '' : 'ren'}` : '', infants ? `${infants} infant${infants === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ')})` : ''}`);
+  }
+
+  // ---- luggage ----
+  if (/\b(hand luggage only|only hand luggage|no (big )?(luggage|suitcases)|just (a )?backpacks?|travell?ing light)\b/.test(t)) {
+    patch.largeBags = 0; found.push('Hand luggage only');
+  }
+  const large = grab(t, '(?:large |big |check(?:ed)?[- ]?in )?(?:suitcases?|bags?|luggage|cases)');
+  if (large !== undefined) { patch.largeBags = large; found.push(`${large} large bag${large === 1 ? '' : 's'}`); }
+  const small = grab(t, '(?:small bags?|backpacks?|hand ?bags?|carry[- ]?ons?|cabin bags?)');
+  if (small !== undefined) { patch.smallBags = small; found.push(`${small} small bag${small === 1 ? '' : 's'}`); }
+
+  // ---- route ----
+  const places = PLACES.map((p) => ({ p, i: t.search(placeRe(p)) })).filter((x) => x.i >= 0).sort((a, b) => a.i - b.i).map((x) => x.p);
+  if (places.length) {
+    const have = c.areas ?? '';
+    const add = places.filter((p) => !placeRe(p).test(have));
+    if (add.length) patch.areas = [have.trim(), ...add].filter(Boolean).join(' → ');
+    found.push(`Route: ${places.join(', ')}${HILL_PLACES.test(places.join(' ')) ? ' (hill country)' : ''}`);
+  }
+
+  // ---- days ----
+  // "a day" is a rate ("100 km a day"), not a length — but "a week" / "a month" are lengths
+  const m = [...t.matchAll(new RegExp(`\\b${NUM}\\s+(days?|nights?|weeks?|months?)\\b`, 'g'))]
+    .find((x) => !/^an?$/.test(x[1]) || /week|month/.test(x[2]));
+  if (m) {
+    const n = toNum(m[1]);
+    const days = /week/.test(m[2]) ? n * 7 : /month/.test(m[2]) ? n * 30 : n;
+    if (days > 0) {
+      if (start) {
+        const from = new Date(start.length > 10 ? start : `${start}T10:00`);
+        patch.returnAt = localDt(new Date(from.getTime() + days * 864e5));
+        found.push(`${days} day${days === 1 ? '' : 's'} (return set)`);
+      } else found.push(`${days} day${days === 1 ? '' : 's'} — set the pickup date`);
+      if (/month/.test(m[2]) && !c.purpose) patch.purpose = 'Long-term (monthly)';
+    }
+  }
+
+  // ---- self drive / driver ----
+  if (/\bself[\s-]?driv|drive (it )?(ourselves|myself|themselves|on our own)|without (a )?driver|no driver\b/.test(t)) { patch.mode = 'Self drive'; found.push('Self drive'); }
+  else if (/\bwith (a )?driver|chauffeur|driver included|need a driver|want a driver/.test(t)) { patch.mode = 'With driver'; found.push('With driver'); }
+
+  // ---- purpose (only when not chosen yet) ----
+  if (!c.purpose && !patch.purpose) {
+    const touring = places.filter((p) => !/colombo|negombo|airport/i.test(p)).length > 0;
+    const p = /\b(wedding|homecoming|bridal|event)\b/.test(t) ? 'Wedding / event'
+      : /\b(business|company|office|field work|sales team|corporate)\b/.test(t) ? 'Business / company'
+      : /\b(visiting (my |our )?(family|relatives|parents)|home ?town|back home)\b/.test(t) ? 'Visiting family'
+      : /\b(airport|flight|landing|arriv(e|ing|al))\b/.test(t) && !touring ? 'Airport transfer'
+      : /\b(holiday|tour|trip|vacation|honeymoon|sightseeing|safari)\b/.test(t) || touring ? 'Holiday / tour'
+      : undefined;
+    if (p) patch.purpose = p;
+  }
+  if (patch.purpose) found.push(`Purpose: ${patch.purpose}`);
+  if (/\b(pick(ed)? ?up (from|at) (the )?airport|from the airport|airport (pickup|delivery)|meet (us )?at the airport)\b/.test(t)) { patch.airportDelivery = true; found.push('Airport delivery'); }
+
+  // ---- distance & budget ----
+  const km = t.match(/\b([\d,]+)\s*km\b(\s*(per|a|\/)\s*day)?/);
+  if (km) {
+    const n = Number(km[1].replace(/,/g, ''));
+    const daysForKm = m ? (/week/.test(m[2]) ? toNum(m[1]) * 7 : /month/.test(m[2]) ? toNum(m[1]) * 30 : toNum(m[1])) : 1;
+    if (n) { patch.distanceKm = km[2] ? n * Math.max(1, daysForKm) : n; found.push(`About ${patch.distanceKm.toLocaleString('en-LK')} km`); }
+  }
+  const money = t.match(/(?:rs\.?|lkr)\s*([\d,]+(?:\.\d+)?)\s*(k\b)?|\b([\d,]+(?:\.\d+)?)\s*(k)?\s*(?:rs|lkr|rupees)\b|\b(\d+(?:\.\d+)?)\s*k\s*(?:per|a|\/)\s*day/);
+  if (money && /budget|max|per day|a day|\/day|daily|around|about|under|below/.test(t)) {
+    const raw = money[1] ?? money[3] ?? money[5];
+    const k = !!(money[2] || money[4] || money[5]);
+    const n = Math.round(Number(raw.replace(/,/g, '')) * (k ? 1000 : 1));
+    if (n) {
+      if (/\b(max|maximum|under|below|not more than|up to)\b/.test(t)) patch.budgetMaxPerDay = n; else patch.budgetPerDay = n;
+      found.push(`Budget Rs ${n.toLocaleString('en-LK')}/day`);
+    }
+  }
+
+  // ---- vehicle wishes & extras ----
+  const pri = new Set(c.priorities ?? []);
+  if (/\bautomatic\b|\bauto (car|gear|transmission)\b/.test(t)) pri.add('Automatic transmission');
+  if (/\bsuv\b/.test(t)) pri.add('SUV');
+  if (/\b(cheap|cheapest|low budget|economical|affordable)\b/.test(t)) pri.add('Budget');
+  if (/\b(comfortable|comfort)\b/.test(t)) pri.add('Comfort');
+  if (/\b(luxury|premium)\b/.test(t)) pri.add('Luxury');
+  if (pri.size !== (c.priorities ?? []).length) { patch.priorities = [...pri]; found.push(`Priorities: ${[...pri].filter((p) => !(c.priorities ?? []).includes(p)).join(', ')}`); }
+  if (!c.requirement) {
+    const want = t.match(/\b(kdh|hiace|van|prius|axio|aqua|vitz|yaris|wagon ?r|alto|premio|allion|montero|prado|land cruiser|noah|voxy|vezel|grace|fit|x-?trail|benz|bmw)\b/);
+    if (want) { patch.requirement = `Asked for ${want[1].replace(/\b\w/g, (x) => x.toUpperCase())}`; found.push(patch.requirement); }
+  }
+  const special = new Set(c.special ?? []);
+  if (/\b(child seats?|baby seats?|car seats?|booster)\b/.test(t)) special.add('Child seat');
+  if (/\b(wheelchair|elderly|disabled|accessib|mobility)\b/.test(t)) special.add('Accessibility needs');
+  if (/\b(roof rack|surf ?boards?|bicycles?|bikes)\b/.test(t)) special.add('Roof rack / extra luggage');
+  if (special.size !== (c.special ?? []).length) { patch.special = [...special]; found.push(`Special: ${[...special].filter((s) => !(c.special ?? []).includes(s)).join(', ')}`); }
+
+  return { patch, found };
+}
+
+/** Questions left for later — confirmed before the quotation or booking */
+export const askLater = (inq: Inquiry, c: Consultation) => questionsFor(inq, c).filter((q) => statusOf(q, c) === 'later').map((q) => q.label);
+
+/** What is still missing before the consultation can be finished (questions marked Not required / Ask later don't count) */
+export function missing(inq: Inquiry, c?: Consultation) {
   if (!c) return ['Start the consultation'];
-  if (!c.purpose) m.push('Travel purpose');
-  if (!passengers(c)) m.push('Passengers');
-  if (!c.distanceKm) m.push('Expected km');
-  if (!c.mode) m.push('Self drive / with driver');
-  if (!c.pickupLocation) m.push('Exact pickup location');
+  const m = questionsFor(inq, c).filter((q) => q.required && !statusOf(q, c)).map((q) => q.label);
   if (!c.leadQuality) m.push('Lead quality');
   if (!c.nextAction) m.push('Next action');
   if (c.nextAction && c.nextAction !== 'Other' && !c.nextFollowUpAt && c.leadQuality !== 'Not interested') m.push('Next follow-up date');

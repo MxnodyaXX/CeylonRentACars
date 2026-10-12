@@ -58,6 +58,7 @@ export default function DateInput({
         selected={strToDate(value)}
         onChange={(d: Date | null) => onChange(d ? format(d, 'yyyy-MM-dd') : '')}
         calendarClassName="emrac-datepicker"
+                portalId="emrac-datepicker-portal"
         showMonthDropdown
         showYearDropdown
         dropdownMode="select"

@@ -2,6 +2,7 @@ import { Booking, Vehicle, Driver } from '../types';
 import { supabase, supabaseEnabled } from './supabase';
 import { sendSms, smsTemplates } from './sms';
 import { sendBookingConfirmationEmail } from '../utils/email';
+import { durationLabel, rateLine } from './rentalPeriod';
 
 // ── Shared Wikipedia image lookup (mirrors VehicleImage.tsx) ─────────────────
 
@@ -136,7 +137,7 @@ function generateHtml(
     <div style="margin-top:18px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.2);display:flex;gap:36px">
       <div><div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;opacity:0.6">Reference</div><div style="font-size:14px;font-weight:700;margin-top:2px">${ref}</div></div>
       <div><div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;opacity:0.6">Status</div><div style="font-size:14px;font-weight:700;margin-top:2px">✓ Confirmed</div></div>
-      <div><div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;opacity:0.6">Rental Period</div><div style="font-size:14px;font-weight:700;margin-top:2px">${booking.totalDays} day${booking.totalDays !== 1 ? 's' : ''}</div></div>
+      <div><div style="font-size:10px;text-transform:uppercase;letter-spacing:1.5px;opacity:0.6">Rental Period</div><div style="font-size:14px;font-weight:700;margin-top:2px">${durationLabel(booking)}</div></div>
     </div>
   </div>
 
@@ -184,7 +185,7 @@ function generateHtml(
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#A1A1AA;margin-bottom:14px">Payment Summary</div>
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <tr>
-        <td style="padding:10px 0;color:#52525B">Base Rental &nbsp;<span style="color:#A1A1AA">(${fmt(vehicle?.dailyRent)} × ${booking.totalDays} day${booking.totalDays !== 1 ? 's' : ''})</span></td>
+        <td style="padding:10px 0;color:#52525B">Base Rental &nbsp;<span style="color:#A1A1AA">(${rateLine(booking, vehicle?.dailyRent, false)})</span></td>
         <td style="padding:10px 0;text-align:right;font-weight:600;color:#111114">${fmt(booking.totalAmount)}</td>
       </tr>
       ${booking.discount ? `<tr><td style="padding:10px 0;color:#059669;border-top:1px solid #F4F4F5">Discount</td><td style="padding:10px 0;text-align:right;color:#059669;font-weight:600;border-top:1px solid #F4F4F5">− ${fmt(booking.discount)}</td></tr>` : ''}

@@ -1,4 +1,5 @@
 import { Booking, Vehicle } from '../types';
+import { durationLabel } from './rentalPeriod';
 
 /** Build a polite credit-reminder WhatsApp message for a customer. */
 export function buildCreditReminderMsg(
@@ -65,7 +66,7 @@ export function buildBookingWhatsAppMsg(
         `✅ Your booking has been *confirmed* with ${BRAND}.`,
         ``,
         `*Vehicle:* ${vLabel}`,
-        `*Period:* ${booking.startDate} → ${booking.endDate} (${booking.totalDays} days)`,
+        `*Period:* ${booking.startDate} → ${booking.endDate} (${durationLabel(booking)})`,
         `*Total:* ${rs(booking.totalAmount)}`,
         `*Paid:* ${rs(booking.paidAmount)}`,
         balance > 0 && `*Balance due:* ${rs(balance)}`,
@@ -101,7 +102,7 @@ export function buildBookingWhatsAppMsg(
         `🎉 Your rental with ${BRAND} has been *successfully completed*.`,
         ``,
         `*Vehicle:* ${vLabel}`,
-        `*Period:* ${booking.startDate} → ${booking.endDate} (${booking.totalDays} days)`,
+        `*Period:* ${booking.startDate} → ${booking.endDate} (${durationLabel(booking)})`,
         `*Total:* ${rs(booking.totalAmount)}`,
         balance <= 0
           ? `*Payment:* Fully settled ✓`

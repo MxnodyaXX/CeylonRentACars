@@ -14,6 +14,7 @@ import {
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
 import { Booking, VehicleHandover } from '../../types';
 import { bookingDiscount } from '../../lib/revenue';
+import { durationLabel } from '../../lib/rentalPeriod';
 
 const BAR_COLORS = ['#E11D2A', '#10B981', '#F59E0B', '#8B5CF6', '#111114', '#EC4899'];
 type PeriodKey = 'all' | 'week' | 'month' | 'year' | 'custom';
@@ -128,7 +129,7 @@ function RentDetailModal({ booking, handovers, onClose }: {
             <div>
               <Row icon={<CalendarDays size={14}/>} label="Start Date"  value={booking.startDate} />
               <Row icon={<CalendarDays size={14}/>} label="End Date"    value={booking.endDate} />
-              <Row icon={<CalendarDays size={14}/>} label="Days"        value={`${booking.totalDays} day${booking.totalDays !== 1 ? 's' : ''}`} />
+              <Row icon={<CalendarDays size={14}/>} label="Duration"    value={durationLabel(booking)} />
               <Row icon={<MapPin size={14}/>}       label="Pickup"      value={booking.pickupLocation} />
               <Row icon={<MapPin size={14}/>}       label="Drop-off"    value={booking.dropLocation} />
               {driver && <Row icon={<User size={14}/>} label="Driver" value={driver.name} />}

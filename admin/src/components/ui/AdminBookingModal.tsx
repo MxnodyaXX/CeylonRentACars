@@ -25,8 +25,12 @@ import {
   Car, ArrowRight, Printer,
 } from 'lucide-react';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap, rentalDays } from '../../lib/availability';
+import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
+import DoNotRentWarning from './DoNotRentWarning';
+import { CustomerIdFields, MissingDetailsPanel } from './NewBookingDetails';
+import { unitLabel, RentalType } from '../../lib/rentalPeriod';
 import { printBookingConfirmation, sendBookingReceipt } from '../../lib/printReceipt';
-import { Booking, Owner, Vehicle } from '../../types';
+import { Booking, CustomerInfo, Owner, Vehicle } from '../../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +63,9 @@ const emptyForm = (vehicleId = '') => ({
   startTime: '',
   endTime: '',
   waiveExtraDay: false,
+  rentalType: 'Daily' as RentalType,
+  rentalUnits: undefined as number | undefined,
+  unitRate: undefined as number | undefined,
   totalDays: 0,
   totalAmount: 0,
   paidAmount: 0,
@@ -70,6 +77,7 @@ const emptyForm = (vehicleId = '') => ({
   pickupLocation: '',
   dropLocation: '',
   driverId: '',
+  customerInfo: {} as CustomerInfo,
   depositType: undefined as 'cash' | 'vehicle' | 'other' | undefined,
   depositVehicleModel: '',
   depositVehicleColor: '',
@@ -225,7 +233,8 @@ export default function AdminBookingModal({ open, onClose }: Props) {
       const affects = ['startDate', 'endDate', 'vehicleId', 'startTime', 'endTime', 'waiveExtraDay'].includes(field);
       if (affects) {
         const { startDate: s, endDate: e, vehicleId: vid } = updated;
-        if (s && e && s <= e) {
+        // Hourly / monthly prices come from their own rate — only daily is days × the daily rent
+        if (s && e && s <= e && updated.rentalType === 'Daily') {
           const days    = rentalDays(s, e, updated.startTime, updated.endTime, updated.waiveExtraDay);
           const vehicle = vehicles.find((v) => v.id === vid);
           updated.totalDays   = days;
@@ -238,6 +247,14 @@ export default function AdminBookingModal({ open, onClose }: Props) {
       return updated;
     });
   };
+
+  // Hourly / monthly / type change from RentalPeriodFields — merge it and re-check availability
+  const applyPeriod = (patch: Partial<PeriodValue>) => setForm((f) => {
+    const updated = { ...f, ...patch } as typeof f;
+    const { startDate: s, endDate: e, vehicleId: vid } = updated;
+    if (s && e && vid && s <= e) setAvailability(isVehicleAvailable(vid, s, e, undefined, updated.startTime, updated.endTime));
+    return updated;
+  });
 
   // Pick owner → go to vehicle step
   const pickOwner = (owner: Owner) => {
@@ -304,6 +321,10 @@ export default function AdminBookingModal({ open, onClose }: Props) {
     setError('');
     if (!form.vehicleId || !form.customerName || !form.startDate || !form.endDate) {
       setError('Please fill in all required fields.');
+      return;
+    }
+    if (form.rentalType !== 'Daily' && !((form.rentalUnits ?? 0) > 0 && (form.unitRate ?? 0) > 0)) {
+      setError(`Enter the number of ${form.rentalType === 'Hourly' ? 'hours' : 'months'} and the rate.`);
       return;
     }
     if (!isVehicleAvailable(form.vehicleId, form.startDate, form.endDate, undefined, form.startTime, form.endTime)) {
@@ -491,8 +512,16 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                   </div>
                 </>
               )}
+              <div className="col-span-full"><DoNotRentWarning phone={form.customerPhone} /></div>
+              <div className="col-span-full"><CustomerIdFields value={form.customerInfo} selfDrive={!form.driverId} onChange={(ci) => setForm((f) => ({ ...f, customerInfo: ci }))} /></div>
             </div>
 
+            <RentalPeriodFields
+              value={form}
+              onChange={applyPeriod}
+              dailyRate={vehicles.find((v) => v.id === form.vehicleId)?.dailyRent ?? 0}
+              minDate={format(new Date(), 'yyyy-MM-dd')}
+              daily={<>
             {/* Dates */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -506,6 +535,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                   placeholderText="Select start date"
                   className={`input w-full ${startWarn ? 'border-red-400' : ''}`}
                   calendarClassName="emrac-datepicker"
+                portalId="emrac-datepicker-portal"
                   showMonthDropdown showYearDropdown dropdownMode="select"
                 />
                 {startWarn && <p className="flex items-center gap-1 text-xs text-red-600 mt-1"><XCircle size={12} />{startWarn}</p>}
@@ -521,6 +551,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                   placeholderText="Select end date"
                   className={`input w-full ${endWarn ? 'border-red-400' : ''}`}
                   calendarClassName="emrac-datepicker"
+                portalId="emrac-datepicker-portal"
                   showMonthDropdown showYearDropdown dropdownMode="select"
                 />
                 {endWarn && <p className="flex items-center gap-1 text-xs text-red-600 mt-1"><XCircle size={12} />{endWarn}</p>}
@@ -543,6 +574,8 @@ export default function AdminBookingModal({ open, onClose }: Props) {
               <input type="checkbox" className="rounded" checked={form.waiveExtraDay} onChange={(e) => set('waiveExtraDay', e.target.checked)} />
               Don't charge extra days (owner approved) — a partial day past a full 24h period won't be billed as another day
             </label>
+              </>}
+            />
 
             {/* Availability banner */}
             {form.vehicleId && form.startDate && form.endDate && availability !== null && (
@@ -550,7 +583,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                 <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm px-4 py-3 rounded-xl">
                   <CheckCircle size={15} className="flex-shrink-0" />
                   <span>
-                    Available · <span className="font-semibold">{form.totalDays}d</span>
+                    Available · <span className="font-semibold">{form.rentalType !== 'Daily' && form.rentalUnits ? unitLabel(form.rentalType, form.rentalUnits) : `${form.totalDays}d`}</span>
                     {' · '}Base: <span className="font-semibold">Rs {form.totalAmount.toLocaleString()}</span>
                   </span>
                 </div>
@@ -732,8 +765,10 @@ export default function AdminBookingModal({ open, onClose }: Props) {
             </div>
           </div>
 
+          <div className="mt-5"><MissingDetailsPanel draft={form} /></div>
+
           {/* Footer */}
-          <div className="flex items-center justify-between mt-6 pt-4 border-t border-navy-50">
+          <div className="flex items-center justify-between mt-4 pt-4 border-t border-navy-50">
             <button
               onClick={() => setStep('vehicle')}
               className="btn-secondary flex items-center gap-2 text-sm"

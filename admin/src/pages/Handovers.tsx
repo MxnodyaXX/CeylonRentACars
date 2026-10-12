@@ -16,6 +16,7 @@ import {
   Clock, FileText, AlertTriangle, Car, CreditCard, Receipt, BookMarked,
 } from 'lucide-react';
 import { Booking, VehicleHandover } from '../types';
+import { durationLabel, rateLine } from '../lib/rentalPeriod';
 
 const FUEL_LEVELS = ['Full', '3/4', '1/2', '1/4', 'Empty'] as const;
 type FuelLevel = typeof FUEL_LEVELS[number];
@@ -690,7 +691,7 @@ export default function Handovers() {
                 <div>
                   <p className="text-sm font-semibold text-navy-800">{booking.customerName}</p>
                   <p className="text-xs text-navy-500">
-                    {vehicle.brand} {vehicle.model} · {booking.totalDays} days · {booking.startDate} → {booking.endDate}
+                    {vehicle.brand} {vehicle.model} · {durationLabel(booking)} · {booking.startDate} → {booking.endDate}
                   </p>
                 </div>
               </div>
@@ -703,7 +704,7 @@ export default function Handovers() {
                 </div>
                 <div className="p-4 space-y-2 text-xs">
                   <div className="flex justify-between text-navy-600">
-                    <span>Base ({booking.totalDays}d × Rs {vehicle.dailyRent.toLocaleString()}/day)</span>
+                    <span>Base ({rateLine(booking, vehicle.dailyRent)})</span>
                     <span className="font-semibold">Rs {baseAmount.toLocaleString()}</span>
                   </div>
                   {totalKmDriven > 0 && (

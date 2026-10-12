@@ -36,6 +36,56 @@ export const bookingStartMs = (b: { startDate: string; startTime?: string }): nu
 export const bookingEndMs = (b: { endDate: string; endTime?: string }): number =>
   toMs(b.endDate, b.endTime, '23:59');
 
+/* ---------- Does the status match the dates? ---------- */
+
+type StatusDates = { startDate: string; endDate: string; startTime?: string; endTime?: string };
+const isHm = (t?: string): t is string => !!t && /^\d{1,2}:\d{2}$/.test(t);
+const localDay = (ms: number) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const nice = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+/** The status the dates point to right now. On the start / end day itself the time decides; without a time it stays open. */
+export function statusForDates(b: StatusDates, now = Date.now()): 'Confirmed' | 'Ongoing' | 'Completed' {
+  const today = localDay(now);
+  if (b.endDate < today) return 'Completed';
+  if (b.startDate > today) return 'Confirmed';
+  if (b.startDate === today && (!isHm(b.startTime) || bookingStartMs(b) > now)) return 'Confirmed';
+  if (b.endDate === today && isHm(b.endTime) && bookingEndMs(b) <= now) return 'Completed';
+  return 'Ongoing';
+}
+
+/**
+ * Why a status can't be right for these dates — e.g. "Completed" for a rental that hasn't
+ * ended yet. Returns null when the status is possible. Boundary days are allowed unless a
+ * time proves otherwise (a car returned this morning can be Completed today).
+ */
+export function statusDateProblem(status: string, b: StatusDates, now = Date.now()): string | null {
+  if (!b.startDate || !b.endDate || status === 'Cancelled') return null;
+  const today = localDay(now);
+  const started = b.startDate < today || (b.startDate === today && isHm(b.startTime) && bookingStartMs(b) <= now);
+  const notStartedYet = b.startDate > today || (b.startDate === today && isHm(b.startTime) && bookingStartMs(b) > now);
+  const ended = b.endDate < today || (b.endDate === today && isHm(b.endTime) && bookingEndMs(b) <= now);
+  const notEndedYet = b.endDate > today || (b.endDate === today && isHm(b.endTime) && bookingEndMs(b) > now);
+
+  switch (status) {
+    case 'Completed':
+      if (notEndedYet) return `This rental runs until ${nice(b.endDate)}${isHm(b.endTime) ? ` ${b.endTime}` : ''} — it can't be Completed yet. Use ${notStartedYet ? 'Confirmed' : 'Ongoing'}.`;
+      return null;
+    case 'Ongoing':
+      if (notStartedYet) return `This rental starts on ${nice(b.startDate)}${isHm(b.startTime) ? ` ${b.startTime}` : ''} — it can't be Ongoing yet. Use Confirmed.`;
+      if (ended) return `This rental ended on ${nice(b.endDate)} — it can't still be Ongoing. Use Completed, or change the end date if the customer still has the vehicle.`;
+      return null;
+    case 'Confirmed':
+      if (ended) return `This rental ended on ${nice(b.endDate)} — use Completed (or Cancelled if it never happened).`;
+      if (started) return `This rental started on ${nice(b.startDate)} — use Ongoing if the customer has the vehicle.`;
+      return null;
+    default:
+      return null;
+  }
+}
+
 /**
  * Do two date-time ranges overlap? Boundaries that merely touch do NOT overlap,
  * so a vehicle returned at 08:00 is free to hand to the next hire from 08:00 on.

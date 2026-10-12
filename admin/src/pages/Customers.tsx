@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Customer, Booking } from '../types';
 import { customerCredit, bookingBill, bookingPaid, bookingDue, bookingCredit } from '../lib/credit';
+import { durationLabel } from '../lib/rentalPeriod';
 
 const emptyForm = (): Omit<Customer, 'id' | 'createdAt'> => ({
   name: '',
@@ -69,7 +70,7 @@ export default function Customers() {
 
   const openEdit = (c: Customer) => {
     setSelected(c);
-    setForm({ name: c.name, phone: c.phone, email: c.email ?? '', nic: c.nic ?? '', address: c.address ?? '', notes: c.notes ?? '', smsOptIn: c.smsOptIn ?? true });
+    setForm({ name: c.name, phone: c.phone, email: c.email ?? '', nic: c.nic ?? '', address: c.address ?? '', notes: c.notes ?? '', smsOptIn: c.smsOptIn ?? true, doNotRent: c.doNotRent ?? false, doNotRentReason: c.doNotRentReason ?? '' });
     setError('');
     setModal('edit');
   };
@@ -183,7 +184,7 @@ export default function Customers() {
                   {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-bold text-navy-800">{c.name}</p>
+                      <p className="text-sm font-bold text-navy-800">{c.name}{c.doNotRent && <span className="ml-1.5 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 align-middle" title={c.doNotRentReason}>Do not rent</span>}</p>
                       {history.some((b) => b.status === 'Confirmed' || b.status === 'Ongoing') && (
                         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
                           Active
@@ -465,6 +466,20 @@ export default function Customers() {
               </span>
             </button>
           </div>
+          {/* Flag customers the business should not rent to again */}
+          <div className="col-span-2">
+            <label className={`flex items-start gap-3 rounded-xl px-3.5 py-3 cursor-pointer transition-colors ${form.doNotRent ? 'bg-red-50 border border-red-200' : 'bg-navy-50/60 hover:bg-navy-50'}`}>
+              <input type="checkbox" className="mt-1 accent-red-600" checked={!!form.doNotRent} onChange={(e) => setForm((f) => ({ ...f, doNotRent: e.target.checked }))} />
+              <span className="flex-1">
+                <span className="block text-sm font-medium text-navy-700">Do not rent to this customer</span>
+                <span className="block text-xs text-navy-400">Staff see a warning when booking for this phone number</span>
+                {form.doNotRent && (
+                  <input className="input mt-2 text-sm" value={form.doNotRentReason ?? ''} onChange={(e) => setForm((f) => ({ ...f, doNotRentReason: e.target.value }))}
+                         placeholder="Reason, e.g. Unpaid balance, damaged vehicle" />
+                )}
+              </span>
+            </label>
+          </div>
         </div>
 
         <div className="flex justify-end gap-3 mt-6">
@@ -543,7 +558,7 @@ export default function Customers() {
                 <Row label="Phone" value={b.customerPhone} />
                 <Row label="Start" value={`${b.startDate}${startTime ? ` · ${startTime}` : ''}`} />
                 <Row label="End" value={`${b.endDate}${endTime ? ` · ${endTime}` : ''}`} />
-                <Row label="Duration" value={`${b.totalDays} day${b.totalDays !== 1 ? 's' : ''}`} />
+                <Row label="Duration" value={durationLabel(b)} />
                 {b.pickupLocation && <Row label="Pickup" value={b.pickupLocation} />}
                 {b.dropLocation && <Row label="Drop" value={b.dropLocation} />}
               </div>

@@ -10,7 +10,12 @@ import Select from './Select';
 import DateInput from './DateInput';
 import TimePicker from './TimePicker';
 import LocationInput from './LocationInput';
-import { rentalDays } from '../../lib/availability';
+import { rentalDays, statusForDates, statusDateProblem } from '../../lib/availability';
+import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
+import DoNotRentWarning from './DoNotRentWarning';
+import { CustomerIdFields, MissingDetailsPanel } from './NewBookingDetails';
+import type { CustomerInfo } from '../../types';
+import { RentalType } from '../../lib/rentalPeriod';
 import { resolveReferralFee } from '../../lib/referral';
 import { creditResponsibilityOf } from '../../lib/credit';
 import { sendSms } from '../../lib/sms';
@@ -34,6 +39,9 @@ const emptyForm = () => ({
   startTime: '',
   endTime: '',
   waiveExtraDay: false,
+  rentalType: 'Daily' as RentalType,
+  rentalUnits: undefined as number | undefined,
+  unitRate: undefined as number | undefined,
   totalDays: 0,
   dailyRateUsed: 0,
   totalAmount: 0,
@@ -53,6 +61,7 @@ const emptyForm = () => ({
   pickupLocation: '',
   dropLocation: '',
   driverId: '',
+  customerInfo: {} as CustomerInfo,
   depositType: undefined as 'cash' | 'vehicle' | 'other' | undefined,
   depositVehicleModel: '',
   depositVehicleColor: '',
@@ -79,7 +88,7 @@ function Field({ label, children, required }: { label: string; children: React.R
 }
 
 export default function ManualBookingModal({ onClose }: Props) {
-  const { vehicles, owners, drivers, customers, addManualBooking, saveDraft, discardDraft, drafts } = useStore();
+  const { vehicles, owners, drivers, customers, addManualBooking, saveDraft, discardDraft, drafts, isVehicleAvailable } = useStore();
   const currentUser = useAuthStore((s) => s.currentUser);
   // Owners can only record bookings against their own vehicles; admins see the full fleet.
   const selectableVehicles = currentUser?.role === 'owner'
@@ -87,6 +96,8 @@ export default function ManualBookingModal({ onClose }: Props) {
     : vehicles;
   const [form, setForm]           = useState(emptyForm());
   const [error, setError]         = useState('');
+  // Until staff pick a status themselves, it follows the dates (past → Completed, now → Ongoing, future → Confirmed)
+  const [statusTouched, setStatusTouched] = useState(false);
   const [customerMode, setCustomerMode] = useState<'new' | 'existing'>('new');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [custFound, setCustFound] = useState<null | 'found' | 'new'>(null);
@@ -105,6 +116,7 @@ export default function ManualBookingModal({ onClose }: Props) {
     const draft = drafts.find((d) => d.id === resumeId && d.type === 'booking');
     if (draft) {
       setForm(draft.formData as ReturnType<typeof emptyForm>);
+      setStatusTouched(true);
       discardDraft(resumeId);
     }
     setSearchParams({}, { replace: true });
@@ -164,7 +176,8 @@ export default function ManualBookingModal({ onClose }: Props) {
         const s   = updated.startDate;
         const e   = updated.endDate;
         const v   = vehicles.find((x) => x.id === updated.vehicleId);
-        if (s && e && s <= e) {
+        // Hourly / monthly prices come from their own rate — only daily is days × the daily rate
+        if (s && e && s <= e && updated.rentalType === 'Daily') {
           const days = rentalDays(s, e, updated.startTime, updated.endTime, updated.waiveExtraDay);
           const rate = field === 'dailyRateUsed' ? (value as number) : (updated.dailyRateUsed || v?.dailyRent || 0);
           updated.totalDays   = days;
@@ -172,10 +185,18 @@ export default function ManualBookingModal({ onClose }: Props) {
           updated.totalAmount = days * rate;
         }
         if (field === 'vehicleId' && v) updated.dailyRateUsed = v.dailyRent;
+        if (!statusTouched && s && e && s <= e && updated.status !== 'Cancelled') updated.status = statusForDates(updated);
       }
       return updated;
     });
   };
+
+  // Hourly / monthly / type change from RentalPeriodFields (status still follows the dates until picked by hand)
+  const applyPeriod = (patch: Partial<PeriodValue>) => setForm((f) => {
+    const updated = { ...f, ...patch } as typeof f;
+    if (!statusTouched && updated.startDate && updated.endDate && updated.startDate <= updated.endDate && updated.status !== 'Cancelled') updated.status = statusForDates(updated);
+    return updated;
+  });
 
   // Customer phone lookup
   useEffect(() => {
@@ -189,6 +210,13 @@ export default function ManualBookingModal({ onClose }: Props) {
     }
   }, [form.customerPhone, customers]);
 
+  // The status must match the dates — e.g. a rental running Oct 10 → Nov 10 can't be saved as Completed on Oct 20
+  const statusProblem = statusDateProblem(form.status, form);
+  const suggestedStatus = form.startDate && form.endDate && form.startDate <= form.endDate ? statusForDates(form) : undefined;
+  // Live bookings (Confirmed / Ongoing) hold the vehicle, so they can't overlap another live booking
+  const clash = !!form.vehicleId && !!form.startDate && !!form.endDate && (form.status === 'Confirmed' || form.status === 'Ongoing')
+    && !isVehicleAvailable(form.vehicleId, form.startDate, form.endDate, undefined, form.startTime, form.endTime);
+
   const handleSave = () => {
     setError('');
     if (!form.vehicleId)      { setError('Please select a vehicle.'); return; }
@@ -196,7 +224,10 @@ export default function ManualBookingModal({ onClose }: Props) {
     if (!form.customerPhone)  { setError('Customer phone is required.'); return; }
     if (!form.startDate || !form.endDate) { setError('Start and end dates are required.'); return; }
     if (form.startDate > form.endDate)    { setError('End date must be after start date.'); return; }
+    if (form.rentalType !== 'Daily' && !((form.rentalUnits ?? 0) > 0 && (form.unitRate ?? 0) > 0)) { setError(`Enter the number of ${form.rentalType === 'Hourly' ? 'hours' : 'months'} and the rate.`); return; }
     if (form.totalAmount <= 0)            { setError('Total amount must be greater than 0.'); return; }
+    if (statusProblem)                    { setError(statusProblem); return; }
+    if (clash)                            { setError(`This vehicle already has a ${form.status === 'Ongoing' ? 'live' : 'confirmed'} booking on these dates — check the dates or the status.`); return; }
 
     // Resolve the remaining balance into either a discount or a customer credit due.
     let discount = form.discount || 0;
@@ -285,6 +316,12 @@ export default function ManualBookingModal({ onClose }: Props) {
                         options={selectableVehicles.map((v) => ({ value: v.id, label: `${v.vehicleNumber} — ${v.brand} ${v.model}`, sub: `Rs ${v.dailyRent.toLocaleString()}/day` }))} />
                     </Field>
                   </div>
+                  <div className="sm:col-span-2">
+                    <RentalPeriodFields
+                      value={form}
+                      onChange={applyPeriod}
+                      dailyRate={form.dailyRateUsed || vehicle?.dailyRent || 0}
+                      daily={<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <Field label="Start Date" required>
                     <DateInput value={form.startDate} onChange={(v) => set('startDate', v)} />
                   </Field>
@@ -303,12 +340,31 @@ export default function ManualBookingModal({ onClose }: Props) {
                       Don't charge extra days (owner approved) — a partial day past a full 24h period won't be billed as another day
                     </label>
                   </div>
-                  <Field label="Daily Rate Used (Rs)" required>
-                    <input className="input" type="number" min="0" value={form.dailyRateUsed || ''} onChange={(e) => set('dailyRateUsed', +e.target.value)} />
-                  </Field>
+                      </div>}
+                    />
+                  </div>
+                  {form.rentalType === 'Daily' && (
+                    <Field label="Daily Rate Used (Rs)" required>
+                      <input className="input" type="number" min="0" value={form.dailyRateUsed || ''} onChange={(e) => set('dailyRateUsed', +e.target.value)} />
+                    </Field>
+                  )}
                   <Field label="Booking Status" required>
-                    <Select value={form.status} onChange={(v) => set('status', v as BookingStatus)}
+                    <Select value={form.status} onChange={(v) => { setStatusTouched(true); set('status', v as BookingStatus); }}
                       options={['Completed', 'Confirmed', 'Ongoing', 'Cancelled'].map((s) => ({ value: s, label: s }))} />
+                    {statusProblem ? (
+                      <p className="mt-1.5 text-xs text-red-600 flex items-start gap-1">
+                        <AlertCircle size={13} className="mt-0.5 flex-shrink-0" />
+                        <span>
+                          {statusProblem}
+                          {suggestedStatus && suggestedStatus !== form.status && (
+                            <button type="button" onClick={() => { setStatusTouched(true); set('status', suggestedStatus); }} className="ml-1 font-semibold underline">Set to {suggestedStatus}</button>
+                          )}
+                        </span>
+                      </p>
+                    ) : !statusTouched && suggestedStatus ? (
+                      <p className="mt-1 text-[11px] text-navy-400">Set from the dates</p>
+                    ) : null}
+                    {clash && <p className="mt-1 text-xs text-red-600">This vehicle already has a live booking on these dates.</p>}
                   </Field>
                 </div>
               </section>
@@ -380,6 +436,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                             <CheckCircle2 size={12} /> Existing customer found — details pre-filled
                           </p>
                         )}
+                        <div className="col-span-full"><DoNotRentWarning phone={form.customerPhone} /></div>
                         {custFound === 'new' && (
                           <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
                             <AlertCircle size={12} /> New customer — will be added to Customers table
@@ -401,6 +458,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                     </Field>
                   </div>
                 )}
+                <div className="mt-4"><CustomerIdFields value={form.customerInfo} selfDrive={!form.driverId} onChange={(ci) => setForm((f) => ({ ...f, customerInfo: ci }))} /></div>
               </section>
 
               {/* Payment */}
@@ -671,14 +729,32 @@ export default function ManualBookingModal({ onClose }: Props) {
               {form.totalDays > 0 && (
                 <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
                   <p className="text-xs text-navy-400">Duration</p>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-navy-600">Days</span>
-                    <span className="font-semibold text-navy-800">{form.totalDays}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-navy-600">Daily Rate</span>
-                    <span className="font-semibold text-navy-800">Rs {form.dailyRateUsed.toLocaleString()}</span>
-                  </div>
+                  {form.rentalType !== 'Daily' && form.rentalUnits ? (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-navy-600">{form.rentalType === 'Hourly' ? 'Hours' : 'Months'}</span>
+                        <span className="font-semibold text-navy-800">{form.rentalUnits}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-navy-600">Rate {form.rentalType === 'Hourly' ? 'per hour' : 'per month'}</span>
+                        <span className="font-semibold text-navy-800">Rs {(form.unitRate ?? 0).toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-navy-400">
+                        <span>Ends</span><span>{form.endDate}{form.endTime ? ` ${form.endTime}` : ''}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-navy-600">Days</span>
+                        <span className="font-semibold text-navy-800">{form.totalDays}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-navy-600">Daily Rate</span>
+                        <span className="font-semibold text-navy-800">Rs {form.dailyRateUsed.toLocaleString()}</span>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -754,6 +830,8 @@ export default function ManualBookingModal({ onClose }: Props) {
             </div>
           </div>
         </div>
+
+        <div className="px-6 pt-3"><MissingDetailsPanel draft={form} /></div>
 
         {/* Footer */}
         {error && (

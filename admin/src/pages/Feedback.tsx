@@ -31,14 +31,14 @@ function Stars({ value }: { value: number }) {
 }
 
 /* Feedback link for one rental: prefills the vehicle and the customer's first name */
-const linkFor = (vehicleId: string, customerName: string) =>
+export const linkFor = (vehicleId: string, customerName: string) =>
   `${WEBSITE_URL}/feedback?v=${encodeURIComponent(vehicleId)}&n=${encodeURIComponent(customerName.trim().split(' ')[0])}`;
 
 const fmtDate = (d: string) =>
   new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 /* Feedback request for WhatsApp: one idea per line; *text* renders bold in WhatsApp */
-const feedbackMessage = (firstName: string, vehicle: string, start: string, end: string, url: string) => [
+export const feedbackMessage = (firstName: string, vehicle: string, start: string, end: string, url: string) => [
   `Dear ${firstName},`,
   '',
   'Thank you for choosing *Ceylon Rent A Cars*. We hope you enjoyed your journey with us.',

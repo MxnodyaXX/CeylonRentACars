@@ -9,6 +9,8 @@ export interface Customer {
   address?: string;
   notes?: string;
   smsOptIn?: boolean;   // SMS consent (defaults to true when undefined)
+  doNotRent?: boolean;  // flagged — warn staff before renting to them again
+  doNotRentReason?: string;
   createdAt: string;
 }
 
@@ -124,6 +126,9 @@ export interface Booking {
   startTime?: string;        // 'HH:mm' scheduled pickup time (for same-day turnaround availability)
   endTime?: string;          // 'HH:mm' scheduled return time
   waiveExtraDay?: boolean;   // owner-approved: don't bill a partial day past a whole 24h multiple
+  rentalType?: 'Hourly' | 'Daily' | 'Monthly'; // how the rental is charged (missing = Daily)
+  rentalUnits?: number;      // hours (Hourly) or calendar months (Monthly)
+  unitRate?: number;         // price per hour / per month
   totalDays: number;
   totalAmount: number;
   estimatedAmount?: number;  // from quotation calculator
@@ -161,6 +166,91 @@ export interface Booking {
   creditResponsibility?: 'self' | 'owner' | 'company'; // who is liable for the credit
   badDebt?: number;           // amount written off as unrecoverable
   insertedByAdmin?: boolean;  // true when admin entered this booking on behalf of an owner
+
+  // ── Full booking record (stored as JSON columns — see supabase/fix-missing-columns.sql) ──
+  payments?: PaymentEntry[];        // every payment / refund / deposit movement, oldest first
+  customerInfo?: CustomerInfo;      // licence, nationality, emergency contact
+  documents?: BookingDocument[];    // licence / ID photos, signed agreement, receipts
+  checklists?: { pickup?: HandoverChecklist; return?: HandoverChecklist };
+  charges?: ExtraCharge[];          // fines, tolls, damage — added during or after the rental
+  agreement?: RentalAgreement;
+  activity?: ActivityEntry[];       // what happened to this booking, oldest first
+  internalNotes?: string;           // staff only — never shown to the customer
+}
+
+export type PaymentKind = 'Payment' | 'Advance' | 'Refund' | 'Deposit received' | 'Deposit returned';
+export interface PaymentEntry {
+  id: string;
+  at: string;             // ISO
+  kind: PaymentKind;
+  amount: number;         // always positive; the kind says which way it moves
+  method: string;         // Cash / Bank transfer / Card / Online
+  receiptNo?: string;
+  note?: string;
+  by: string;
+}
+
+export interface CustomerInfo {
+  nationality?: string;
+  licenceNumber?: string;
+  licenceExpiry?: string;     // yyyy-MM-dd
+  licenceType?: 'Sri Lankan' | 'Foreign';
+  idp?: boolean;              // International Driving Permit (foreign licence)
+  passportNumber?: string;
+  address?: string;
+  emergencyName?: string;
+  emergencyPhone?: string;
+}
+
+export type DocumentKind = 'Driving licence' | 'NIC / Passport' | 'Signed agreement' | 'Proof of address' | 'Payment proof' | 'Damage photo' | 'Other';
+export interface BookingDocument {
+  id: string;
+  kind: DocumentKind;
+  name: string;
+  path: string;           // storage path in the private "booking-files" bucket (or a data URL offline)
+  uploadedAt: string;
+  by: string;
+}
+
+export interface HandoverChecklist {
+  at: string;             // ISO — the actual handover time
+  by: string;
+  odometer: number;
+  fuel: string;           // 'Full' | '3/4' | '1/2' | '1/4' | 'Empty'
+  items: Record<string, boolean>;   // spare tyre, jack, documents…
+  damage?: string;        // scratches / dents noted
+  photos?: string[];      // storage paths
+  signature?: string;     // customer's signature (data URL)
+  notes?: string;
+}
+
+export type ChargeKind = 'Traffic fine' | 'Toll' | 'Parking' | 'Damage' | 'Fuel' | 'Late return' | 'Cleaning' | 'Other';
+export interface ExtraCharge {
+  id: string;
+  kind: ChargeKind;
+  amount: number;
+  date: string;           // yyyy-MM-dd
+  note?: string;
+  status: 'Charged' | 'Waived';
+  by: string;
+  at: string;
+}
+
+export interface RentalAgreement {
+  printedAt?: string;
+  signedAt?: string;
+  signedBy?: string;      // staff member who collected it
+  insuranceExcess?: number;
+  allowedArea?: string;   // e.g. "Sri Lanka only — no off-road"
+  fuelPolicy?: string;    // e.g. "Full to full"
+  lateReturnPolicy?: string;
+}
+
+export interface ActivityEntry {
+  at: string;
+  by: string;
+  type: 'Created' | 'Edited' | 'Status' | 'Payment' | 'Handover' | 'Extended' | 'Swapped' | 'Charge' | 'Document' | 'Message' | 'Agreement' | 'Cancelled' | 'Deposit' | 'Note';
+  text: string;
 }
 
 export interface Inquiry {
@@ -286,6 +376,9 @@ export interface Consultation {
   // 10. Special requirements
   special?: string[];
   specialNotes?: string;
+  // Guided conversation: what staff typed from the call, and question statuses set by hand
+  capture?: string;
+  questions?: Record<string, 'answered' | 'na' | 'later'>;
   // 11. Notes
   customerNotes?: string;
   internalNotes?: string;
@@ -423,7 +516,8 @@ export interface AppState {
 
   addBooking: (b: Omit<Booking, 'id' | 'createdAt'>) => string;
   updateBooking: (id: string, updates: Partial<Booking>) => void;
-  cancelBooking: (id: string) => void;
+  /** `why` is recorded in the booking notes (who, reason, optional details) */
+  cancelBooking: (id: string, why?: { reason: string; details?: string; by: string }) => void;
   startBooking: (id: string) => void;
   completeBooking: (id: string) => void;
   markReferralPaid: (bookingId: string, paid: boolean) => void;
@@ -446,6 +540,15 @@ export interface AppState {
   updateCommission: (id: string, updates: Partial<Commission>) => void;
   addManualBooking: (data: Omit<Booking, 'id' | 'createdAt'> & { customerAddress?: string; dailyRateUsed?: number; referralAlreadyPaid?: boolean; commissionAlreadyPaid?: boolean }) => string;
   recomputeStats: () => void;
+  /** Admin correction of a booking; `changes` is a readable list kept as an audit line in the notes */
+  editBooking: (id: string, updates: Partial<Booking>, meta: { by: string; changes: string[]; reason?: string; type?: ActivityEntry['type'] }) => void;
+  // ── Full booking record ──
+  logBookingActivity: (id: string, entry: Omit<ActivityEntry, 'at'>, updates?: Partial<Booking>) => void;
+  recordPayment: (id: string, p: Omit<PaymentEntry, 'id' | 'at'> & { at?: string }) => void;
+  settleDeposit: (id: string, s: { returned: number; deduction: number; method: string; notes?: string }, by: string) => void;
+  addCharge: (id: string, c: Omit<ExtraCharge, 'id' | 'at' | 'status'>) => void;
+  waiveCharge: (id: string, chargeId: string, by: string) => void;
+  recordHandover: (id: string, kind: 'pickup' | 'return', list: HandoverChecklist, location?: string) => void;
   settleCredit: (bookingId: string) => void;
 
   drafts: ProcessDraft[];

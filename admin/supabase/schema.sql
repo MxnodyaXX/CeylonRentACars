@@ -222,6 +222,12 @@ alter table bookings add column if not exists payment_method        text;
 alter table bookings add column if not exists credit_amount         numeric(12,2);
 alter table bookings add column if not exists credit_settled        boolean default false;
 alter table bookings add column if not exists credit_responsibility text;
+alter table bookings add column if not exists bad_debt              numeric(12,2);   -- amount written off at payment
+
+-- Hourly / daily / monthly rentals (no type = Daily)
+alter table bookings add column if not exists rental_type           text;
+alter table bookings add column if not exists rental_units          numeric(10,2);
+alter table bookings add column if not exists unit_rate             numeric(12,2);
 
 -- ── Disable RLS (private internal app — no public access) ────────────────────
 

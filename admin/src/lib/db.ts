@@ -13,6 +13,8 @@ import type { AppUser } from '../types/auth'
 // Coerce them to real numbers, or every reduce/sum becomes string concatenation.
 const num    = (v: unknown): number => Number(v ?? 0);
 const numOpt = (v: unknown): number | undefined => (v == null ? undefined : Number(v));
+// Foreign keys: an empty id (e.g. a vehicle with no owner) must be NULL, or the row breaks the reference
+const fk = (v: string | undefined | null) => (v ? v : null);
 
 function vFromDb(r: Record<string, unknown>): Vehicle {
   return {
@@ -47,7 +49,7 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
 function vToDb(v: Vehicle) {
   return {
     id: v.id, vehicle_number: v.vehicleNumber, brand: v.brand, model: v.model,
-    year: v.year, owner_id: v.ownerId, daily_rent: v.dailyRent,
+    year: v.year, owner_id: fk(v.ownerId), daily_rent: v.dailyRent,
     extra_km_rate: v.extraKmRate ?? null, included_km_per_day: v.includedKmPerDay ?? null,
     status: v.status, insurance: v.insurance, revenue: v.revenue, rent_count: v.rentCount,
     image_url: v.imageUrl ?? null, color: v.color ?? null, seats: v.seats ?? null,
@@ -91,6 +93,26 @@ function oToDb(o: Owner) {
   }
 }
 
+/**
+ * Newer booking columns (JSON records + staff notes). They are saved in their own request so a
+ * database that hasn't run fix-missing-columns.sql yet still saves the booking itself.
+ */
+const BOOKING_EXT: [keyof Booking, string][] = [
+  ['payments', 'payments'], ['customerInfo', 'customer_info'], ['documents', 'documents'], ['checklists', 'checklists'],
+  ['charges', 'charges'], ['agreement', 'agreement'], ['activity', 'activity'], ['internalNotes', 'internal_notes'],
+]
+function bookingExtRow(u: Partial<Booking>) {
+  const row: Record<string, unknown> = {}
+  for (const [k, col] of BOOKING_EXT) if (u[k] !== undefined) row[col] = u[k] ?? null
+  return row
+}
+/** Run the core write, then the extended one; report the first error (core first) */
+async function withExt(core: PromiseLike<{ error: unknown }>, id: string, ext: Record<string, unknown>) {
+  const a = await core
+  if (a.error || !Object.keys(ext).length) return a
+  return await supabase.from('bookings').update(ext).eq('id', id)
+}
+
 function bFromDb(r: Record<string, unknown>): Booking {
   return {
     id: r.id as string, vehicleId: r.vehicle_id as string,
@@ -102,6 +124,9 @@ function bFromDb(r: Record<string, unknown>): Booking {
     startTime: (r.start_time as string) ?? undefined,
     endTime: (r.end_time as string) ?? undefined,
     waiveExtraDay: (r.waive_extra_day as boolean) ?? undefined,
+    rentalType: (r.rental_type as Booking['rentalType']) ?? undefined,
+    rentalUnits: numOpt(r.rental_units),
+    unitRate: numOpt(r.unit_rate),
     totalDays: num(r.total_days), totalAmount: num(r.total_amount),
     estimatedAmount: numOpt(r.estimated_amount),
     paidAmount: num(r.paid_amount),
@@ -130,13 +155,22 @@ function bFromDb(r: Record<string, unknown>): Booking {
     creditAmount: numOpt(r.credit_amount),
     creditSettled: (r.credit_settled as boolean) ?? undefined,
     creditResponsibility: (r.credit_responsibility as Booking['creditResponsibility']) ?? undefined,
+    badDebt: numOpt(r.bad_debt),
+    payments: Array.isArray(r.payments) ? (r.payments as Booking['payments']) : undefined,
+    customerInfo: (r.customer_info as Booking['customerInfo']) ?? undefined,
+    documents: Array.isArray(r.documents) ? (r.documents as Booking['documents']) : undefined,
+    checklists: (r.checklists as Booking['checklists']) ?? undefined,
+    charges: Array.isArray(r.charges) ? (r.charges as Booking['charges']) : undefined,
+    agreement: (r.agreement as Booking['agreement']) ?? undefined,
+    activity: Array.isArray(r.activity) ? (r.activity as Booking['activity']) : undefined,
+    internalNotes: (r.internal_notes as string) ?? undefined,
   }
 }
 
 function bToDb(b: Booking) {
   // Required columns that every row must have.
   const row: Record<string, unknown> = {
-    id: b.id, vehicle_id: b.vehicleId, customer_id: b.customerId,
+    id: b.id, vehicle_id: fk(b.vehicleId), customer_id: b.customerId,
     customer_name: b.customerName, customer_phone: b.customerPhone,
     start_date: b.startDate, end_date: b.endDate, total_days: b.totalDays,
     total_amount: b.totalAmount, paid_amount: b.paidAmount,
@@ -148,6 +182,12 @@ function bToDb(b: Booking) {
   if (b.startTime          != null) row.start_time          = b.startTime;
   if (b.endTime            != null) row.end_time            = b.endTime;
   if (b.waiveExtraDay)              row.waive_extra_day     = b.waiveExtraDay;  // skip when false (DB default)
+  // Hourly / monthly only — a daily booking leaves these out (missing = Daily)
+  if (b.rentalType && b.rentalType !== 'Daily') {
+    row.rental_type  = b.rentalType;
+    row.rental_units = b.rentalUnits ?? null;
+    row.unit_rate    = b.unitRate ?? null;
+  }
   if (b.customerEmail      != null) row.customer_email      = b.customerEmail;
   if (b.customerNIC        != null) row.customer_nic        = b.customerNIC;
   if (b.estimatedAmount    != null) row.estimated_amount    = b.estimatedAmount;
@@ -175,6 +215,7 @@ function bToDb(b: Booking) {
   if (b.creditAmount       != null) row.credit_amount       = b.creditAmount;
   if (b.creditSettled)              row.credit_settled      = b.creditSettled;
   if (b.creditResponsibility != null) row.credit_responsibility = b.creditResponsibility;
+  if (b.badDebt)                    row.bad_debt            = b.badDebt;
   return row;
 }
 
@@ -207,6 +248,12 @@ function iToDb(i: Inquiry) {
     start_date: i.startDate, end_date: i.endDate, referral: i.referral,
     status: i.status, lost_reason: i.lostReason ?? null, notes: i.notes ?? null,
     created_at: i.createdAt,
+    ...(i.vehicleId && { vehicle_id: i.vehicleId }),
+    ...(i.checklist && { checklist: i.checklist }),
+    ...(i.quote && { quote: i.quote }),
+    ...(i.stage && { stage: i.stage }),
+    ...(i.consultation && { consultation: i.consultation }),
+    ...(i.alternativesOffered && { alternatives_offered: i.alternativesOffered }),
   }
 }
 
@@ -225,7 +272,7 @@ function cFromDb(r: Record<string, unknown>): Commission {
 
 function cToDb(c: Commission) {
   return {
-    id: c.id, booking_id: c.bookingId, vehicle_id: c.vehicleId, owner_id: c.ownerId,
+    id: c.id, booking_id: c.bookingId, vehicle_id: fk(c.vehicleId), owner_id: fk(c.ownerId),
     referral: c.referral, total_income: c.totalIncome, commission_rate: c.commissionRate,
     commission_amount: c.commissionAmount, owner_payout: c.ownerPayout,
     coordinator_fee: c.coordinatorFee ?? null, status: c.status, created_at: c.createdAt,
@@ -243,7 +290,7 @@ function eFromDb(r: Record<string, unknown>): Expense {
 
 function eToDb(e: Expense) {
   return {
-    id: e.id, vehicle_id: e.vehicleId, category: e.category, amount: e.amount,
+    id: e.id, vehicle_id: fk(e.vehicleId), category: e.category, amount: e.amount,
     description: e.description, date: e.date, receipt: e.receipt ?? null,
     created_at: e.createdAt,
   }
@@ -294,6 +341,8 @@ function custFromDb(r: Record<string, unknown>): Customer {
     email: (r.email as string) ?? undefined, nic: (r.nic as string) ?? undefined,
     address: (r.address as string) ?? undefined, notes: (r.notes as string) ?? undefined,
     smsOptIn: (r.sms_opt_in as boolean) ?? undefined, createdAt: r.created_at as string,
+    doNotRent: (r.do_not_rent as boolean) ?? undefined,
+    doNotRentReason: (r.do_not_rent_reason as string) ?? undefined,
   }
 }
 
@@ -302,6 +351,7 @@ function custToDb(c: Customer) {
     id: c.id, name: c.name, phone: c.phone, email: c.email ?? null,
     nic: c.nic ?? null, address: c.address ?? null, notes: c.notes ?? null,
     sms_opt_in: c.smsOptIn ?? true, created_at: c.createdAt,
+    ...(c.doNotRent && { do_not_rent: true, do_not_rent_reason: c.doNotRentReason ?? null }),
   }
 }
 
@@ -317,7 +367,7 @@ function userFromDb(r: Record<string, unknown>): AppUser {
 function userToDb(u: AppUser) {
   return {
     id: u.id, username: u.username, password: u.password, name: u.name,
-    role: u.role, owner_id: u.ownerId ?? null, email: u.email ?? null,
+    role: u.role, owner_id: fk(u.ownerId), email: u.email ?? null,
     nic: u.nic ?? null, created_at: new Date().toISOString(),
   }
 }
@@ -336,7 +386,7 @@ function hFromDb(r: Record<string, unknown>): VehicleHandover {
 
 function hToDb(h: VehicleHandover) {
   return {
-    id: h.id, booking_id: h.bookingId, vehicle_id: h.vehicleId, type: h.type,
+    id: h.id, booking_id: fk(h.bookingId), vehicle_id: fk(h.vehicleId), type: h.type,
     location: h.location, date_time: h.dateTime, mileage: h.mileage,
     fuel_level: h.fuelLevel, notes: h.notes ?? null, extra_km: h.extraKm ?? null,
     extra_km_charge: h.extraKmCharge ?? null, final_amount: h.finalAmount ?? null,
@@ -397,7 +447,7 @@ export const db = {
     if (u.brand !== undefined) row.brand = u.brand
     if (u.model !== undefined) row.model = u.model
     if (u.year !== undefined) row.year = u.year
-    if (u.ownerId !== undefined) row.owner_id = u.ownerId
+    if (u.ownerId !== undefined) row.owner_id = fk(u.ownerId)
     if (u.dailyRent !== undefined) row.daily_rent = u.dailyRent
     if (u.extraKmRate !== undefined) row.extra_km_rate = u.extraKmRate
     if (u.includedKmPerDay !== undefined) row.included_km_per_day = u.includedKmPerDay
@@ -449,7 +499,11 @@ export const db = {
   },
 
   // ── Bookings ──────────────────────────────────────────────────────────────
-  insertBooking: (b: Booking) => supabase.from('bookings').insert(bToDb(b)),
+  insertBooking: (b: Booking) => {
+    const ext = Object.fromEntries(Object.entries(bookingExtRow(b)).filter(([, v]) =>
+      v != null && v !== '' && !(Array.isArray(v) && !v.length) && !(typeof v === 'object' && !Array.isArray(v) && !Object.keys(v as object).length)))
+    return withExt(supabase.from('bookings').insert(bToDb(b)), b.id, ext)
+  },
   updateBooking: (id: string, u: Partial<Booking>) => {
     const row: Record<string, unknown> = {}
     if (u.status !== undefined) row.status = u.status
@@ -480,7 +534,25 @@ export const db = {
     if (u.creditAmount !== undefined) row.credit_amount = u.creditAmount
     if (u.creditSettled !== undefined) row.credit_settled = u.creditSettled
     if (u.creditResponsibility !== undefined) row.credit_responsibility = u.creditResponsibility
-    return supabase.from('bookings').update(row).eq('id', id)
+    if (u.badDebt !== undefined) row.bad_debt = u.badDebt
+    if (u.waiveExtraDay !== undefined) row.waive_extra_day = u.waiveExtraDay
+    if (u.rentalType !== undefined) row.rental_type = u.rentalType
+    if (u.rentalUnits !== undefined) row.rental_units = u.rentalUnits ?? null
+    if (u.unitRate !== undefined) row.unit_rate = u.unitRate ?? null
+    if (u.vehicleId !== undefined) row.vehicle_id = fk(u.vehicleId)
+    if (u.customerId !== undefined) row.customer_id = u.customerId
+    if (u.customerName !== undefined) row.customer_name = u.customerName
+    if (u.customerPhone !== undefined) row.customer_phone = u.customerPhone
+    if (u.customerEmail !== undefined) row.customer_email = u.customerEmail
+    if (u.customerNIC !== undefined) row.customer_nic = u.customerNIC
+    if (u.startDate !== undefined) row.start_date = u.startDate
+    if (u.endDate !== undefined) row.end_date = u.endDate
+    if (u.totalDays !== undefined) row.total_days = u.totalDays
+    if (u.referral !== undefined) row.referral = u.referral
+    if (u.referralFee !== undefined) row.referral_fee = u.referralFee
+    const ext = bookingExtRow(u)
+    if (!Object.keys(row).length) return supabase.from('bookings').update(ext).eq('id', id)
+    return withExt(supabase.from('bookings').update(row).eq('id', id), id, ext)
   },
 
   // ── Inquiries ─────────────────────────────────────────────────────────────
@@ -501,6 +573,10 @@ export const db = {
     if (u.alternativesOffered !== undefined) row.alternatives_offered = u.alternativesOffered
     if (u.consultation !== undefined) row.consultation = u.consultation
     if (u.stage !== undefined) row.stage = u.stage
+    if (u.preferredBrand !== undefined) row.preferred_brand = u.preferredBrand
+    if (u.referral !== undefined) row.referral = u.referral
+    if (u.vehicleHistory !== undefined) row.vehicle_history = u.vehicleHistory
+    if (u.alternativeChosen !== undefined) row.alternative_chosen = u.alternativeChosen
     return supabase.from('inquiries').update(row).eq('id', id)
   },
 
@@ -510,6 +586,12 @@ export const db = {
     const row: Record<string, unknown> = {}
     if (u.status !== undefined) row.status = u.status
     if (u.coordinatorFee !== undefined) row.coordinator_fee = u.coordinatorFee
+    if (u.totalIncome !== undefined) row.total_income = u.totalIncome
+    if (u.commissionRate !== undefined) row.commission_rate = u.commissionRate
+    if (u.commissionAmount !== undefined) row.commission_amount = u.commissionAmount
+    if (u.ownerPayout !== undefined) row.owner_payout = u.ownerPayout
+    if (u.ownerId !== undefined) row.owner_id = fk(u.ownerId)
+    if (u.referral !== undefined) row.referral = u.referral
     return supabase.from('commissions').update(row).eq('id', id)
   },
 
@@ -530,6 +612,7 @@ export const db = {
     if (u.totalEarnings !== undefined) row.total_earnings = u.totalEarnings
     if (u.currentBookingId !== undefined) row.current_booking_id = u.currentBookingId ?? null
     if (u.address !== undefined) row.address = u.address
+    if (u.nic !== undefined) row.nic = u.nic
     return supabase.from('drivers').update(row).eq('id', id)
   },
 
@@ -555,6 +638,8 @@ export const db = {
     if (u.address !== undefined) row.address = u.address
     if (u.notes !== undefined) row.notes = u.notes
     if (u.smsOptIn !== undefined) row.sms_opt_in = u.smsOptIn
+    if (u.doNotRent !== undefined) row.do_not_rent = u.doNotRent
+    if (u.doNotRentReason !== undefined) row.do_not_rent_reason = u.doNotRentReason ?? null
     return supabase.from('customers').update(row).eq('id', id)
   },
   deleteCustomer: (id: string) => supabase.from('customers').delete().eq('id', id),
@@ -567,7 +652,7 @@ export const db = {
     if (u.password !== undefined) row.password = u.password
     if (u.name !== undefined) row.name = u.name
     if (u.role !== undefined) row.role = u.role
-    if (u.ownerId !== undefined) row.owner_id = u.ownerId
+    if (u.ownerId !== undefined) row.owner_id = fk(u.ownerId)
     if (u.email !== undefined) row.email = u.email
     if (u.nic !== undefined) row.nic = u.nic
     return supabase.from('users').update(row).eq('id', id)

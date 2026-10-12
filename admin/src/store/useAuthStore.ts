@@ -3,6 +3,15 @@ import { persist } from 'zustand/middleware';
 import { AuthState, AppUser, OwnerPermissions } from '../types/auth';
 import { supabaseEnabled } from '../lib/supabase';
 import { db, dbFetchUsers } from '../lib/db';
+import { toast } from './useToast';
+
+/** Save a login to the database — Supabase reports failures in the result, so check it */
+const saveUser = (u: AppUser) =>
+  Promise.resolve(db.insertUser(u)).then((r) => {
+    if (!r.error) return;
+    console.error('[auth] insertUser failed:', r.error);
+    toast.error('Login not saved to the database', `${u.name}: ${r.error.message}`);
+  });
 
 export const USERS: AppUser[] = [
   { id: 'u_admin', username: 'admin',  password: 'admin123',  name: 'Ceylon Admin',        role: 'admin'             },
@@ -51,9 +60,7 @@ export const useAuthStore = create<AuthState>()(
       addUser: (userData) => {
         const newUser: AppUser = { ...userData, id: 'u_' + Math.random().toString(36).slice(2, 8) };
         set((s) => ({ users: [...s.users, newUser] }));
-        if (supabaseEnabled) {
-          Promise.resolve(db.insertUser(newUser)).catch((e) => console.error('[auth] insertUser failed:', e));
-        }
+        if (supabaseEnabled) saveUser(newUser);
       },
 
       // Merge DB-stored login profiles into the list on boot. The built-in USERS
@@ -62,6 +69,12 @@ export const useAuthStore = create<AuthState>()(
         if (!supabaseEnabled) return;
         try {
           const dbUsers = await dbFetchUsers();
+          // Heal logins created on this device that never reached the database
+          // (an earlier race saved the login before its owner). Built-in defaults are skipped.
+          const inDb = new Set(dbUsers.map((u) => u.username));
+          get().users
+            .filter((u) => u.role === 'owner' && u.ownerId && !inDb.has(u.username) && !USERS.some((d) => d.username === u.username))
+            .forEach(saveUser);
           set((s) => {
             const byUsername = new Map<string, AppUser>();
             s.users.forEach((u) => byUsername.set(u.username, u)); // defaults first
@@ -107,9 +120,7 @@ export const useAuthStore = create<AuthState>()(
           ownerId,
         };
         set((s) => ({ users: [...s.users, newUser] }));
-        if (supabaseEnabled) {
-          Promise.resolve(db.insertUser(newUser)).catch((e) => console.error('[auth] insertUser failed:', e));
-        }
+        if (supabaseEnabled) saveUser(newUser);
       },
 
       isAdmin: () => get().currentUser?.role === 'admin',

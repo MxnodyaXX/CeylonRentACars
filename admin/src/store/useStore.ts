@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft } from '../types';
+import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft, ActivityEntry, PaymentEntry, ExtraCharge } from '../types';
 import { sampleData } from '../data/sampleData';
 import { supabaseEnabled } from '../lib/supabase';
 import { db, dbFetchAll } from '../lib/db';
@@ -28,13 +28,28 @@ import cab1234Img from '../data/CAB-1234.png';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
+// One toast per distinct error, not one per row (e.g. "mark all read" on 40 notifications)
+let lastDbError = { msg: '', at: 0 };
+export function reportDbError(err: unknown, what = 'Failed to save changes to the database.') {
+  const msg = (err as { message?: string })?.message ?? String(err);
+  console.error('[db]', msg, err);
+  if (msg === lastDbError.msg && Date.now() - lastDbError.at < 4000) return;
+  lastDbError = { msg, at: Date.now() };
+  const missingColumn = /column .* does not exist|could not find the .* column|schema cache/i.test(msg);
+  toast.error('Not saved to the database', missingColumn
+    ? `${what} The database is missing a new column — run admin/supabase/fix-missing-columns.sql in Supabase. (${msg})`.trim()
+    : `${what} ${msg}`.trim());
+}
+/** Throws Supabase's { error } result so it can be caught — Supabase never rejects on its own */
+export const ok = (r: unknown) => {
+  const e = (r as { error?: unknown } | null | undefined)?.error;
+  if (e) throw e;
+  return r;
+};
 // Supabase returns PromiseLike (not full Promise), so wrap in Promise.resolve for .catch support
 const sync = (fn: () => PromiseLike<unknown>) => {
   if (supabaseEnabled) {
-    Promise.resolve(fn()).catch((err) => {
-      console.error(err);
-      toast.error('Database error', (err as { message?: string })?.message ?? 'Failed to save changes to the database.');
-    });
+    Promise.resolve(fn()).then(ok).catch((err) => reportDbError(err, ''));
   }
 };
 
@@ -122,9 +137,13 @@ export const useStore = create<AppState>()(
       addOwner: (o) => {
         const newO: Owner = { ...o, id: uid(), createdAt: now(), totalEarnings: 0, pendingPayout: 0 };
         set((s) => ({ owners: [...s.owners, newO] }));
-        sync(() => db.insertOwner(newO));
-        // Auto-create a login account for the new owner so they appear in Permissions
-        useAuthStore.getState().createOwnerAccount(newO.id, newO.name);
+        // Auto-create a login account for the new owner so they appear in Permissions.
+        // The login row references the owner, so it can only be saved after the owner is.
+        const createLogin = () => useAuthStore.getState().createOwnerAccount(newO.id, newO.name);
+        if (supabaseEnabled) {
+          Promise.resolve(db.insertOwner(newO)).then(ok).then(createLogin)
+            .catch((err) => reportDbError(err, 'The owner (and their login) was not saved.'));
+        } else createLogin();
         toast.success('Owner added', `${newO.name} has been registered.`);
       },
 
@@ -264,8 +283,8 @@ export const useStore = create<AppState>()(
           vehicles: s.vehicles.map((v) => v.id === booking.vehicleId ? { ...v, status: 'Ongoing' as const } : v),
         }));
         if (supabaseEnabled) {
-          Promise.resolve(db.updateBooking(id, { status: 'Ongoing' })).catch(console.error);
-          Promise.resolve(db.updateVehicle(booking.vehicleId, { status: 'Ongoing' })).catch(console.error);
+          sync(() => db.updateBooking(id, { status: 'Ongoing' }));
+          sync(() => db.updateVehicle(booking.vehicleId, { status: 'Ongoing' }));
         }
         toast.success('Rental started', `${booking.customerName}'s vehicle is now on rent.`);
       },
@@ -278,8 +297,8 @@ export const useStore = create<AppState>()(
           vehicles: s.vehicles.map((v) => v.id === booking.vehicleId ? { ...v, status: 'Available' as const } : v),
         }));
         if (supabaseEnabled) {
-          Promise.resolve(db.updateBooking(id, { status: 'Completed' })).catch(console.error);
-          Promise.resolve(db.updateVehicle(booking.vehicleId, { status: 'Available' })).catch(console.error);
+          sync(() => db.updateBooking(id, { status: 'Completed' }));
+          sync(() => db.updateVehicle(booking.vehicleId, { status: 'Available' }));
         }
         toast.success('Rental completed', `${booking.customerName}'s booking is closed and the vehicle is available.`);
       },
@@ -333,22 +352,31 @@ export const useStore = create<AppState>()(
         toResolve.forEach((n) => sync(() => db.updateNotification(n.id, { read: true })));
       },
 
-      cancelBooking: (id) => {
+      cancelBooking: (id, why) => {
         const booking = get().bookings.find((b) => b.id === id);
+        // The reason is kept in the booking notes, e.g. "[Cancelled 11 Oct 2026, 5:20 pm by Admin: Customer changed plans — flight moved]"
+        const stamp = new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const notes = why
+          ? [booking?.notes, `[Cancelled ${stamp} by ${why.by}: ${why.reason}${why.details ? ` — ${why.details}` : ''}]`].filter(Boolean).join('\n')
+          : booking?.notes;
+        const updates: Partial<Booking> = {
+          status: 'Cancelled',
+          ...(why ? { notes, activity: [...(booking?.activity ?? []), { at: new Date().toISOString(), by: why.by, type: 'Cancelled' as const, text: `${why.reason}${why.details ? ` — ${why.details}` : ''}` }] } : {}),
+        };
         set((s) => {
           const vehicles = booking
             ? s.vehicles.map((v) => (v.id === booking.vehicleId ? { ...v, status: 'Available' as const } : v))
             : s.vehicles;
           return {
-            bookings: s.bookings.map((b) => (b.id === id ? { ...b, status: 'Cancelled' as const } : b)),
+            bookings: s.bookings.map((b) => (b.id === id ? { ...b, ...updates } : b)),
             vehicles,
           };
         });
         if (supabaseEnabled && booking) {
-          Promise.resolve(db.updateBooking(id, { status: 'Cancelled' })).catch(console.error);
-          Promise.resolve(db.updateVehicle(booking.vehicleId, { status: 'Available' })).catch(console.error);
+          sync(() => db.updateBooking(id, updates));
+          sync(() => db.updateVehicle(booking.vehicleId, { status: 'Available' }));
         }
-        toast.warning('Booking cancelled', booking ? `${booking.customerName}'s booking was cancelled.` : 'The booking was cancelled.');
+        toast.warning('Booking cancelled', booking ? `${booking.customerName}'s booking was cancelled${why ? ` — ${why.reason.toLowerCase()}` : ''}.` : 'The booking was cancelled.');
       },
 
       // ── Inquiries ─────────────────────────────────────────────────────────
@@ -439,7 +467,7 @@ export const useStore = create<AppState>()(
         set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) }));
         if (supabaseEnabled) {
           get().notifications.forEach((n) => {
-            if (!n.read) Promise.resolve(db.updateNotification(n.id, { read: true })).catch(console.error);
+            if (!n.read) sync(() => db.updateNotification(n.id, { read: true }));
           });
         }
       },
@@ -652,6 +680,195 @@ export const useStore = create<AppState>()(
         });
 
         toast.success('Statistics recalculated', 'Revenue and earnings were rebuilt from the actual bookings.');
+      },
+
+      // Admin correction of an existing booking (wrong amounts, dates, status…). Only this
+      // booking's own effect is changed: its old amounts are taken off the vehicle / owners
+      // and the corrected ones added back, so other bookings' figures are never touched.
+      editBooking: (id, updates, meta) => {
+        const s = get();
+        const prev = s.bookings.find((b) => b.id === id);
+        if (!prev) return;
+        const stamp = new Date().toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const audit = `[Corrected ${stamp} by ${meta.by}: ${meta.changes.join('; ')}${meta.reason ? ` — ${meta.reason}` : ''}]`;
+        const entry: ActivityEntry = { at: new Date().toISOString(), by: meta.by, type: meta.type ?? 'Edited', text: `${meta.changes.join('; ')}${meta.reason ? ` — ${meta.reason}` : ''}` };
+        const changes: Partial<Booking> = { ...updates, notes: [updates.notes ?? prev.notes, audit].filter(Boolean).join('\n'), activity: [...(prev.activity ?? []), entry] };
+        const next: Booking = { ...prev, ...changes };
+
+        const live = (b: Booking) => b.status !== 'Cancelled';
+        const comm = s.commissions.find((c) => c.bookingId === id);
+        const ownerOf = (vid: string) => s.vehicles.find((v) => v.id === vid)?.ownerId;
+        const payout = (b: Booking) => Math.max(0, b.totalAmount - (b.referralFee ?? 0));
+        const commPaid = comm?.status === 'Paid';
+        const referrerOf = (b: Booking) =>
+          b.referral && b.referral !== 'Direct'
+            ? s.owners.find((o) => o.name.trim().toLowerCase() === b.referral!.trim().toLowerCase())
+            : undefined;
+
+        // ── Deltas: remove the old booking's effect, add the corrected one ──
+        const vDelta: Record<string, { revenue: number; count: number }> = {};
+        const oDelta: Record<string, { total: number; pending: number }> = {};
+        const addV = (vid: string, revenue: number, count: number) => {
+          const d = (vDelta[vid] ??= { revenue: 0, count: 0 }); d.revenue += revenue; d.count += count;
+        };
+        const addO = (oid: string | undefined, total: number, pending: number) => {
+          if (!oid) return;
+          const d = (oDelta[oid] ??= { total: 0, pending: 0 }); d.total += total; d.pending += pending;
+        };
+        const apply = (b: Booking, sign: 1 | -1, ownerPayout: number) => {
+          if (!live(b)) return;
+          addV(b.vehicleId, sign * b.totalAmount, sign);
+          addO(ownerOf(b.vehicleId), sign * ownerPayout, commPaid ? 0 : sign * ownerPayout);
+          const ref = referrerOf(b), fee = b.referralFee ?? 0;
+          if (ref && fee > 0) addO(ref.id, sign * fee, b.referralPaid ? 0 : sign * fee);
+        };
+        apply(prev, -1, comm?.ownerPayout ?? payout(prev));
+        apply(next, 1, payout(next));
+
+        const commUpdates: Partial<Commission> | undefined = comm && {
+          totalIncome: next.totalAmount, coordinatorFee: next.referralFee ?? 0, ownerPayout: payout(next),
+          vehicleId: next.vehicleId, ownerId: ownerOf(next.vehicleId) ?? '', referral: next.referral ?? 'Direct',
+        };
+        const bookings = s.bookings.map((b) => (b.id === id ? next : b));
+        // Vehicle status follows its live bookings (a vehicle in maintenance stays there)
+        const statusFor = (v: Vehicle): Vehicle['status'] =>
+          v.status === 'Maintenance' ? v.status
+            : bookings.some((b) => b.vehicleId === v.id && b.status === 'Ongoing') ? 'Ongoing'
+            : bookings.some((b) => b.vehicleId === v.id && b.status === 'Confirmed') ? 'Reserved'
+            : 'Available';
+        const touchedV = new Set([prev.vehicleId, next.vehicleId, ...Object.keys(vDelta)]);
+        const vehicleUpdates: Record<string, Partial<Vehicle>> = {};
+        s.vehicles.forEach((v) => {
+          if (!touchedV.has(v.id)) return;
+          const d = vDelta[v.id] ?? { revenue: 0, count: 0 };
+          const u: Partial<Vehicle> = {};
+          if (d.revenue) u.revenue = Math.max(0, v.revenue + d.revenue);
+          if (d.count) u.rentCount = Math.max(0, v.rentCount + d.count);
+          const st = statusFor(v);
+          if (st !== v.status) u.status = st;
+          if (Object.keys(u).length) vehicleUpdates[v.id] = u;
+        });
+        const ownerUpdates: Record<string, Partial<Owner>> = {};
+        s.owners.forEach((o) => {
+          const d = oDelta[o.id];
+          if (!d || (!d.total && !d.pending)) return;
+          ownerUpdates[o.id] = { totalEarnings: Math.max(0, o.totalEarnings + d.total), pendingPayout: Math.max(0, o.pendingPayout + d.pending) };
+        });
+
+        set((st) => ({
+          bookings,
+          commissions: commUpdates ? st.commissions.map((c) => (c.id === comm!.id ? { ...c, ...commUpdates } : c)) : st.commissions,
+          vehicles: st.vehicles.map((v) => (vehicleUpdates[v.id] ? { ...v, ...vehicleUpdates[v.id] } : v)),
+          owners: st.owners.map((o) => (ownerUpdates[o.id] ? { ...o, ...ownerUpdates[o.id] } : o)),
+        }));
+
+        sync(() => db.updateBooking(id, changes));
+        if (commUpdates) sync(() => db.updateCommission(comm!.id, commUpdates));
+        Object.entries(vehicleUpdates).forEach(([vid, u]) => sync(() => db.updateVehicle(vid, u)));
+        Object.entries(ownerUpdates).forEach(([oid, u]) => sync(() => db.updateOwner(oid, u)));
+        toast.success('Booking corrected', `${next.customerName}: ${meta.changes.length} change${meta.changes.length === 1 ? '' : 's'} saved.`);
+      },
+
+      // ── Full booking record ─────────────────────────────────────────────
+      // Save fields on a booking and add a line to its history (silent — no toast)
+      logBookingActivity: (id, entry, updates = {}) => {
+        const b = get().bookings.find((x) => x.id === id);
+        if (!b) return;
+        const changes: Partial<Booking> = { ...updates, activity: [...(b.activity ?? []), { at: new Date().toISOString(), ...entry }] };
+        set((s) => ({ bookings: s.bookings.map((x) => (x.id === id ? { ...x, ...changes } : x)) }));
+        sync(() => db.updateBooking(id, changes));
+      },
+
+      // Payment ledger: every payment, advance, refund and deposit movement, with the totals kept in step
+      recordPayment: (id, p) => {
+        const b = get().bookings.find((x) => x.id === id);
+        if (!b) return;
+        const entry: PaymentEntry = { ...p, id: uid(), at: p.at ?? now() };
+        const totals: Partial<Booking> =
+          entry.kind === 'Payment'            ? { paidAmount: b.paidAmount + entry.amount, paymentMethod: entry.method }
+          : entry.kind === 'Advance'          ? { advanceAmount: (b.advanceAmount ?? 0) + entry.amount, paymentMethod: entry.method }
+          : entry.kind === 'Refund'           ? { paidAmount: Math.max(0, b.paidAmount - entry.amount) }
+          : entry.kind === 'Deposit received' ? { depositAmount: (b.depositAmount ?? 0) + entry.amount, depositType: b.depositType ?? 'cash' }
+          : { depositReturned: (b.depositReturned ?? 0) + entry.amount };
+        const text = `Rs ${entry.amount.toLocaleString()} ${entry.kind.toLowerCase()} by ${entry.method}${entry.receiptNo ? ` (receipt ${entry.receiptNo})` : ''}${entry.note ? ` — ${entry.note}` : ''}`;
+        get().logBookingActivity(id, { by: entry.by, type: entry.kind.startsWith('Deposit') ? 'Deposit' : 'Payment', text },
+          { ...totals, payments: [...(b.payments ?? []), entry] });
+        toast.success(`${entry.kind} recorded`, `Rs ${entry.amount.toLocaleString()} for ${b.customerName}.`);
+        // A real payment gets the usual SMS receipt
+        if (entry.kind === 'Payment' || entry.kind === 'Advance') {
+          const after = { ...b, ...totals } as Booking;
+          const balance = Math.max(0, after.totalAmount + (after.extraCharges ?? 0) - (after.discount ?? 0) - after.paidAmount - (after.advanceAmount ?? 0));
+          const optIn = get().customers.find((c) => c.phone === b.customerPhone)?.smsOptIn;
+          sendSms(b.customerPhone, smsTemplates.paymentReceived(b.customerName, entry.amount, balance),
+            { category: 'paymentReceived', role: 'customer', relatedId: id, optIn, transactional: true });
+        }
+      },
+
+      // Close out a cash deposit: what goes back to the customer and what is kept (and why)
+      settleDeposit: (id, st, by) => {
+        const b = get().bookings.find((x) => x.id === id);
+        if (!b) return;
+        const entries: PaymentEntry[] = st.returned > 0
+          ? [{ id: uid(), at: now(), kind: 'Deposit returned', amount: st.returned, method: st.method, by, note: st.notes || undefined }] : [];
+        get().logBookingActivity(id, {
+          by, type: 'Deposit',
+          text: `Deposit settled — returned Rs ${st.returned.toLocaleString()}${st.deduction ? `, kept Rs ${st.deduction.toLocaleString()}` : ''}${st.notes ? ` (${st.notes})` : ''}`,
+        }, {
+          depositReturned: (b.depositReturned ?? 0) + st.returned, depositDeduction: (b.depositDeduction ?? 0) + st.deduction,
+          depositNotes: [b.depositNotes, st.notes].filter(Boolean).join('; ') || undefined,
+          payments: [...(b.payments ?? []), ...entries],
+        });
+        toast.success('Deposit settled', `${b.customerName}: deposit closed.`);
+      },
+
+      // Fines, tolls, damage… charged to the customer go onto the bill (extra charges)
+      addCharge: (id, c) => {
+        const b = get().bookings.find((x) => x.id === id);
+        if (!b) return;
+        const charge: ExtraCharge = { ...c, id: uid(), at: now(), status: 'Charged' };
+        get().logBookingActivity(id, { by: c.by, type: 'Charge', text: `${c.kind} Rs ${c.amount.toLocaleString()} added${c.note ? ` — ${c.note}` : ''}` },
+          { charges: [...(b.charges ?? []), charge], extraCharges: (b.extraCharges ?? 0) + c.amount });
+        toast.success('Charge added', `${c.kind}: Rs ${c.amount.toLocaleString()} added to the bill.`);
+      },
+      waiveCharge: (id, chargeId, by) => {
+        const b = get().bookings.find((x) => x.id === id);
+        const c = b?.charges?.find((x) => x.id === chargeId);
+        if (!b || !c || c.status === 'Waived') return;
+        get().logBookingActivity(id, { by, type: 'Charge', text: `${c.kind} Rs ${c.amount.toLocaleString()} waived` }, {
+          charges: (b.charges ?? []).map((x) => (x.id === chargeId ? { ...x, status: 'Waived' as const } : x)),
+          extraCharges: Math.max(0, (b.extraCharges ?? 0) - c.amount),
+        });
+      },
+
+      // Pickup / return handover with its checklist — starts or completes the rental
+      recordHandover: (id, kind, list, location) => {
+        const st = get();
+        const b = st.bookings.find((x) => x.id === id);
+        if (!b) return;
+        const vehicle = st.vehicles.find((v) => v.id === b.vehicleId);
+        const status = kind === 'pickup' ? 'Ongoing' as const : 'Completed' as const;
+        const handover: VehicleHandover = {
+          id: uid(), bookingId: id, vehicleId: b.vehicleId, type: kind === 'pickup' ? 'delivery' : 'return',
+          location: location || (kind === 'pickup' ? b.pickupLocation : b.dropLocation) || '—', dateTime: list.at,
+          mileage: list.odometer, fuelLevel: list.fuel, notes: [list.damage, list.notes].filter(Boolean).join(' · ') || undefined,
+          createdAt: now(),
+        };
+        const pickupKm = kind === 'return' ? b.checklists?.pickup?.odometer : undefined;
+        const text = kind === 'pickup'
+          ? `Vehicle handed over — ${list.odometer.toLocaleString()} km, fuel ${list.fuel}`
+          : `Vehicle returned — ${list.odometer.toLocaleString()} km${pickupKm ? ` (${(list.odometer - pickupKm).toLocaleString()} km driven)` : ''}, fuel ${list.fuel}`;
+        const vehicleUpdates: Partial<Vehicle> = { status: kind === 'pickup' ? 'Ongoing' : 'Available', ...(list.odometer > (vehicle?.mileage ?? 0) ? { mileage: list.odometer } : {}) };
+        set((x) => ({
+          handovers: [...x.handovers, handover],
+          vehicles: x.vehicles.map((v) => (v.id === b.vehicleId ? { ...v, ...vehicleUpdates } : v)),
+        }));
+        get().logBookingActivity(id, { by: list.by, type: 'Handover', text }, {
+          status, checklists: { ...(b.checklists ?? {}), [kind]: list },
+          ...(kind === 'pickup' ? { pickupAt: list.at } : { returnAt: list.at }),
+        });
+        sync(() => db.insertHandover(handover));
+        sync(() => db.updateVehicle(b.vehicleId, vehicleUpdates));
+        toast.success(kind === 'pickup' ? 'Rental started' : 'Rental completed', `${b.customerName}: ${text.toLowerCase()}.`);
       },
 
       // Settle a customer's credit due — the outstanding amount has been collected,

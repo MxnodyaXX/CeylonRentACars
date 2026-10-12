@@ -3,7 +3,6 @@ import { useLocation } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
-import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import Select from '../components/ui/Select';
 import TripCalculatorModal from '../components/ui/TripCalculatorModal';
@@ -15,20 +14,29 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import {
   Plus, CalendarDays, List, AlertTriangle, CheckCircle,
-  XCircle, Calculator, MessageCircle, Shield, PlayCircle,
-  ChevronDown, Search as SearchIcon, ClipboardEdit, Printer,
-  MapPin, Car, ChevronRight, LayoutGrid, Rows3,
+  XCircle, Calculator,
+  ChevronDown, Search as SearchIcon, ClipboardEdit,
+  LayoutGrid, Rows3, Car, SlidersHorizontal, Layers, X,
 } from 'lucide-react';
-import VehicleImage from '../components/ui/VehicleImage';
-import { vehicleBodyColor } from '../components/ui/CarSVG';
-import { printBookingConfirmation, sendBookingReceipt } from '../lib/printReceipt';
+import { sendBookingReceipt } from '../lib/printReceipt';
 import AvailabilityModal from '../components/ui/AvailabilityModal';
 import AdminBookingModal from '../components/ui/AdminBookingModal';
+import EditBookingModal from '../components/ui/EditBookingModal';
+import CancelBookingModal from '../components/ui/CancelBookingModal';
+import DoNotRentWarning from '../components/ui/DoNotRentWarning';
+import { CustomerIdFields, MissingDetailsPanel } from '../components/ui/NewBookingDetails';
+import BookingDetailsModal from '../components/ui/BookingDetailsModal';
+import HandoverModal from '../components/ui/HandoverModal';
+import { BookingCard, BookingRow, MissingChip } from '../components/ui/BookingCard';
+import { bookingBill, bookingDue } from '../lib/credit';
+import VehicleImage from '../components/ui/VehicleImage';
+import { vehicleBodyColor } from '../components/ui/CarSVG';
+import RentalPeriodFields, { PeriodValue } from '../components/ui/RentalPeriodFields';
+import { durationLabel, unitLabel, RentalType } from '../lib/rentalPeriod';
 import LocationInput from '../components/ui/LocationInput';
-import { buildBookingWhatsAppMsg, openWhatsApp } from '../lib/whatsapp';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap, rentalDays } from '../lib/availability';
 import TimePicker from '../components/ui/TimePicker';
-import { Booking } from '../types';
+import { Booking, CustomerInfo } from '../types';
 import {
   parseISO, addDays,
   endOfWeek, startOfMonth, endOfMonth,
@@ -80,20 +88,6 @@ const fmt12 = (t?: string) => {
   return `${h}:${String(mm).padStart(2, '0')} ${period}`;
 };
 
-/** 'yyyy-MM-dd' → '7 Feb, Friday' for the booking-card timeline. */
-const fmtDateLong = (d?: string) => {
-  if (!d) return '';
-  const t = parseISO(d);
-  return isNaN(t.getTime()) ? d : format(t, 'd MMM, EEEE');
-};
-
-/** 'yyyy-MM-dd' → '7 Feb' for compact grid cards. */
-const fmtDateShort = (d?: string) => {
-  if (!d) return '';
-  const t = parseISO(d);
-  return isNaN(t.getTime()) ? d : format(t, 'd MMM');
-};
-
 const isTimeStr = (t?: string) => !!t && /^\d{1,2}:\d{2}$/.test(t);
 
 /** First day the vehicle is free again for a NEW hire: the return day itself
@@ -121,6 +115,9 @@ const emptyForm = () => ({
   startTime: '',
   endTime: '',
   waiveExtraDay: false,
+  rentalType: 'Daily' as RentalType,
+  rentalUnits: undefined as number | undefined,
+  unitRate: undefined as number | undefined,
   totalDays: 0,
   totalAmount: 0,
   estimatedAmount: 0,
@@ -133,6 +130,7 @@ const emptyForm = () => ({
   pickupLocation: '',
   dropLocation: '',
   driverId: '',
+  customerInfo: {} as CustomerInfo,
   depositType: undefined as 'cash' | 'vehicle' | 'other' | undefined,
   depositVehicleModel: '',
   depositVehicleColor: '',
@@ -151,13 +149,32 @@ const emptyForm = () => ({
   },
 });
 
+type GroupBy = 'none' | 'vehicle' | 'month' | 'year';
+const GROUP_OPTIONS: { key: GroupBy; label: string }[] = [
+  { key: 'none', label: 'None' }, { key: 'vehicle', label: 'Vehicle' }, { key: 'month', label: 'Month' }, { key: 'year', label: 'Year' },
+];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
 export default function Bookings() {
-  const { vehicles, bookings, drivers, owners, customers, addBooking, updateBooking, cancelBooking, startBooking, completeBooking, isVehicleAvailable } = useStore();
+  const { vehicles, bookings, drivers, owners, customers, addBooking, isVehicleAvailable } = useStore();
   const { currentUser, isAdmin, can } = useAuthStore();
   const location = useLocation();
 
   const [tab,               setTab]               = useState<BookingStatus | 'All'>('All');
   const [datePreset,        setDatePreset]        = useState<DatePreset>('all');
+  // Extra filters + grouping (vehicle / month / year accordions)
+  const [vehicleFilter, setVehicleFilter] = useState('');
+  const [yearFilter,    setYearFilter]    = useState('');   // 'yyyy'
+  const [monthFilter,   setMonthFilter]   = useState('');   // '01'…'12'
+  const [priceMin,      setPriceMin]      = useState('');
+  const [priceMax,      setPriceMax]      = useState('');
+  const [groupBy, setGroupBy] = useState<GroupBy>(() => {
+    try { return (localStorage.getItem('emrac-booking-group') as GroupBy) || 'none'; } catch { return 'none'; }
+  });
+  useEffect(() => { try { localStorage.setItem('emrac-booking-group', groupBy); } catch { /* private mode */ } }, [groupBy]);
+  // Groups whose open/closed state differs from the default (only the first group starts open)
+  const [toggledGroups, setToggledGroups] = useState<Set<string>>(new Set());
+  useEffect(() => { setToggledGroups(new Set()); }, [groupBy]);
   const [customFrom,        setCustomFrom]        = useState<Date | null>(null);
   const [customTo,          setCustomTo]          = useState<Date | null>(null);
   const [viewMode,          setViewMode]          = useState<'cards' | 'calendar'>('cards');
@@ -170,6 +187,9 @@ export default function Bookings() {
   const [completedOpen,     setCompletedOpen]     = useState(true);
   const [availabilityOpen,  setAvailabilityOpen]  = useState(false);
   const [selected,     setSelected]     = useState<Booking | null>(null);
+  const [editing,      setEditing]      = useState<Booking | null>(null);
+  const [cancelling,   setCancelling]   = useState<Booking | null>(null);   // asks for a reason first
+  const [handover,     setHandover]     = useState<{ booking: Booking; kind: 'pickup' | 'return' } | null>(null);
   const [form,         setForm]         = useState(emptyForm());
   const [availability, setAvailability] = useState<boolean | null>(null);
   const [error,        setError]        = useState('');
@@ -250,7 +270,19 @@ export default function Bookings() {
     if (dateWindow.to   && b.startDate > dateWindow.to)   return false;
     return true;
   };
-  const dateScopedBookings = visibleBookings.filter(inDateWindow);
+  const filtersActive = !!(vehicleFilter || yearFilter || monthFilter || priceMin || priceMax);
+  const clearFilters = () => { setVehicleFilter(''); setYearFilter(''); setMonthFilter(''); setPriceMin(''); setPriceMax(''); };
+  const matchesFilters = (b: Booking) => {
+    if (vehicleFilter && b.vehicleId !== vehicleFilter) return false;
+    if (yearFilter && !b.startDate?.startsWith(yearFilter)) return false;
+    if (monthFilter && b.startDate?.slice(5, 7) !== monthFilter) return false;
+    const price = bookingBill(b);
+    if (priceMin && price < Number(priceMin)) return false;
+    if (priceMax && price > Number(priceMax)) return false;
+    return true;
+  };
+  const dateScopedBookings = visibleBookings.filter(inDateWindow).filter(matchesFilters);
+  const bookingYears = [...new Set(visibleBookings.map((b) => b.startDate?.slice(0, 4)).filter(Boolean))].sort().reverse();
   const filtered = dateScopedBookings.filter((b) => tab === 'All' || b.status === tab);
   const sorted   = [...filtered].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -280,7 +312,8 @@ export default function Bookings() {
         || field === 'startTime' || field === 'endTime' || field === 'waiveExtraDay';
       if (affects) {
         const { startDate: s, endDate: e, vehicleId: vid } = updated;
-        if (s && e && s <= e) {
+        // Hourly / monthly prices come from their own rate — only daily is days × the daily rent
+        if (s && e && s <= e && updated.rentalType === 'Daily') {
           const days    = rentalDays(s, e, updated.startTime, updated.endTime, updated.waiveExtraDay);
           const vehicle = vehicles.find((v) => v.id === vid);
           updated.totalDays   = days;
@@ -309,6 +342,15 @@ export default function Bookings() {
     const extraCost  = extraKm * (vehicle.extraKmRate ?? 50);
     f.estimatedAmount = f.totalAmount + extraCost;
   };
+
+  // Hourly / monthly / type change from RentalPeriodFields — merge it and re-check availability
+  const applyPeriod = (patch: Partial<PeriodValue>) => setForm((f) => {
+    const updated = { ...f, ...patch } as typeof f;
+    if (updated.rentalType !== 'Daily') recalcEstimate(updated);
+    const { startDate: s, endDate: e, vehicleId: vid } = updated;
+    if (s && e && vid && s <= e) setAvailability(isVehicleAvailable(vid, s, e, undefined, updated.startTime, updated.endTime));
+    return updated;
+  });
 
   // Returns true if this date is NOT blocked by an existing booking for the selected vehicle
   const isDateAvailable = (date: Date): boolean => {
@@ -362,6 +404,10 @@ export default function Bookings() {
     setError('');
     if (!form.vehicleId || !form.customerName || !form.startDate || !form.endDate) {
       setError('Please fill in all required fields.');
+      return;
+    }
+    if (form.rentalType !== 'Daily' && !((form.rentalUnits ?? 0) > 0 && (form.unitRate ?? 0) > 0)) {
+      setError(`Enter the number of ${form.rentalType === 'Hourly' ? 'hours' : 'months'} and the rate.`);
       return;
     }
     if (!isVehicleAvailable(form.vehicleId, form.startDate, form.endDate, undefined, form.startTime, form.endTime)) {
@@ -454,7 +500,7 @@ export default function Bookings() {
       <Header title="Bookings" subtitle="Manage all vehicle reservations" />
 
       {/* Tabs + view toggle + Add */}
-      <div className="flex items-center justify-between mb-5 gap-3">
+      <div className="flex flex-col min-[1500px]:flex-row min-[1500px]:items-center justify-between mb-5 gap-3">
         <div className="flex gap-2 overflow-x-auto no-scrollbar">
           {STATUS_TABS.map((s) => (
             <button
@@ -472,7 +518,7 @@ export default function Bookings() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* View toggle */}
           <div className="flex bg-navy-50 rounded-xl p-0.5 gap-0.5">
             <button
@@ -574,6 +620,7 @@ export default function Bookings() {
               placeholderText="From"
               className="input !py-1.5 !w-36 text-xs"
               calendarClassName="emrac-datepicker"
+                portalId="emrac-datepicker-portal"
               showMonthDropdown
               showYearDropdown
               dropdownMode="select"
@@ -591,6 +638,7 @@ export default function Bookings() {
               placeholderText="To"
               className="input !py-1.5 !w-36 text-xs"
               calendarClassName="emrac-datepicker"
+                portalId="emrac-datepicker-portal"
               showMonthDropdown
               showYearDropdown
               dropdownMode="select"
@@ -607,6 +655,53 @@ export default function Bookings() {
             )}
           </span>
         )}
+      </div>
+
+      {/* ── Filters + group by ── */}
+      <div className="flex flex-wrap items-center gap-2 mb-5">
+        <span className="text-xs text-navy-400 font-medium flex items-center gap-1 flex-shrink-0">
+          <SlidersHorizontal size={13} /> Filter:
+        </span>
+        <div className="w-full sm:w-60">
+          <Select value={vehicleFilter} onChange={setVehicleFilter} placeholder="All vehicles" nullable className="[&>button]:!py-1.5 [&>button]:text-xs"
+            options={bookableVehicles
+              .map((v) => ({ v, n: visibleBookings.filter((b) => b.vehicleId === v.id).length }))
+              .filter((x) => x.n > 0)
+              .sort((a, b) => `${a.v.brand} ${a.v.model}`.localeCompare(`${b.v.brand} ${b.v.model}`))
+              .map(({ v, n }) => ({ value: v.id, label: `${v.brand} ${v.model}`, sub: `${v.vehicleNumber} · ${n} booking${n === 1 ? '' : 's'}` }))} />
+        </div>
+        <select className="input !py-1.5 !w-auto text-xs" value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} aria-label="Year">
+          <option value="">All years</option>
+          {bookingYears.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <select className="input !py-1.5 !w-auto text-xs" value={monthFilter} onChange={(e) => setMonthFilter(e.target.value)} aria-label="Month">
+          <option value="">All months</option>
+          {MONTHS.map((m, i) => <option key={m} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
+        </select>
+        <div className="flex items-center gap-1">
+          <input className="input !py-1.5 !w-28 text-xs" inputMode="numeric" placeholder="Min Rs" value={priceMin}
+                 onChange={(e) => setPriceMin(e.target.value.replace(/[^\d]/g, ''))} aria-label="Minimum price" />
+          <span className="text-navy-300 text-xs">–</span>
+          <input className="input !py-1.5 !w-28 text-xs" inputMode="numeric" placeholder="Max Rs" value={priceMax}
+                 onChange={(e) => setPriceMax(e.target.value.replace(/[^\d]/g, ''))} aria-label="Maximum price" />
+        </div>
+        {filtersActive && (
+          <button onClick={clearFilters} className="flex items-center gap-1 text-xs font-medium text-red-500 hover:text-red-700 px-2 py-1">
+            <X size={12} /> Clear
+          </button>
+        )}
+
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <span className="text-xs text-navy-400 font-medium flex items-center gap-1"><Layers size={13} /> Group by:</span>
+          <div className="flex bg-navy-50 rounded-xl p-0.5 gap-0.5">
+            {GROUP_OPTIONS.map(({ key, label }) => (
+              <button key={key} onClick={() => setGroupBy(key)}
+                      className={`px-2.5 py-1 rounded-[10px] text-xs font-medium transition-all ${groupBy === key ? 'bg-white shadow-sm text-navy-800' : 'text-navy-400 hover:text-navy-700'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* ── Calendar View ── */}
@@ -685,273 +780,42 @@ export default function Bookings() {
         const activeList    = sorted.filter((b) => b.status !== 'Completed');
         const completedList = sorted.filter((b) => b.status === 'Completed');
 
-        /* Compact vertical card — fits a 3-column grid, saves space */
-        const renderGridCard = (b: Booking) => {
+        const cardProps = (b: Booking) => {
           const vehicle = vehicles.find((v) => v.id === b.vehicleId);
-          const balance = b.totalAmount - (b.discount ?? 0) - b.paidAmount;
-          return (
-            <div
-              key={b.id}
-              className="bg-white rounded-2xl border border-navy-100 shadow-card hover:shadow-card-hover hover:border-blue-200 transition-all cursor-pointer overflow-hidden flex flex-col"
-              onClick={() => { setSelected(b); setModal('view'); }}
-            >
-              <div className="h-1 w-full flex-shrink-0" style={{ background: STATUS_COLORS[b.status] ?? '#F4F4F5' }} />
-              <div className="p-4 flex flex-col gap-3 flex-1">
-                {/* vehicle + status */}
-                <div className="flex items-center gap-3">
-                  <div className="w-14 h-10 rounded-lg overflow-hidden bg-navy-50 border border-navy-100 flex-shrink-0">
-                    <VehicleImage
-                      brand={vehicle?.brand ?? ''} model={vehicle?.model ?? ''}
-                      color={vehicle?.color} imageUrl={vehicle?.imageUrl}
-                      bodyColor={vehicleBodyColor(vehicle?.color)} className="w-full h-full"
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-navy-800 truncate">{vehicle?.brand} {vehicle?.model}</p>
-                    <p className="text-[11px] text-navy-400 truncate">{vehicle?.vehicleNumber}</p>
-                  </div>
-                  <StatusBadge status={b.status} />
-                </div>
-
-                {/* customer */}
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-navy-700 truncate">{b.customerName}</p>
-                  <p className="text-[11px] text-navy-400 truncate">{b.customerPhone}</p>
-                </div>
-
-                {/* compact timeline */}
-                <div className="bg-navy-50/60 rounded-xl px-3 py-2 flex items-center gap-2">
-                  <div className="min-w-0 flex-1 text-center">
-                    <p className="text-sm font-black text-navy-800 leading-none">{fmt12(b.startTime) || '—'}</p>
-                    <p className="text-[10px] text-navy-500 mt-0.5 whitespace-nowrap">{fmtDateShort(b.startDate)}</p>
-                  </div>
-                  <div className="flex flex-col items-center flex-shrink-0">
-                    <span className="text-[9px] text-navy-400 whitespace-nowrap">{b.totalDays}d</span>
-                    <Car size={12} className="text-blue-400" />
-                  </div>
-                  <div className="min-w-0 flex-1 text-center">
-                    <p className="text-sm font-black text-navy-800 leading-none">{fmt12(b.endTime) || '—'}</p>
-                    <p className="text-[10px] text-navy-500 mt-0.5 whitespace-nowrap">{fmtDateShort(b.endDate)}</p>
-                  </div>
-                </div>
-
-                {/* price + action */}
-                <div className="flex items-end justify-between gap-2 mt-auto">
-                  <div className="min-w-0">
-                    <p className="text-lg font-black text-navy-800 leading-none">Rs {b.totalAmount.toLocaleString()}</p>
-                    {balance > 0
-                      ? <p className="text-[11px] text-red-500 font-semibold mt-0.5">Rs {balance.toLocaleString()} due</p>
-                      : <p className="text-[11px] text-emerald-600 font-semibold mt-0.5">Fully paid</p>}
-                  </div>
-                  {b.status === 'Confirmed' ? (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); startBooking(b.id); }}
-                      className="flex items-center gap-1 bg-navy-700 hover:bg-navy-600 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors flex-shrink-0"
-                    >
-                      <PlayCircle size={13} /> Start
-                    </button>
-                  ) : b.status === 'Ongoing' ? (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); completeBooking(b.id); }}
-                      className="flex items-center gap-1 bg-navy-700 hover:bg-navy-600 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors flex-shrink-0"
-                    >
-                      <CheckCircle size={13} /> Complete
-                    </button>
-                  ) : (
-                    <span className="flex items-center gap-1 text-xs font-semibold text-blue-600 flex-shrink-0">
-                      Details <ChevronRight size={13} />
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* footer strip */}
-              <div className="flex items-center justify-between gap-2 px-4 py-2 border-t border-navy-50">
-                <span className="text-[10px] text-navy-500 bg-navy-50 border border-navy-100 rounded-full px-2 py-0.5 truncate">
-                  {b.referral ?? 'Direct'}
-                </span>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {b.insertedByAdmin && (
-                    <span className="flex items-center gap-1 text-[9px] font-semibold bg-amber-100 text-amber-700 rounded-full px-1.5 py-0.5">
-                      <ClipboardEdit size={8} /> Admin
-                    </span>
-                  )}
-                  {b.status === 'Confirmed' && (
-                    <button
-                      className="text-[11px] text-red-400 hover:text-red-600 font-medium"
-                      onClick={(e) => { e.stopPropagation(); cancelBooking(b.id); }}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
+          return {
+            booking: b,
+            vehicle,
+            owner: owners.find((o) => o.id === vehicle?.ownerId),
+            onOpen: () => { setSelected(b); setModal('view'); },
+            onStart: () => setHandover({ booking: b, kind: 'pickup' }),
+            onComplete: () => setHandover({ booking: b, kind: 'return' }),
+            onCancel: () => setCancelling(b),
+          };
         };
-
-        /* Full-width horizontal "flight-style" card */
-        const renderRowCard = (b: Booking) => {
-          const vehicle = vehicles.find((v) => v.id === b.vehicleId);
-          const owner   = owners.find((o) => o.id === vehicle?.ownerId);
-          const balance = b.totalAmount - (b.discount ?? 0) - b.paidAmount;
-          return (
-            <div
-              key={b.id}
-              className="bg-white rounded-2xl border border-navy-100 shadow-card hover:shadow-card-hover hover:border-blue-200 transition-all cursor-pointer overflow-hidden"
-              onClick={() => { setSelected(b); setModal('view'); }}
-            >
-              <div className="flex flex-col lg:flex-row lg:items-stretch">
-                {/* status accent rail */}
-                <div
-                  className="h-1 w-full lg:h-auto lg:w-1.5 flex-shrink-0"
-                  style={{ background: STATUS_COLORS[b.status] ?? '#F4F4F5' }}
-                />
-
-                {/* vehicle + customer + pickup→return timeline */}
-                <div className="flex-1 flex flex-col sm:flex-row sm:items-center gap-4 p-4 lg:p-5 min-w-0">
-                  {/* Vehicle */}
-                  <div className="flex items-center gap-3 sm:w-48 flex-shrink-0">
-                    <div className="w-16 h-11 rounded-lg overflow-hidden bg-navy-50 border border-navy-100 flex-shrink-0">
-                      <VehicleImage
-                        brand={vehicle?.brand ?? ''} model={vehicle?.model ?? ''}
-                        color={vehicle?.color} imageUrl={vehicle?.imageUrl}
-                        bodyColor={vehicleBodyColor(vehicle?.color)} className="w-full h-full"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-navy-800 truncate">{vehicle?.brand} {vehicle?.model}</p>
-                      <p className="text-[11px] text-navy-400 truncate">{vehicle?.vehicleNumber}</p>
-                      <p className="text-[11px] font-medium text-navy-500 truncate mt-0.5">{b.customerName}</p>
-                    </div>
-                  </div>
-
-                  {/* Timeline */}
-                  <div className="flex items-start gap-2 sm:gap-4 flex-1 min-w-0">
-                    {/* pickup */}
-                    <div className="min-w-0">
-                      <p className="text-lg font-black text-navy-800 leading-none">{fmt12(b.startTime) || '—'}</p>
-                      <p className="text-[11px] text-navy-500 mt-1 whitespace-nowrap">{fmtDateLong(b.startDate)}</p>
-                      <p className="text-[11px] text-navy-400 mt-0.5 flex items-center gap-0.5 truncate">
-                        <MapPin size={9} className="flex-shrink-0" />{b.pickupLocation || 'Pickup'}
-                      </p>
-                    </div>
-                    {/* connector */}
-                    <div className="flex-1 flex flex-col items-center pt-1 min-w-[64px]">
-                      <span className="text-[11px] text-navy-400 mb-1 whitespace-nowrap">
-                        {b.totalDays} day{b.totalDays !== 1 ? 's' : ''}
-                      </span>
-                      <div className="w-full flex items-center">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                        <span className="flex-1 h-px bg-navy-200" />
-                        <Car size={13} className="text-blue-400 mx-1 flex-shrink-0" />
-                        <span className="flex-1 h-px bg-navy-200" />
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                      </div>
-                      <span className="text-[10px] text-navy-400 mt-1 truncate max-w-full">{b.referral ?? 'Direct'}</span>
-                    </div>
-                    {/* return */}
-                    <div className="min-w-0 text-right">
-                      <p className="text-lg font-black text-navy-800 leading-none">{fmt12(b.endTime) || '—'}</p>
-                      <p className="text-[11px] text-navy-500 mt-1 whitespace-nowrap">{fmtDateLong(b.endDate)}</p>
-                      <p className="text-[11px] text-navy-400 mt-0.5 flex items-center justify-end gap-0.5 truncate">
-                        <MapPin size={9} className="flex-shrink-0" />{b.dropLocation || 'Return'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Price + primary action */}
-                <div className="flex flex-row lg:flex-col items-center justify-between lg:justify-center gap-3 px-4 py-3 lg:px-5 lg:py-5 lg:w-44 flex-shrink-0 bg-navy-50/40 border-t lg:border-t-0 lg:border-l border-navy-100">
-                  <div className="lg:text-center">
-                    <p className="text-xl font-black text-navy-800 leading-none">Rs {b.totalAmount.toLocaleString()}</p>
-                    {balance > 0
-                      ? <p className="text-[11px] text-red-500 font-semibold mt-1">Rs {balance.toLocaleString()} due</p>
-                      : <p className="text-[11px] text-emerald-600 font-semibold mt-1">Fully paid</p>}
-                  </div>
-                  {b.status === 'Confirmed' ? (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); startBooking(b.id); }}
-                      className="flex items-center gap-1 bg-navy-700 hover:bg-navy-600 text-white text-sm font-semibold rounded-xl px-4 py-2 transition-colors shadow-sm"
-                      title="Mark vehicle as On Rent"
-                    >
-                      <PlayCircle size={14} /> Start
-                    </button>
-                  ) : b.status === 'Ongoing' ? (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); completeBooking(b.id); }}
-                      className="flex items-center gap-1 bg-navy-700 hover:bg-navy-600 text-white text-sm font-semibold rounded-xl px-4 py-2 transition-colors shadow-sm"
-                    >
-                      <CheckCircle size={14} /> Complete
-                    </button>
-                  ) : (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setSelected(b); setModal('view'); }}
-                      className="flex items-center gap-1 bg-white border border-navy-200 hover:bg-navy-50 text-navy-700 text-sm font-semibold rounded-xl px-3.5 py-2 transition-colors"
-                    >
-                      Details <ChevronRight size={14} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* tag strip */}
-              <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-t border-navy-50 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <StatusBadge status={b.status} />
-                  {owner && (
-                    <span className="text-[10px] text-navy-500 bg-navy-50 border border-navy-100 rounded-full px-2 py-0.5">
-                      {owner.name}
-                    </span>
-                  )}
-                  {b.insertedByAdmin && (
-                    <span className="flex items-center gap-1 text-[10px] font-semibold bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">
-                      <ClipboardEdit size={9} /> Admin
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  {b.status === 'Confirmed' && (
-                    <button
-                      className="text-xs text-red-400 hover:text-red-600 font-medium transition-colors"
-                      onClick={(e) => { e.stopPropagation(); cancelBooking(b.id); }}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                  <span className="flex items-center gap-1 text-xs font-semibold text-blue-600">
-                    View Details <ChevronDown size={13} />
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-        };
+        const renderGridCard = (b: Booking) => <BookingCard key={b.id} {...cardProps(b)} />;
+        const renderRowCard  = (b: Booking) => <BookingRow key={b.id} {...cardProps(b)} />;
 
         const renderCompactCard = (b: Booking) => {
           const vehicle = vehicles.find((v) => v.id === b.vehicleId);
-          const balance = b.totalAmount - (b.discount ?? 0) - b.paidAmount;
+          const due = bookingDue(b);
+          const short = (d: string) => { const t = parseISO(d); return isNaN(t.getTime()) ? d : format(t, 'd MMM'); };
           return (
             <div
               key={b.id}
-              className="card !p-2.5 hover:shadow-card-hover transition-shadow cursor-pointer"
+              className="bg-white rounded-xl border border-navy-100 px-3 py-2.5 hover:border-navy-200 hover:shadow-card-hover transition-all cursor-pointer"
               onClick={() => { setSelected(b); setModal('view'); }}
             >
-              <div
-                className="h-1 rounded-full mb-2 -mt-0.5"
-                style={{ background: STATUS_COLORS[b.status] ?? '#F4F4F5' }}
-              />
-              <p className="text-xs font-bold text-navy-800 truncate">{b.customerName}</p>
-              <p className="text-[10px] text-navy-400 truncate mb-1.5">
-                {vehicle?.brand} {vehicle?.model} · {vehicle?.vehicleNumber}
-              </p>
-              <p className="text-[10px] text-navy-500 truncate">{b.startDate} → {b.endDate}</p>
-              <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-navy-50">
-                <span className="text-[11px] font-bold text-navy-800">Rs {b.totalAmount.toLocaleString()}</span>
-                {b.insertedByAdmin
-                  ? <span className="text-[9px] font-semibold bg-amber-100 text-amber-700 rounded-full px-1.5 py-0.5">Admin</span>
-                  : balance > 0 && <span className="text-[10px] font-semibold text-red-500">-{balance.toLocaleString()}</span>
-                }
+              <div className="flex items-start justify-between gap-1">
+                <p className="text-xs font-bold text-navy-800 truncate">{b.customerName}</p>
+                <MissingChip b={b} compact />
+              </div>
+              <p className="text-[10px] text-navy-400 truncate">{vehicle?.brand} {vehicle?.model} · {vehicle?.vehicleNumber}</p>
+              <p className="text-[10px] text-navy-500 truncate mt-1">{short(b.startDate)} → {short(b.endDate)} · {durationLabel(b)}</p>
+              <div className="flex items-center justify-between mt-1.5">
+                <span className="text-xs font-bold text-navy-800">Rs {bookingBill(b).toLocaleString()}</span>
+                {due > 0
+                  ? <span className="text-[10px] font-semibold text-red-500">Rs {due.toLocaleString()} due</span>
+                  : <span className="text-[10px] font-semibold text-emerald-600">Paid</span>}
               </div>
             </div>
           );
@@ -959,7 +823,94 @@ export default function Bookings() {
 
         const isGrid       = cardLayout === 'grid';
         const renderCard   = isGrid ? renderGridCard : renderRowCard;
-        const listClass    = isGrid ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4' : 'space-y-3';
+        const listClass    = isGrid ? 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 min-[1900px]:grid-cols-4 gap-3' : 'space-y-3';
+
+        if (sorted.length === 0) {
+          return (
+            <div className="text-center py-16 text-navy-400 text-sm">
+              {filtersActive ? <>No bookings match these filters. <button onClick={clearFilters} className="text-red-500 font-semibold hover:underline">Clear filters</button></> : 'No bookings found.'}
+            </div>
+          );
+        }
+
+        /* Grouped by vehicle / month / year — each group is an accordion with its own totals */
+        if (groupBy !== 'none') {
+          const keyOf = (b: Booking) => groupBy === 'vehicle' ? b.vehicleId : groupBy === 'month' ? b.startDate.slice(0, 7) : b.startDate.slice(0, 4);
+          const map = new Map<string, Booking[]>();
+          sorted.forEach((b) => { const k = keyOf(b); map.set(k, [...(map.get(k) ?? []), b]); });
+          const groups = [...map.entries()].map(([key, list]) => ({
+            key,
+            list: [...list].sort((a, b) => b.startDate.localeCompare(a.startDate)),
+            vehicle: groupBy === 'vehicle' ? vehicles.find((v) => v.id === key) : undefined,
+          }));
+          if (groupBy === 'vehicle') groups.sort((a, b) => b.list.length - a.list.length || `${a.vehicle?.brand} ${a.vehicle?.model}`.localeCompare(`${b.vehicle?.brand} ${b.vehicle?.model}`));
+          else groups.sort((a, b) => b.key.localeCompare(a.key));
+          const first = groups[0]?.key;
+          const isOpen = (k: string) => (k === first) !== toggledGroups.has(k);
+          const toggle = (k: string) => setToggledGroups((st) => { const n = new Set(st); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+          const label = (g: typeof groups[0]) =>
+            groupBy === 'vehicle' ? (g.vehicle ? `${g.vehicle.brand} ${g.vehicle.model}` : 'Vehicle removed')
+              : groupBy === 'month' ? format(parseISO(`${g.key}-01`), 'MMMM yyyy')
+              : g.key;
+
+          return (
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between text-xs text-navy-400 px-1">
+                <span>{groups.length} {groupBy === 'vehicle' ? 'vehicles' : groupBy === 'month' ? 'months' : 'years'} · {sorted.length} bookings</span>
+                <span className="flex gap-3">
+                  <button className="font-medium hover:text-navy-700" onClick={() => setToggledGroups(new Set(groups.map((g) => g.key).filter((k) => k !== first)))}>Expand all</button>
+                  <button className="font-medium hover:text-navy-700" onClick={() => setToggledGroups(new Set(first ? [first] : []))}>Collapse all</button>
+                </span>
+              </div>
+              {groups.map((g) => {
+                const open = isOpen(g.key);
+                const live = g.list.filter((b) => b.status !== 'Cancelled');
+                const total = live.reduce((sum, b) => sum + bookingBill(b), 0);
+                const due = live.reduce((sum, b) => sum + bookingDue(b), 0);
+                const ongoing = g.list.filter((b) => b.status === 'Ongoing').length;
+                const upcoming = g.list.filter((b) => b.status === 'Confirmed').length;
+                return (
+                  <section key={g.key} className="bg-white rounded-2xl border border-navy-100 overflow-hidden">
+                    <button onClick={() => toggle(g.key)} aria-expanded={open}
+                            className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-navy-50/50 transition-colors">
+                      {groupBy === 'vehicle' ? (
+                        <div className="w-11 h-8 rounded-lg overflow-hidden bg-navy-50 flex-shrink-0 flex items-center justify-center">
+                          {g.vehicle ? (
+                            <VehicleImage brand={g.vehicle.brand} model={g.vehicle.model} color={g.vehicle.color} imageUrl={g.vehicle.imageUrl}
+                                          bodyColor={vehicleBodyColor(g.vehicle.color)} className="w-full h-full" />
+                          ) : <Car size={16} className="text-navy-300" />}
+                        </div>
+                      ) : (
+                        <span className="w-9 h-9 rounded-xl bg-navy-50 text-navy-500 flex items-center justify-center flex-shrink-0"><CalendarDays size={16} /></span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-navy-800 truncate">
+                          {label(g)}
+                          {g.vehicle && <span className="ml-1.5 font-mono text-[10px] font-medium text-navy-400">{g.vehicle.vehicleNumber}</span>}
+                        </p>
+                        <p className="text-[11px] text-navy-400">
+                          {g.list.length} booking{g.list.length === 1 ? '' : 's'}
+                          {ongoing > 0 && <span className="text-emerald-600 font-semibold"> · {ongoing} on rent</span>}
+                          {upcoming > 0 && <span className="text-sky-600 font-semibold"> · {upcoming} upcoming</span>}
+                        </p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-bold text-navy-900">Rs {total.toLocaleString()}</p>
+                        <p className={`text-[11px] font-semibold ${due > 0 ? 'text-red-500' : 'text-emerald-600'}`}>{due > 0 ? `Rs ${due.toLocaleString()} due` : 'All paid'}</p>
+                      </div>
+                      <ChevronDown size={16} className={`text-navy-400 transition-transform duration-200 flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
+                    </button>
+                    {open && (
+                      <div className="px-3 pb-3 pt-3 border-t border-navy-50 bg-navy-50/30">
+                        <div className={listClass}>{g.list.map(renderCard)}</div>
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          );
+        }
 
         return (
           <>
@@ -968,9 +919,6 @@ export default function Bookings() {
               <div className={listClass}>
                 {activeList.map(renderCard)}
               </div>
-            )}
-            {activeList.length === 0 && completedList.length === 0 && (
-              <div className="text-center py-16 text-navy-400 text-sm">No bookings found.</div>
             )}
 
             {/* Completed bookings — full cards when:
@@ -1007,7 +955,7 @@ export default function Bookings() {
                 </button>
 
                 {completedOpen && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-10 gap-2.5 mt-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 min-[1900px]:grid-cols-6 gap-2.5 mt-3">
                     {completedList.map(renderCompactCard)}
                   </div>
                 )}
@@ -1119,6 +1067,12 @@ export default function Bookings() {
             )
           )}
 
+          <RentalPeriodFields
+            value={form}
+            onChange={applyPeriod}
+            dailyRate={vehicles.find((v) => v.id === form.vehicleId)?.dailyRent ?? 0}
+            minDate={format(new Date(), 'yyyy-MM-dd')}
+            daily={<>
           {/* Date pickers — blocked dates are greyed out in the calendar */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -1132,6 +1086,7 @@ export default function Bookings() {
                 placeholderText="Select start date"
                 className={`input w-full ${startWarn ? 'border-red-400 focus:border-red-500' : ''}`}
                 calendarClassName="emrac-datepicker"
+                portalId="emrac-datepicker-portal"
                 showMonthDropdown
                 showYearDropdown
                 dropdownMode="select"
@@ -1153,6 +1108,7 @@ export default function Bookings() {
                 placeholderText="Select end date"
                 className={`input w-full ${endWarn ? 'border-red-400 focus:border-red-500' : ''}`}
                 calendarClassName="emrac-datepicker"
+                portalId="emrac-datepicker-portal"
                 showMonthDropdown
                 showYearDropdown
                 dropdownMode="select"
@@ -1182,6 +1138,8 @@ export default function Bookings() {
             <input type="checkbox" className="rounded" checked={form.waiveExtraDay} onChange={(e) => set('waiveExtraDay', e.target.checked)} />
             Don't charge extra days (owner approved) — a partial day past a full 24h period won't be billed as another day
           </label>
+          </>}
+          />
 
           {/* Full date-range conflict banner — shown after both dates are picked */}
           {form.vehicleId && form.startDate && form.endDate && availability !== null && (
@@ -1189,7 +1147,7 @@ export default function Bookings() {
               <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm px-4 py-3 rounded-xl">
                 <CheckCircle size={15} className="flex-shrink-0" />
                 <span>
-                  Available · <span className="font-semibold">{form.totalDays} day{form.totalDays !== 1 ? 's' : ''}</span>
+                  Available · <span className="font-semibold">{form.rentalType !== 'Daily' && form.rentalUnits ? unitLabel(form.rentalType, form.rentalUnits) : `${form.totalDays} day${form.totalDays !== 1 ? 's' : ''}`}</span>
                   {' · '}Base cost: <span className="font-semibold">Rs {form.totalAmount.toLocaleString()}</span>
                 </span>
               </div>
@@ -1319,6 +1277,8 @@ export default function Bookings() {
                 </div>
               </>
             )}
+            <div className="col-span-full"><DoNotRentWarning phone={form.customerPhone} /></div>
+            <div className="col-span-full"><CustomerIdFields value={form.customerInfo} selfDrive={!form.driverId} onChange={(ci) => setForm((f) => ({ ...f, customerInfo: ci }))} /></div>
 
             {/* Referral — pick a registered owner, or enter a third party */}
             <div className="sm:col-span-2">
@@ -1503,7 +1463,8 @@ export default function Bookings() {
           </div>
         </div>
 
-        <div className="flex justify-end gap-3 mt-6">
+        <div className="mt-5"><MissingDetailsPanel draft={form} /></div>
+        <div className="flex justify-end gap-3 mt-4">
           <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
           <button
             onClick={() => setModal('calculator')}
@@ -1545,224 +1506,27 @@ export default function Bookings() {
         }
       />
 
-      {/* ── View Modal ── */}
-      <Modal open={modal === 'view'} onClose={() => setModal(null)} title="Booking Details">
-        {selected && (() => {
-          const vehicle = vehicles.find((v) => v.id === selected.vehicleId);
-          const owner   = owners.find((o) => o.id === vehicle?.ownerId);
-          const driver  = drivers.find((d) => d.id === selected.driverId);
-          const balance = selected.totalAmount - (selected.discount ?? 0) - selected.paidAmount;
-          return (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-lg font-bold text-navy-800">{selected.customerName}</p>
-                  <p className="text-sm text-navy-400">
-                    {selected.customerPhone}
-                    {selected.customerNIC && ` · ${selected.customerNIC}`}
-                    {selected.customerEmail && ` · ${selected.customerEmail}`}
-                  </p>
-                </div>
-                <StatusBadge status={selected.status} size="md" />
-              </div>
+      {/* ── Booking details (tabs: overview, payments, handover, documents, history) ── */}
+      {modal === 'view' && selected && (
+        <BookingDetailsModal
+          bookingId={selected.id}
+          onClose={() => setModal(null)}
+          onEdit={(b) => setEditing(b)}
+          onCancel={(b) => setCancelling(b)}
+        />
+      )}
 
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  ['Vehicle',    `${vehicle?.brand} ${vehicle?.model}`],
-                  ['Reg. No.',   vehicle?.vehicleNumber ?? '—'],
-                  ['Owner',      owner?.name ?? '—'],
-                  ['Owner Phone',owner?.phone ?? '—'],
-                  ['Start Date', selected.startDate],
-                  ['End Date',   selected.endDate],
-                  ['Duration',   `${selected.totalDays} days`],
-                  ['Referral',   selected.referral ?? 'Direct'],
-                  ...((selected.referralFee ?? 0) > 0
-                    ? [['Referral Fee', `Rs ${(selected.referralFee ?? 0).toLocaleString()}`] as [string, string]]
-                    : []),
-                  ['Pickup',     selected.pickupLocation || '—'],
-                  ['Drop',       selected.dropLocation || '—'],
-                ].map(([l, v]) => (
-                  <div key={l} className="bg-navy-50/60 rounded-xl p-3">
-                    <p className="text-xs text-navy-400">{l}</p>
-                    <p className="text-sm font-semibold text-navy-800">{v}</p>
-                  </div>
-                ))}
-              </div>
+      {handover && (
+        <HandoverModal booking={handover.booking} kind={handover.kind} onClose={() => setHandover(null)} />
+      )}
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-navy-700 rounded-xl p-3 text-white">
-                  <p className="text-xs opacity-70">Total</p>
-                  <p className="text-base font-bold">Rs {selected.totalAmount.toLocaleString()}</p>
-                </div>
-                <div className="bg-emerald-50 rounded-xl p-3">
-                  <p className="text-xs text-emerald-600">Paid</p>
-                  <p className="text-base font-bold text-emerald-700">Rs {selected.paidAmount.toLocaleString()}</p>
-                </div>
-                <div className={`rounded-xl p-3 ${balance > 0 ? 'bg-red-50' : 'bg-navy-50'}`}>
-                  <p className={`text-xs ${balance > 0 ? 'text-red-500' : 'text-navy-400'}`}>Balance</p>
-                  <p className={`text-base font-bold ${balance > 0 ? 'text-red-700' : 'text-navy-700'}`}>
-                    Rs {balance.toLocaleString()}
-                  </p>
-                </div>
-              </div>
+      {cancelling && (
+        <CancelBookingModal booking={cancelling} onClose={() => setCancelling(null)} />
+      )}
 
-              {/* Security Deposit section */}
-              {(selected.depositType || (selected.depositAmount ?? 0) > 0) && (
-                <div className="border border-amber-200 rounded-xl p-3 space-y-2">
-                  <p className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
-                    <Shield size={12} /> Security Deposit
-                  </p>
-
-                  {/* Deposit type badge + details */}
-                  {selected.depositType && (
-                    <div className="space-y-1.5">
-                      <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        selected.depositType === 'cash'    ? 'bg-amber-100 text-amber-800' :
-                        selected.depositType === 'vehicle' ? 'bg-blue-100 text-blue-800' :
-                                                             'bg-navy-100 text-navy-700'
-                      }`}>
-                        {selected.depositType === 'cash' ? 'Cash' : selected.depositType === 'vehicle' ? 'Vehicle' : 'Other'}
-                      </span>
-                      {selected.depositType === 'vehicle' && selected.depositAssetDescription && (() => {
-                        const [vModel, vColor, vNumber] = selected.depositAssetDescription.split(' | ');
-                        return (
-                          <div className="grid grid-cols-3 gap-2 text-xs">
-                            {vModel  && <div className="bg-navy-50 rounded-lg p-2"><p className="text-navy-400">Model</p><p className="font-semibold text-navy-800">{vModel}</p></div>}
-                            {vColor  && <div className="bg-navy-50 rounded-lg p-2"><p className="text-navy-400">Color</p><p className="font-semibold text-navy-800">{vColor}</p></div>}
-                            {vNumber && <div className="bg-navy-50 rounded-lg p-2"><p className="text-navy-400">Vehicle No.</p><p className="font-semibold text-navy-800">{vNumber}</p></div>}
-                          </div>
-                        );
-                      })()}
-                      {selected.depositType === 'other' && selected.depositAssetDescription && (
-                        <p className="text-xs text-navy-700">{selected.depositAssetDescription}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Cash amounts grid — only when cash deposit */}
-                  {selected.depositType === 'cash' && (
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="bg-amber-50 rounded-lg p-2">
-                        <p className="text-amber-500">Collected</p>
-                        <p className="font-bold text-amber-800">Rs {(selected.depositAmount ?? 0).toLocaleString()}</p>
-                      </div>
-                      <div className="bg-emerald-50 rounded-lg p-2">
-                        <p className="text-emerald-500">Returned</p>
-                        <p className="font-bold text-emerald-700">Rs {(selected.depositReturned ?? 0).toLocaleString()}</p>
-                      </div>
-                      <div className="bg-red-50 rounded-lg p-2">
-                        <p className="text-red-400">Deducted</p>
-                        <p className="font-bold text-red-700">Rs {(selected.depositDeduction ?? 0).toLocaleString()}</p>
-                      </div>
-                    </div>
-                  )}
-                  {selected.depositNotes && (
-                    <p className="text-xs text-amber-600 pl-1">{selected.depositNotes}</p>
-                  )}
-                  {(selected.status === 'Completed' || selected.status === 'Ongoing') && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                      {selected.depositType === 'cash' && (
-                        <>
-                          <div>
-                            <p className="label text-[11px]">Return Amount</p>
-                            <input className="input text-xs py-1" type="number"
-                              defaultValue={selected.depositReturned ?? ''}
-                              onBlur={(e) => updateBooking(selected.id, { depositReturned: +e.target.value })}
-                              placeholder="0"
-                            />
-                          </div>
-                          <div>
-                            <p className="label text-[11px]">Deduction</p>
-                            <input className="input text-xs py-1" type="number"
-                              defaultValue={selected.depositDeduction ?? ''}
-                              onBlur={(e) => updateBooking(selected.id, { depositDeduction: +e.target.value })}
-                              placeholder="0"
-                            />
-                          </div>
-                        </>
-                      )}
-                      <div className="sm:col-span-2">
-                        <p className="label text-[11px]">{selected.depositType === 'vehicle' || selected.depositType === 'other' ? 'Return / Condition Notes' : 'Deduction Notes'}</p>
-                        <input className="input text-xs py-1"
-                          defaultValue={selected.depositNotes ?? ''}
-                          onBlur={(e) => updateBooking(selected.id, { depositNotes: e.target.value })}
-                          placeholder={selected.depositType === 'vehicle' || selected.depositType === 'other' ? 'Item returned, scratched, missing, etc.' : 'Damage, cleaning fee, etc.'}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {driver && (
-                <div className="bg-blue-50 rounded-xl p-3">
-                  <p className="text-xs text-blue-500">Assigned Driver</p>
-                  <p className="text-sm font-semibold text-blue-700">{driver.name} · {driver.phone}</p>
-                </div>
-              )}
-              {selected.notes && (
-                <div className="bg-navy-50/60 rounded-xl p-3">
-                  <p className="text-xs text-navy-400">Notes</p>
-                  <p className="text-sm text-navy-700">{selected.notes}</p>
-                </div>
-              )}
-
-              {/* Action footer */}
-              <div className="flex items-center gap-2 pt-2 border-t border-navy-100">
-                {/* WhatsApp button — always shown */}
-                <button
-                  className="flex items-center gap-1.5 text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
-                  onClick={() => {
-                    const v = vehicles.find((vv) => vv.id === selected.vehicleId);
-                    openWhatsApp(selected.customerPhone, buildBookingWhatsAppMsg(selected, v));
-                  }}
-                >
-                  <MessageCircle size={13} /> WhatsApp
-                </button>
-
-                {/* Print confirmation */}
-                <button
-                  className="flex items-center gap-1.5 text-xs bg-navy-100 hover:bg-navy-200 text-navy-700 px-3 py-1.5 rounded-lg font-medium transition-colors"
-                  onClick={() => {
-                    const v = vehicles.find((vv) => vv.id === selected.vehicleId);
-                    const d = drivers.find((dr) => dr.id === selected.driverId);
-                    printBookingConfirmation(selected, v, d);
-                  }}
-                >
-                  <Printer size={13} /> Print
-                </button>
-
-                <div className="flex-1" />
-
-                {selected.status === 'Confirmed' && (
-                  <>
-                    <button
-                      className="flex items-center gap-1.5 text-xs bg-navy-700 hover:bg-navy-600 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
-                      onClick={() => { startBooking(selected.id); setModal(null); }}
-                    >
-                      <PlayCircle size={13} /> Start Trip
-                    </button>
-                    <button
-                      className="text-xs text-red-500 hover:bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg transition-colors"
-                      onClick={() => { cancelBooking(selected.id); setModal(null); }}
-                    >
-                      Cancel Booking
-                    </button>
-                  </>
-                )}
-                {selected.status === 'Ongoing' && (
-                  <button
-                    className="text-xs bg-navy-700 hover:bg-navy-800 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
-                    onClick={() => { completeBooking(selected.id); setModal(null); }}
-                  >
-                    Complete Trip
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })()}
-      </Modal>
+      {editing && (
+        <EditBookingModal booking={editing} onClose={() => setEditing(null)} />
+      )}
     </div>
   );
 }

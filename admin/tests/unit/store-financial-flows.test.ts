@@ -652,3 +652,151 @@ describe('Full scenario: referral booking → complete → pay commission → se
     expect(creditTotals([settled]).total).toBe(0)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// editBooking — admin corrections move the money with the booking
+// ─────────────────────────────────────────────────────────────────────────────
+describe('editBooking — admin correction of a wrongly entered booking', () => {
+  const meta = { by: 'Admin', changes: ['test'] }
+  beforeEach(() => {
+    useStore.setState(EMPTY_STATE)
+    useStore.setState({
+      owners: [makeOwner(), makeOwner({ id: 'o2', name: 'Second Owner' })],
+      vehicles: [makeVehicle(), makeVehicle({ id: 'v2', vehicleNumber: 'WP-TEST-02', ownerId: 'o2' })],
+    })
+  })
+  const manual = (o: Partial<Booking> = {}) =>
+    useStore.getState().addManualBooking({ ...makeBookingInput({ status: 'Completed', totalAmount: 25000, ...o }), commissionAlreadyPaid: false })
+
+  it('a corrected total moves vehicle revenue, the commission and the owner payout', () => {
+    const id = manual()
+    useStore.getState().editBooking(id, { totalAmount: 30000 }, meta)
+    const s = useStore.getState()
+    expect(s.vehicles.find((v) => v.id === 'v1')!.revenue).toBe(30000)
+    expect(s.commissions.find((c) => c.bookingId === id)).toMatchObject({ totalIncome: 30000, ownerPayout: 30000 })
+    expect(s.owners.find((o) => o.id === 'o1')).toMatchObject({ totalEarnings: 30000, pendingPayout: 30000 })
+  })
+
+  it('moving the booking to another vehicle moves revenue and earnings to its owner', () => {
+    const id = manual()
+    useStore.getState().editBooking(id, { vehicleId: 'v2' }, meta)
+    const s = useStore.getState()
+    expect(s.vehicles.find((v) => v.id === 'v1')).toMatchObject({ revenue: 0, rentCount: 0 })
+    expect(s.vehicles.find((v) => v.id === 'v2')).toMatchObject({ revenue: 25000, rentCount: 1 })
+    expect(s.owners.find((o) => o.id === 'o1')!.totalEarnings).toBe(0)
+    expect(s.owners.find((o) => o.id === 'o2')!.totalEarnings).toBe(25000)
+    expect(s.commissions.find((c) => c.bookingId === id)!.ownerId).toBe('o2')
+  })
+
+  it('Completed → Ongoing puts the vehicle back on rent', () => {
+    const id = manual()
+    expect(useStore.getState().vehicles.find((v) => v.id === 'v1')!.status).toBe('Available')
+    useStore.getState().editBooking(id, { status: 'Ongoing' }, meta)
+    expect(useStore.getState().vehicles.find((v) => v.id === 'v1')!.status).toBe('Ongoing')
+  })
+
+  it('cancelling takes the booking out of revenue and earnings', () => {
+    const id = manual()
+    useStore.getState().editBooking(id, { status: 'Cancelled' }, meta)
+    const s = useStore.getState()
+    expect(s.vehicles.find((v) => v.id === 'v1')).toMatchObject({ revenue: 0, rentCount: 0 })
+    expect(s.owners.find((o) => o.id === 'o1')!.totalEarnings).toBe(0)
+  })
+
+  it('records the correction in the booking notes', () => {
+    const id = manual({ notes: 'Original note' })
+    useStore.getState().editBooking(id, { totalAmount: 20000 }, { by: 'Manodya', changes: ['Total: Rs 25,000 → Rs 20,000'], reason: 'typo' })
+    const notes = useStore.getState().bookings.find((b) => b.id === id)!.notes!
+    expect(notes).toContain('Original note')
+    expect(notes).toMatch(/\[Corrected .* by Manodya: Total: Rs 25,000 → Rs 20,000 — typo\]/)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// cancelBooking — the reason is recorded
+// ─────────────────────────────────────────────────────────────────────────────
+describe('cancelBooking — records why', () => {
+  beforeEach(() => {
+    useStore.setState(EMPTY_STATE)
+    useStore.setState({ owners: [makeOwner()], vehicles: [makeVehicle()] })
+  })
+
+  it('adds the reason, details and who cancelled to the notes and frees the vehicle', () => {
+    const id = useStore.getState().addBooking(makeBookingInput({ notes: 'Airport pickup' }))
+    useStore.getState().cancelBooking(id, { reason: 'Customer changed plans', details: 'Flight moved', by: 'Manodya' })
+    const s = useStore.getState()
+    const b = s.bookings.find((x) => x.id === id)!
+    expect(b.status).toBe('Cancelled')
+    expect(b.notes).toContain('Airport pickup')
+    expect(b.notes).toMatch(/\[Cancelled .* by Manodya: Customer changed plans — Flight moved\]/)
+    expect(s.vehicles.find((v) => v.id === 'v1')!.status).toBe('Available')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Full booking record — payments ledger, deposit, charges, handover
+// ─────────────────────────────────────────────────────────────────────────────
+import { ledgerOf, priceBreakdown, bookingNo, depositHeld, historyOf } from '../../src/lib/bookingRecord'
+
+describe('booking record', () => {
+  beforeEach(() => {
+    useStore.setState(EMPTY_STATE)
+    useStore.setState({ owners: [makeOwner()], vehicles: [makeVehicle({ mileage: 40000 })] })
+  })
+  const get = (id: string) => useStore.getState().bookings.find((b) => b.id === id)!
+
+  it('payments, advances and refunds move the totals and land in the ledger', () => {
+    const id = useStore.getState().addBooking(makeBookingInput({ totalAmount: 25000 }))
+    useStore.getState().recordPayment(id, { kind: 'Advance', amount: 5000, method: 'Cash', by: 'A' })
+    useStore.getState().recordPayment(id, { kind: 'Payment', amount: 15000, method: 'Bank transfer', receiptNo: 'R-12', by: 'A' })
+    useStore.getState().recordPayment(id, { kind: 'Refund', amount: 1000, method: 'Cash', by: 'A' })
+    const b = get(id)
+    expect(b.advanceAmount).toBe(5000)
+    expect(b.paidAmount).toBe(14000)
+    expect(priceBreakdown(b).due).toBe(6000)
+    expect(ledgerOf(b).map((p) => p.kind)).toEqual(['Advance', 'Payment', 'Refund'])
+    expect(b.activity?.length).toBe(3)
+  })
+
+  it('money recorded before the ledger shows as one earlier line', () => {
+    const id = useStore.getState().addBooking(makeBookingInput({ paidAmount: 8000 }))
+    expect(ledgerOf(get(id))).toMatchObject([{ id: 'legacy', amount: 8000 }])
+  })
+
+  it('a cash deposit is collected and settled with a kept amount', () => {
+    const id = useStore.getState().addBooking(makeBookingInput())
+    useStore.getState().recordPayment(id, { kind: 'Deposit received', amount: 20000, method: 'Cash', by: 'A' })
+    expect(depositHeld(get(id))).toBe(20000)
+    useStore.getState().settleDeposit(id, { returned: 17000, deduction: 3000, method: 'Cash', notes: 'Scratch on bumper' }, 'A')
+    const b = get(id)
+    expect(depositHeld(b)).toBe(0)
+    expect(b.depositDeduction).toBe(3000)
+    expect(b.depositNotes).toContain('Scratch')
+  })
+
+  it('charges go on the bill and come off when waived', () => {
+    const id = useStore.getState().addBooking(makeBookingInput({ totalAmount: 25000 }))
+    useStore.getState().addCharge(id, { kind: 'Traffic fine', amount: 2000, date: '2026-07-03', by: 'A' })
+    expect(priceBreakdown(get(id)).bill).toBe(27000)
+    const chargeId = get(id).charges![0].id
+    useStore.getState().waiveCharge(id, chargeId, 'A')
+    expect(priceBreakdown(get(id)).bill).toBe(25000)
+  })
+
+  it('handover starts and completes the rental and updates the odometer', () => {
+    const id = useStore.getState().addBooking(makeBookingInput())
+    const list = (odometer: number) => ({ at: new Date().toISOString(), by: 'A', odometer, fuel: 'Full', items: {} })
+    useStore.getState().recordHandover(id, 'pickup', list(40100))
+    expect(get(id).status).toBe('Ongoing')
+    expect(useStore.getState().vehicles[0]).toMatchObject({ status: 'Ongoing', mileage: 40100 })
+    useStore.getState().recordHandover(id, 'return', list(40600))
+    expect(get(id).status).toBe('Completed')
+    expect(useStore.getState().vehicles[0]).toMatchObject({ status: 'Available', mileage: 40600 })
+    expect(useStore.getState().handovers).toHaveLength(2)
+    expect(historyOf(get(id)).some((a) => /500 km driven/.test(a.text))).toBe(true)
+  })
+
+  it('booking numbers are readable and stable', () => {
+    expect(bookingNo({ id: 'k3f9x2ab', createdAt: '2026-10-11T08:00:00Z', startDate: '2026-10-12' })).toBe('CRC-2026-X2AB')
+  })
+})

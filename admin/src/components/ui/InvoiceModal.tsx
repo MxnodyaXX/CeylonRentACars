@@ -1,6 +1,7 @@
 import { useStore } from '../../store/useStore';
 import { resolveReferralFee } from '../../lib/referral';
 import Modal from './Modal';
+import { rateLine } from '../../lib/rentalPeriod';
 
 interface Props {
   bookingId: string | null;
@@ -98,7 +99,7 @@ export default function InvoiceModal({ bookingId, onClose }: Props) {
                     <span className="block text-[10px] text-navy-400">{booking.startDate} → {booking.endDate}</span>
                   </td>
                   <td className="px-3 py-2.5 text-center text-navy-600">
-                    {booking.totalDays}d × Rs {vehicle.dailyRent.toLocaleString()}
+                    {rateLine(booking, vehicle.dailyRent)}
                   </td>
                   <td className="px-3 py-2.5 text-right font-semibold text-navy-800">
                     {baseAmount.toLocaleString()}
@@ -283,7 +284,7 @@ function buildInvoiceHTML(p: {
             Vehicle Rental<br>
             <small style="color:#A1A1AA">${booking.startDate} → ${booking.endDate}</small>
           </td>
-          <td style="padding:10px 12px;text-align:center;color:#52525B">${booking.totalDays}d × Rs ${vehicle.dailyRent.toLocaleString()}</td>
+          <td style="padding:10px 12px;text-align:center;color:#52525B">${rateLine(booking, vehicle.dailyRent)}</td>
           <td style="padding:10px 12px;text-align:right;font-weight:600;color:#18181B">${baseAmount.toLocaleString()}</td>
         </tr>
         ${kmRow}

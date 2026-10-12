@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, Users, MapPin, Target, ShieldCheck, Car, Send, Wallet, Contact, Sparkles, StickyNote, Flag, ArrowRight,
+  ArrowLeft, Users, MapPin, Target, ShieldCheck, Car, Send, Sparkles, StickyNote, Flag, ArrowRight,
   CheckCircle2, XCircle, AlertTriangle, ClipboardList, PhoneCall, Minus, Plus, Lock, FileText, Copy, Luggage,
   Mountain, Gauge, Trash2, CalendarCheck, Palmtree, Briefcase, ShoppingBag, Plane, PartyPopper, HeartHandshake, CalendarRange,
+  MessageSquareText, Wand2, ListChecks, Clock, CircleSlash,
 } from 'lucide-react';
-import { useStore } from '../store/useStore';
+import { useStore, reportDbError } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { toast } from '../store/useToast';
 import StartInquiryModal from '../components/ui/StartInquiryModal';
@@ -16,6 +17,7 @@ import {
   LEAD_QUALITY, LOST_REASONS, NEXT_ACTIONS, PRIORITIES, SPECIAL, STAGES, Suitability, advance, buildSummary,
   consultDates, consultDays, emptyConsultation, luggageOf, missing, passengerSeats, passengers, recommend, stageInfo,
   stageOf, suitability, tripCost, hillDetected, isHillTrip, TripCost, PURPOSES, purposeOf, currentChoice, bookingFromAgreement,
+  Question, QStatus, questionsFor, statusOf, nextAsk, parseCapture, askLater, LUGGAGE_PRESETS, luggagePreset, luggageNeeds,
 } from '../lib/consultation';
 
 const PURPOSE_ICON: Record<string, typeof Car> = {
@@ -26,33 +28,63 @@ import type { BookingAgreement, Consultation, InquiryStage, Vehicle } from '../t
 
 /* ---------- small building blocks ---------- */
 
-function Section({ n, icon: Icon, title, hint, children }: { n: number; icon: typeof Car; title: string; hint?: string; children: React.ReactNode }) {
+function Section({ icon: Icon, title, hint, aside, children }: { icon: typeof Car; title: string; hint?: string; aside?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="card !p-4 md:!p-5">
       <div className="flex items-start gap-3 mb-3">
-        <span className="w-7 h-7 rounded-full bg-navy-700 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">{n}</span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="flex items-center gap-1.5 text-sm font-bold text-navy-800"><Icon size={15} className="text-brand-500" />{title}</h2>
           {hint && <p className="text-[11px] text-navy-400">{hint}</p>}
         </div>
+        {aside}
       </div>
       {children}
     </section>
   );
 }
 
-/** Original (what the customer submitted, read-only) beside Confirmed (what staff found out) */
-function Row({ label, original, children }: { label: string; original?: React.ReactNode; children: React.ReactNode }) {
+/** Answered / Not required / Ask later — a filled field always counts as answered */
+function StatusPicker({ q, status, onChange }: { q: Question; status?: QStatus; onChange: (s?: QStatus) => void }) {
+  if (q.filled) {
+    return <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 inline-flex items-center gap-1"><CheckCircle2 size={11} /> Answered</span>;
+  }
+  const opts: { id: QStatus; label: string; on: string }[] = [
+    { id: 'answered', label: 'Answered', on: 'bg-emerald-600 text-white' },
+    { id: 'na', label: 'Not required', on: 'bg-navy-500 text-white' },
+    { id: 'later', label: 'Ask later', on: 'bg-amber-500 text-white' },
+  ];
   return (
-    <div className="grid sm:grid-cols-[150px_minmax(0,1fr)_minmax(0,1.3fr)] gap-x-3 gap-y-1 items-start py-2 border-b border-navy-50 last:border-0">
-      <p className="text-xs font-semibold text-navy-500 pt-2">{label}</p>
-      <div className="rounded-lg bg-navy-50/70 px-3 py-2 text-sm text-navy-500 min-h-[38px]">
-        <span className="block text-[10px] font-bold uppercase tracking-wide text-navy-300">Customer entered</span>
-        {original || <span className="text-navy-300">—</span>}
-      </div>
-      <div>
-        <span className="block text-[10px] font-bold uppercase tracking-wide text-emerald-600 mb-1">Confirmed</span>
-        {children}
+    <div className="inline-flex rounded-lg border border-navy-100 overflow-hidden text-[11px] font-semibold flex-shrink-0">
+      {opts.map((o) => (
+        <button key={o.id} type="button" onClick={() => onChange(status === o.id ? undefined : o.id)} aria-pressed={status === o.id}
+                className={`px-2 py-1 border-l border-navy-100 first:border-l-0 transition-colors ${status === o.id ? o.on : 'bg-white text-navy-500 hover:bg-navy-50'}`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** One question in the conversation: how to ask it, its status, and the field(s) behind it */
+function QBlock({ n, q, status, onStatus, children }: { n?: number; q: Question; status?: QStatus; onStatus: (s?: QStatus) => void; children?: React.ReactNode }) {
+  const dot = status === 'answered' ? 'bg-emerald-600 text-white' : status === 'later' ? 'bg-amber-500 text-white' : status === 'na' ? 'bg-navy-100 text-navy-400' : 'bg-white text-navy-700 border-2 border-navy-200';
+  const Icon = status === 'answered' ? CheckCircle2 : status === 'later' ? Clock : status === 'na' ? CircleSlash : undefined;
+  return (
+    <div className={`py-3 border-b border-navy-50 last:border-0 last:pb-0 ${status === 'na' ? 'opacity-60' : ''}`}>
+      <div className="flex items-start gap-3">
+        <span className={`w-6 h-6 rounded-full text-[11px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5 ${dot}`}>
+          {n ?? (Icon ? <Icon size={12} /> : '•')}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <p className="text-sm font-bold text-navy-800">{q.label}</p>
+            {q.why && <span className="text-[10px] text-navy-400">· {q.why}</span>}
+            <span className="flex-1" />
+            <StatusPicker q={q} status={status} onChange={onStatus} />
+          </div>
+          <p className="text-[12px] text-navy-500 italic mt-0.5">“{q.ask}”</p>
+          {status !== 'na' && children && <div className="mt-2">{children}</div>}
+        </div>
       </div>
     </div>
   );
@@ -173,6 +205,8 @@ export default function InquiryConsultation() {
   // Vehicles staff added by hand (any vehicle — e.g. one they know suits the hills), with their own check
   const manualFits = useMemo(() => (inq ? (c.manualIds ?? []).map((mid) => vehicles.find((x) => x.id === mid)).filter((x): x is Vehicle => !!x).map((x) => suitability(x, inq, c, avail)) : []), [inq, c, vehicles]); // eslint-disable-line react-hooks/exhaustive-deps
   const [addId, setAddId] = useState('');
+  const [capture, setCapture] = useState('');
+  const [found, setFound] = useState<string[]>([]);
 
   // The customer may change their mind on the website (/alternatives) after the call — pick that up
   const recordRef = useRef<(vehicleId: string, note: string, source?: 'Staff' | 'Website', at?: string) => void>();
@@ -200,7 +234,33 @@ export default function InquiryConsultation() {
   const pax = passengers(c);
   const first_ = inq.customerName.trim().split(' ')[0];
   const ref = req.reference;
-  const todo = missing(c);
+  const todo = missing(inq, c);
+  const later = askLater(inq, c);
+  const qs = questionsFor(inq, c);
+  const core = qs.filter((q) => q.core);
+  const followUps = qs.filter((q) => !q.core);
+  const coreDone = core.filter((q) => statusOf(q, c)).length;
+  const ask = nextAsk(inq, c);
+  const setQ = (qid: string, s?: QStatus) => setC((x) => {
+    const next = { ...(x.questions ?? {}) };
+    if (s) next[qid] = s; else delete next[qid];
+    return { ...x, questions: next };
+  });
+  /** Render one question with its fields */
+  const qb = (qid: string, n: number | undefined, body?: React.ReactNode) => {
+    const q = qs.find((x) => x.id === qid);
+    return q ? <QBlock key={qid} n={n} q={q} status={statusOf(q, c)} onStatus={(s) => setQ(qid, s)}>{body}</QBlock> : null;
+  };
+  /** Quick capture: what the customer said → the matching fields */
+  const fillFromCapture = () => {
+    const text = capture.trim();
+    if (!text) return;
+    const r = parseCapture(text, c, c.pickupAt ?? inq.startDate);
+    setC((x) => ({ ...x, ...r.patch, capture: [x.capture, text].filter(Boolean).join('\n') }));
+    setFound(r.found);
+    setCapture('');
+    if (!r.found.length) toast.info('Nothing recognised', 'Fill the questions below by hand.');
+  };
   const summary = buildSummary(inq, c, vehicles, fit);
   const v = (vid?: string) => vehicles.find((x) => x.id === vid);
   const rateOf = (x: Vehicle) => x.webPrice ?? x.dailyRent ?? 0;
@@ -222,7 +282,7 @@ export default function InquiryConsultation() {
 
   /* ---------- sending while on the call ---------- */
   const wa = (text: string) => window.open(`https://wa.me/${intlDigits(inq.customerPhone)}?text=${encodeURIComponent(text)}`, '_blank');
-  const log = (outcome: string, response: string) => addFollowUp({ inquiryId: inq.id, channel: 'WhatsApp', outcome, response, staff }).catch(() => {});
+  const log = (outcome: string, response: string) => addFollowUp({ inquiryId: inq.id, channel: 'WhatsApp', outcome, response, staff }).catch((e) => reportDbError(e, 'Contact log entry not saved.'));
   const vehicleLines = (x: Vehicle) => {
     const t = costOf(x);
     return [
@@ -310,7 +370,7 @@ export default function InquiryConsultation() {
     setStage('CONFIRMED');
     patchInquiry(inq.id, { consultation: next, stage: 'CONFIRMED' });
     addFollowUp({ inquiryId: inq.id, channel: a.confirmedVia === 'In person' ? 'In person' : a.confirmedVia === 'Email' ? 'Email' : a.confirmedVia === 'WhatsApp' ? 'WhatsApp' : 'Call',
-      outcome: 'Confirmed — ready to book', response: `Agreed: ${a.vehicle} · ${rs(a.total)} · advance ${rs(a.advanceAmount)} by ${a.paymentMethod}, balance ${a.balanceDue.toLowerCase()}`, staff }).catch(() => {});
+      outcome: 'Confirmed — ready to book', response: `Agreed: ${a.vehicle} · ${rs(a.total)} · advance ${rs(a.advanceAmount)} by ${a.paymentMethod}, balance ${a.balanceDue.toLowerCase()}`, staff }).catch((e) => reportDbError(e, 'Contact log entry not saved.'));
     toast.success('Terms confirmed', 'Send the booking confirmation, then create the booking.');
   };
   const editTerms = () => {
@@ -347,7 +407,7 @@ export default function InquiryConsultation() {
 
   /* ---------- finish ---------- */
   const finish = () => {
-    if (todo.length && !confirm(`Still missing: ${todo.join(', ')}.\n\nFinish the consultation anyway?`)) return;
+    if (todo.length && !confirm(`Still missing: ${todo.join(', ')}.\n\nMark questions that don't apply as "Not required", or "Ask later" to confirm before the quotation.\n\nFinish the consultation anyway?`)) return;
     const done: Consultation = { ...c, completedAt: new Date().toISOString() };
     done.summary = buildSummary(inq, done, vehicles, fit);
     const lost = stage === 'LOST' || stage === 'CANCELLED' || stage === 'NO_RESPONSE';
@@ -359,7 +419,7 @@ export default function InquiryConsultation() {
       inquiryId: inq.id, channel: 'Call', outcome: c.leadQuality === 'Hot' ? 'Confirmed — ready to book' : c.leadQuality === 'Not interested' ? 'Not interested' : 'Interested',
       response: `Consultation finished — ${c.leadQuality ?? 'no lead quality'}. Next: ${c.nextAction ?? '—'}`, staff,
       nextFollowUp: c.nextFollowUpAt?.slice(0, 10),
-    }).catch(() => {});
+    }).catch((e) => reportDbError(e, 'Contact log entry not saved.'));
     toast.success('Consultation saved', 'The summary is attached to the inquiry.');
     navigate(`/inquiries/${inq.id}`);
   };
@@ -391,146 +451,221 @@ export default function InquiryConsultation() {
       <div className="grid xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] gap-4 items-start">
         {/* ── Left: discover the requirement ── */}
         <div className="space-y-4">
-          <Section n={1} icon={ClipboardList} title="Customer requirement confirmation" hint="Left: what the customer entered (kept as is). Right: what you confirmed on the call.">
-            <Row label="Vehicle" original={inq.requestedVehicle}>
-              <input className="input" value={c.requirement ?? ''} onChange={(e) => set('requirement', e.target.value)} placeholder="e.g. Vehicle for 7 passengers + luggage" />
-            </Row>
-            <Row label="Rental period" original={inq.startDate ? `${prettyDate(inq.startDate)} → ${prettyDate(inq.endDate)}` : undefined}>
-              <div className="grid grid-cols-2 gap-2">
-                <input type="datetime-local" className="input" value={c.pickupAt ?? ''} onChange={(e) => set('pickupAt', e.target.value || undefined)} aria-label="Pickup date and time" />
-                <input type="datetime-local" className="input" value={c.returnAt ?? ''} onChange={(e) => set('returnAt', e.target.value || undefined)} aria-label="Return date and time" />
+          <Section icon={MessageSquareText} title="Guided conversation" hint="Talk naturally — type what the customer says and the system fills in the fields."
+                   aside={<span className="text-[11px] font-semibold text-navy-500 whitespace-nowrap">{coreDone} / {core.length} covered</span>}>
+            {ask ? (
+              <div className="rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-sky-700">Team asks</p>
+                <p className="text-[15px] font-semibold text-sky-950 leading-snug mt-0.5">“{ask.text}”</p>
+                {ask.listen && <p className="text-[11px] text-sky-800/80 mt-1">Listen for: {ask.listen}</p>}
               </div>
-              {(c.pickupAt || c.returnAt) && <p className="text-[11px] text-navy-400 mt-1">{days} day{days === 1 ? '' : 's'}</p>}
-            </Row>
-            <Row label="Rental type" original={req.fields.Type}>
-              <Chips options={['Self drive', 'With driver', 'Airport pickup'] as const} value={c.mode} onChange={(m) => set('mode', m)} />
-            </Row>
-          </Section>
-
-          <Section n={2} icon={Users} title="Travel purpose & passengers" hint="Why they're renting changes what the right vehicle is.">
-            <p className="label">Travel purpose</p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {PURPOSES.map((p) => {
-                const I = PURPOSE_ICON[p.id] ?? Car;
-                const on = c.purpose === p.id;
-                return (
-                  <button key={p.id} type="button" onClick={() => set('purpose', on ? undefined : p.id)} title={p.hint}
-                          className={`text-left rounded-xl border px-3 py-2.5 transition-colors ${on ? 'border-navy-700 bg-navy-700 text-white' : 'border-navy-100 hover:bg-navy-50'}`}>
-                    <I size={16} className={on ? 'text-white' : 'text-brand-500'} />
-                    <span className="block text-xs font-bold mt-1">{p.id}</span>
-                    <span className={`block text-[10px] leading-snug mt-0.5 ${on ? 'text-white/70' : 'text-navy-400'}`}>{p.hint}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {purpose && (
-              <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm">
-                <p className="font-semibold text-sky-900">Ask the customer</p>
-                <ul className="list-disc ml-5 text-sky-900/90 text-[13px]">{purpose.ask.map((q) => <li key={q}>{q}</li>)}</ul>
-                <p className="mt-1.5 text-[13px] text-sky-900"><b>Recommend:</b> {purpose.recommend}</p>
-              </div>
-            )}
-            {c.purpose === 'Business / company' && (
-              <div className="grid sm:grid-cols-2 gap-2 mt-2">
-                <input className="input" value={c.companyName ?? ''} onChange={(e) => set('companyName', e.target.value)} placeholder="Company name" />
-                <Toggle label="Company invoice required" value={c.invoiceRequired} onChange={(b) => set('invoiceRequired', b)} />
-              </div>
-            )}
-
-            <p className="label mt-4">Passengers</p>
-            <div className="grid grid-cols-3 gap-2 max-w-md">
-              <Stepper label="Adults" value={c.adults} onChange={(n) => set('adults', n)} />
-              <Stepper label="Children" value={c.children} onChange={(n) => set('children', n)} />
-              <Stepper label="Infants" value={c.infants} onChange={(n) => set('infants', n)} />
-            </div>
-            <p className="text-sm font-semibold text-navy-800 mt-3">Total passengers: {pax || '—'}{c.mode === 'With driver' && pax ? <span className="text-navy-400 font-normal"> + driver</span> : null}</p>
-            <input className="input mt-3" value={c.areas ?? ''} onChange={(e) => set('areas', e.target.value)} placeholder="Areas / route, e.g. Colombo → Kandy → Nuwara Eliya → Ella" />
-            <div className="mt-2">
-              <Toggle label="Includes hill country (Kandy, Nuwara Eliya, Ella…)" value={isHillTrip(c)} onChange={(b) => set('hillCountry', b)} />
-              {hillDetected(c) && c.hillCountry === undefined && (
-                <p className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1"><Mountain size={11} /> Detected from the route — vehicles not suited to hill roads are flagged.</p>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-3 mt-3">
-              <Chips options={['City', 'Long distance', 'Mixed'] as const} value={c.usage} onChange={(u) => set('usage', u)} />
-              <div className="flex-1 min-w-[180px]"><Toggle label="Highway / expressway use" value={c.highway} onChange={(b) => set('highway', b)} /></div>
-            </div>
-          </Section>
-
-          <Section n={3} icon={MapPin} title="Pickup & return details" hint="The exact point — hotel, landmark or address — not just the city.">
-            <Row label="Pickup" original={placeIn(req.fields.Pickup)}>
-              <input className="input" value={c.pickupLocation ?? ''} onChange={(e) => set('pickupLocation', e.target.value)} placeholder="e.g. Cinnamon Grand Hotel, Colombo 03" />
-            </Row>
-            <Row label="Return" original={placeIn(req.fields.Return)}>
-              <Toggle label="Different return location" value={c.differentReturn} onChange={(b) => set('differentReturn', b)} />
-              {c.differentReturn && <input className="input mt-2" value={c.returnLocation ?? ''} onChange={(e) => set('returnLocation', e.target.value)} placeholder="Exact return point" />}
-            </Row>
-            <div className="mt-2"><Toggle label="Airport delivery required (CMB)" value={c.airportDelivery} onChange={(b) => set('airportDelivery', b)} /></div>
-          </Section>
-
-          <Section n={4} icon={Target} title="Customer priorities" hint="What matters most — used to rank the suggested vehicles.">
-            <Chips multi options={PRIORITIES} value={c.priorities as any} onChange={(p) => set('priorities', p)} />
-          </Section>
-
-          <Section n={8} icon={Wallet} title="Distance & budget" hint="Ask the expected kilometres FIRST — the extra-km cost changes what fits the budget.">
-            <p className="label flex items-center gap-1.5"><Gauge size={13} /> Expected total distance for the whole rental (customer's estimate)</p>
-            {purpose && (() => {
-              const lo = Math.round((purpose.kmPerDay[0] * days) / 50) * 50, hi = Math.round((purpose.kmPerDay[1] * days) / 50) * 50;
-              const mid = Math.round((lo + hi) / 2 / 50) * 50;
-              return (
-                <p className="text-[11px] text-sky-800 bg-sky-50 rounded-lg px-2.5 py-1.5 mb-2 flex flex-wrap items-center gap-2">
-                  <span>{purpose.id}: usually {purpose.kmPerDay[0]}–{purpose.kmPerDay[1]} km/day ≈ <b>{lo.toLocaleString('en-LK')}–{hi.toLocaleString('en-LK')} km</b> for {days} day{days === 1 ? '' : 's'}.</span>
-                  {!c.distanceKm && <button type="button" onClick={() => set('distanceKm', mid)} className="font-semibold underline">Use {mid.toLocaleString('en-LK')} km</button>}
-                </p>
-              );
-            })()}
-            <div className="flex flex-wrap items-center gap-1.5">
-              {[300, 500, 750, 1000, 1500, 2000].map((km) => (
-                <button key={km} type="button" onClick={() => set('distanceKm', c.distanceKm === km ? undefined : km)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${c.distanceKm === km ? 'bg-navy-700 text-white border-navy-700' : 'bg-white text-navy-600 border-navy-100 hover:border-navy-300'}`}>
-                  {km.toLocaleString('en-LK')} km
-                </button>
-              ))}
-              <input className="input !py-1.5 !w-32" inputMode="numeric" value={c.distanceKm ?? ''} onChange={(e) => set('distanceKm', num(e.target.value))} placeholder="Other (km)" />
-            </div>
-            {original && (
-              <div className="mt-3">
-                <p className="text-[11px] text-navy-400 mb-1">Customer's selected vehicle — {original.brand} {original.model} ({(original.includedKmPerDay ?? 100)} km/day included, {rs(original.extraKmRate ?? 50)}/extra km)</p>
-                <CostBox t={costOf(original)} />
-              </div>
-            )}
-            <p className="label mt-4">Budget</p>
-            <div className="grid sm:grid-cols-3 gap-2">
-              <input className="input" inputMode="numeric" value={c.budgetPerDay ?? ''} onChange={(e) => set('budgetPerDay', num(e.target.value))} placeholder="Estimated budget / day (Rs)" />
-              <input className="input" inputMode="numeric" value={c.budgetMaxPerDay ?? ''} onChange={(e) => set('budgetMaxPerDay', num(e.target.value))} placeholder="Maximum / day (Rs)" />
-              <Toggle label="Budget flexible" value={c.budgetFlexible} onChange={(b) => set('budgetFlexible', b)} />
-            </div>
-          </Section>
-
-          <Section n={9} icon={Contact} title="Driving requirement" hint="Find out now — not at the counter — if the customer can't self-drive.">
-            {c.mode !== 'Self drive' ? (
-              <p className="text-sm text-navy-500">{c.mode ? `${c.mode} — no driving licence needed.` : 'Choose the rental type in section 1.'}</p>
             ) : (
-              <div className="space-y-2">
-                <div className="grid sm:grid-cols-2 gap-2">
-                  <input className="input" value={c.nationality ?? ''} onChange={(e) => set('nationality', e.target.value)} placeholder="Nationality" />
-                  <input className="input" inputMode="numeric" value={c.driverAge ?? ''} onChange={(e) => set('driverAge', num(e.target.value))} placeholder="Driver age" />
-                </div>
-                <Chips options={['Sri Lankan', 'Foreign', 'None'] as const} value={c.licence} onChange={(l) => set('licence', l)} />
-                {c.licence === 'Foreign' && <Toggle label="Has an International Driving Permit (IDP)" value={c.idp} onChange={(b) => set('idp', b)} />}
-                {c.licence === 'None' && <p className="text-sm font-semibold text-red-700 bg-red-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={15} className="mt-0.5" /> No licence — offer the vehicle with a driver instead.</p>}
-                {c.licence === 'Foreign' && !c.idp && <p className="text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={15} className="mt-0.5" /> Foreign licence without an IDP can't self-drive in Sri Lanka — confirm the IDP or offer a driver.</p>}
-                {c.driverAge != null && c.driverAge > 0 && c.driverAge < 21 && <p className="text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2">Driver under 21 — check the owner's age policy.</p>}
+              <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm font-semibold text-emerald-800 flex items-center gap-2">
+                <CheckCircle2 size={15} /> Everything is covered — check the vehicle suggestions{later.length ? ` (confirm later: ${later.join(', ')})` : ''}.
+              </p>
+            )}
+            <label className="label mt-3 flex items-center gap-1.5" htmlFor="capture"><Wand2 size={13} /> Quick capture</label>
+            <textarea id="capture" className="input min-h-[70px]" value={capture} onChange={(e) => setCapture(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); fillFromCapture(); } }}
+                      placeholder="e.g. We're four people travelling to Ella for five days with three suitcases, self drive." />
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <button type="button" disabled={!capture.trim()} onClick={fillFromCapture} className="btn-primary !py-1.5 text-xs flex items-center gap-1.5 disabled:opacity-40"><Wand2 size={13} /> Fill in fields</button>
+              <span className="text-[11px] text-navy-400">Ctrl + Enter · only fills what it recognises — correct anything below</span>
+            </div>
+            {found.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {found.map((f) => <span key={f} className="text-[11px] font-semibold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5">✓ {f}</span>)}
               </div>
             )}
+            {c.capture && <p className="text-[11px] text-navy-400 mt-2 whitespace-pre-line"><b className="text-navy-500">Customer said:</b> {c.capture}</p>}
           </Section>
 
-          <Section n={10} icon={Sparkles} title="Special requirements">
-            <Chips multi options={SPECIAL} value={c.special as any} onChange={(s) => set('special', s)} />
-            <input className="input mt-2" value={c.specialNotes ?? ''} onChange={(e) => set('specialNotes', e.target.value)} placeholder="Other requests" />
+          <Section icon={ClipboardList} title="Seven questions" hint="Most come up on their own. Mark anything that doesn't apply as Not required — or Ask later to confirm before the quotation.">
+            {qb('purpose', 1, (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {PURPOSES.map((p) => {
+                    const I = PURPOSE_ICON[p.id] ?? Car;
+                    const on = c.purpose === p.id;
+                    return (
+                      <button key={p.id} type="button" onClick={() => set('purpose', on ? undefined : p.id)} title={p.hint}
+                              className={`text-left rounded-xl border px-3 py-2.5 transition-colors ${on ? 'border-navy-700 bg-navy-700 text-white' : 'border-navy-100 hover:bg-navy-50'}`}>
+                        <I size={16} className={on ? 'text-white' : 'text-brand-500'} />
+                        <span className="block text-xs font-bold mt-1">{p.id}</span>
+                        <span className={`block text-[10px] leading-snug mt-0.5 ${on ? 'text-white/70' : 'text-navy-400'}`}>{p.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {purpose && <p className="mt-2 text-[12px] text-sky-900 bg-sky-50 rounded-lg px-2.5 py-1.5"><b>Recommend:</b> {purpose.recommend}</p>}
+              </>
+            ))}
+
+            {qb('passengers', 2, (
+              <>
+                <div className="grid grid-cols-3 gap-2 max-w-md">
+                  <Stepper label="Adults" value={c.adults} onChange={(n) => set('adults', n)} />
+                  <Stepper label="Children" value={c.children} onChange={(n) => set('children', n)} />
+                  <Stepper label="Infants" value={c.infants} onChange={(n) => set('infants', n)} />
+                </div>
+                <p className="text-sm font-semibold text-navy-800 mt-2">Total passengers: {pax || '—'}{c.mode === 'With driver' && pax ? <span className="text-navy-400 font-normal"> + driver</span> : null}</p>
+              </>
+            ))}
+
+            {qb('route', 3, (
+              <>
+                <input className="input" value={c.areas ?? ''} onChange={(e) => set('areas', e.target.value)} placeholder="e.g. Colombo → Kandy → Nuwara Eliya → Ella" />
+                <div className="mt-2">
+                  <Toggle label="Includes hill country (Kandy, Nuwara Eliya, Ella…)" value={isHillTrip(c)} onChange={(b) => set('hillCountry', b)} />
+                  {hillDetected(c) && c.hillCountry === undefined && (
+                    <p className="text-[11px] text-emerald-700 mt-1 flex items-center gap-1"><Mountain size={11} /> Detected from the route — vehicles not suited to hill roads are flagged.</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-3 mt-2">
+                  <Chips options={['City', 'Long distance', 'Mixed'] as const} value={c.usage} onChange={(u) => set('usage', u)} />
+                  <div className="flex-1 min-w-[180px]"><Toggle label="Highway / expressway use" value={c.highway} onChange={(b) => set('highway', b)} /></div>
+                </div>
+              </>
+            ))}
+
+            {qb('luggage', 4, (
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  {LUGGAGE_PRESETS.map((p, i) => {
+                    const on = luggagePreset(c.largeBags) === i;
+                    return (
+                      <button key={p.label} type="button" onClick={() => set('largeBags', on ? undefined : p.large)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors inline-flex items-center gap-1 ${on ? 'bg-navy-700 text-white border-navy-700' : 'bg-white text-navy-600 border-navy-100 hover:border-navy-300'}`}>
+                        <Luggage size={12} /> {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="grid grid-cols-2 gap-2 max-w-xs mt-2">
+                  <Stepper label="Large suitcases" value={c.largeBags} onChange={(n) => set('largeBags', n)} />
+                  <Stepper label="Small bags" value={c.smallBags} onChange={(n) => set('smallBags', n)} />
+                </div>
+                {c.largeBags !== undefined && <p className="text-[11px] text-navy-500 mt-1.5">Needs: <b className="text-navy-700">{luggageNeeds(c.largeBags)}</b></p>}
+              </>
+            ))}
+
+            {qb('mode', 5, (
+              <>
+                <Chips options={['Self drive', 'With driver', 'Airport pickup'] as const} value={c.mode} onChange={(m) => set('mode', m)} />
+                {req.fields.Type && <p className="text-[11px] text-navy-400 mt-1">Customer entered: {req.fields.Type}</p>}
+              </>
+            ))}
+
+            {qb('vehicle', 6, (
+              <>
+                <p className="text-[11px] text-navy-400 mb-1">Customer entered: <b className="text-navy-600">{inq.requestedVehicle || '—'}</b></p>
+                <input className="input" value={c.requirement ?? ''} onChange={(e) => set('requirement', e.target.value)} placeholder="Preferred vehicle, e.g. any automatic 7-seater" />
+                <div className="grid sm:grid-cols-3 gap-2 mt-2">
+                  <input className="input" inputMode="numeric" value={c.budgetPerDay ?? ''} onChange={(e) => set('budgetPerDay', num(e.target.value))} placeholder="Budget / day (Rs)" />
+                  <input className="input" inputMode="numeric" value={c.budgetMaxPerDay ?? ''} onChange={(e) => set('budgetMaxPerDay', num(e.target.value))} placeholder="Maximum / day (Rs)" />
+                  <Toggle label="Budget flexible" value={c.budgetFlexible} onChange={(b) => set('budgetFlexible', b)} />
+                </div>
+                <p className="text-[11px] text-navy-400 mt-2 mb-1 flex items-center gap-1"><Target size={11} /> What matters most (optional — ranks the suggestions)</p>
+                <Chips multi options={PRIORITIES} value={c.priorities as any} onChange={(p) => set('priorities', p)} />
+              </>
+            ))}
+
+            {qb('special', 7, (
+              <>
+                <Chips multi options={SPECIAL} value={c.special as any} onChange={(s) => set('special', s)} />
+                <input className="input mt-2" value={c.specialNotes ?? ''} onChange={(e) => set('specialNotes', e.target.value)} placeholder="Other requests (optional)" />
+              </>
+            ))}
           </Section>
 
-          <Section n={11} icon={StickyNote} title="Inquiry notes">
+          <Section icon={ListChecks} title="Follow-up questions" hint="Only what applies to this trip — ticked automatically once the detail is filled in.">
+            {followUps.map((q) => {
+              switch (q.id) {
+                case 'dates': return qb('dates', undefined, (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="datetime-local" className="input" value={c.pickupAt ?? ''} onChange={(e) => set('pickupAt', e.target.value || undefined)} aria-label="Pickup date and time" />
+                      <input type="datetime-local" className="input" value={c.returnAt ?? ''} onChange={(e) => set('returnAt', e.target.value || undefined)} aria-label="Return date and time" />
+                    </div>
+                    <p className="text-[11px] text-navy-400 mt-1">
+                      {inq.startDate ? `Customer entered: ${prettyDate(inq.startDate)} → ${prettyDate(inq.endDate)}` : 'No dates on the inquiry'}
+                      {(c.pickupAt || c.returnAt) ? ` · ${days} day${days === 1 ? '' : 's'}` : ''}
+                    </p>
+                  </>
+                ));
+                case 'pickupPoint': return qb('pickupPoint', undefined, (
+                  <>
+                    <input className="input" value={c.pickupLocation ?? ''} onChange={(e) => set('pickupLocation', e.target.value)} placeholder="e.g. Cinnamon Grand Hotel, Colombo 03" />
+                    {placeIn(req.fields.Pickup) && <p className="text-[11px] text-navy-400 mt-1">Customer entered: {placeIn(req.fields.Pickup)}{placeIn(req.fields.Return) ? ` · return ${placeIn(req.fields.Return)}` : ''}</p>}
+                    <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                      <Toggle label="Different return location" value={c.differentReturn} onChange={(b) => set('differentReturn', b)} />
+                      <Toggle label="Airport delivery (CMB)" value={c.airportDelivery} onChange={(b) => set('airportDelivery', b)} />
+                    </div>
+                    {c.differentReturn && <input className="input mt-2" value={c.returnLocation ?? ''} onChange={(e) => set('returnLocation', e.target.value)} placeholder="Exact return point" />}
+                  </>
+                ));
+                case 'distance': return qb('distance', undefined, (
+                  <>
+                    {purpose && (() => {
+                      const lo = Math.round((purpose.kmPerDay[0] * days) / 50) * 50, hi = Math.round((purpose.kmPerDay[1] * days) / 50) * 50;
+                      const mid = Math.round((lo + hi) / 2 / 50) * 50;
+                      return (
+                        <p className="text-[11px] text-sky-800 bg-sky-50 rounded-lg px-2.5 py-1.5 mb-2 flex flex-wrap items-center gap-2">
+                          <span>{purpose.id}: usually {purpose.kmPerDay[0]}–{purpose.kmPerDay[1]} km/day ≈ <b>{lo.toLocaleString('en-LK')}–{hi.toLocaleString('en-LK')} km</b> for {days} day{days === 1 ? '' : 's'}.</span>
+                          {!c.distanceKm && <button type="button" onClick={() => set('distanceKm', mid)} className="font-semibold underline">Use {mid.toLocaleString('en-LK')} km</button>}
+                        </p>
+                      );
+                    })()}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {[300, 500, 750, 1000, 1500, 2000].map((km) => (
+                        <button key={km} type="button" onClick={() => set('distanceKm', c.distanceKm === km ? undefined : km)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${c.distanceKm === km ? 'bg-navy-700 text-white border-navy-700' : 'bg-white text-navy-600 border-navy-100 hover:border-navy-300'}`}>
+                          {km.toLocaleString('en-LK')} km
+                        </button>
+                      ))}
+                      <input className="input !py-1.5 !w-32" inputMode="numeric" value={c.distanceKm ?? ''} onChange={(e) => set('distanceKm', num(e.target.value))} placeholder="Other (km)" aria-label="Expected km" />
+                    </div>
+                    {original && (
+                      <div className="mt-2">
+                        <p className="text-[11px] text-navy-400 mb-1 flex items-center gap-1"><Gauge size={11} /> {original.brand} {original.model} — {(original.includedKmPerDay ?? 100)} km/day included, {rs(original.extraKmRate ?? 50)}/extra km</p>
+                        <CostBox t={costOf(original)} />
+                      </div>
+                    )}
+                  </>
+                ));
+                case 'licence': return qb('licence', undefined, (
+                  <div className="space-y-2">
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      <input className="input" value={c.nationality ?? ''} onChange={(e) => set('nationality', e.target.value)} placeholder="Nationality" />
+                      <input className="input" inputMode="numeric" value={c.driverAge ?? ''} onChange={(e) => set('driverAge', num(e.target.value))} placeholder="Driver age" />
+                    </div>
+                    <Chips options={['Sri Lankan', 'Foreign', 'None'] as const} value={c.licence} onChange={(l) => set('licence', l)} />
+                    {c.licence === 'None' && <p className="text-sm font-semibold text-red-700 bg-red-50 rounded-lg px-3 py-2 flex gap-2"><AlertTriangle size={15} className="mt-0.5" /> No licence — offer the vehicle with a driver instead.</p>}
+                    {c.driverAge != null && c.driverAge > 0 && c.driverAge < 21 && <p className="text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2">Driver under 21 — check the owner's age policy.</p>}
+                  </div>
+                ));
+                case 'idp': return qb('idp', undefined, (
+                  <>
+                    <Toggle label="Has an International Driving Permit (IDP)" value={c.idp} onChange={(b) => set('idp', b)} />
+                    {!c.idp && <p className="text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2 mt-2 flex gap-2"><AlertTriangle size={15} className="mt-0.5" /> A foreign licence without an IDP can't self-drive in Sri Lanka — confirm the IDP or offer a driver.</p>}
+                  </>
+                ));
+                case 'company': return qb('company', undefined, (
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <input className="input" value={c.companyName ?? ''} onChange={(e) => set('companyName', e.target.value)} placeholder="Company name" />
+                    <Toggle label="Company invoice required" value={c.invoiceRequired} onChange={(b) => set('invoiceRequired', b)} />
+                  </div>
+                ));
+                case 'childSeats': return qb('childSeats', undefined, (
+                  <Toggle label="Child seat needed" value={c.special?.includes('Child seat')}
+                          onChange={(b) => set('special', b ? [...(c.special ?? []), 'Child seat'] : (c.special ?? []).filter((s) => s !== 'Child seat'))} />
+                ));
+                default: return qb(q.id, undefined);
+              }
+            })}
+          </Section>
+
+          <Section icon={StickyNote} title="Inquiry notes">
             <div className="grid sm:grid-cols-2 gap-2">
               <label className="text-xs text-navy-500">Customer notes <span className="text-navy-300">(shared with the operations team)</span>
                 <textarea className="input mt-1 min-h-[90px]" value={c.customerNotes ?? ''} onChange={(e) => set('customerNotes', e.target.value)} placeholder="e.g. Travelling with parents — comfort matters more than price." />
@@ -544,7 +679,7 @@ export default function InquiryConsultation() {
 
         {/* ── Right: system analysis, proposal, outcome ── */}
         <div className="space-y-4 xl:sticky xl:top-[150px]">
-          <Section n={5} icon={ShieldCheck} title="Vehicle suitability check" hint="System-generated from the confirmed requirement.">
+          <Section icon={ShieldCheck} title="Vehicle suitability check" hint="System-generated from the confirmed requirement.">
             {!original ? <p className="text-sm text-navy-500">The requested vehicle isn't in the fleet list — see the suggestions below.</p> : fit && (
               <>
                 <div className="flex items-center gap-3 mb-3">
@@ -566,7 +701,7 @@ export default function InquiryConsultation() {
             )}
           </Section>
 
-          <Section n={6} icon={Car} title="Alternative vehicle suggestions" hint={`Free for ${start || '—'} → ${end || '—'}, ranked by the customer's priorities.`}>
+          <Section icon={Car} title="Alternative vehicle suggestions" hint={`Free for ${start || '—'} → ${end || '—'}, ranked by the customer's priorities.`}>
             {(() => {
               const cardFor = (r: Suitability, label: string, manual: boolean) => {
                 const x = r.vehicle;
@@ -633,7 +768,7 @@ export default function InquiryConsultation() {
             })()}
           </Section>
 
-          <Section n={7} icon={Send} title="Send while calling" hint="Opens WhatsApp with a ready message — the call stays active.">
+          <Section icon={Send} title="Send while calling" hint="Opens WhatsApp with a ready message — the call stays active.">
             <div className="grid grid-cols-2 gap-2">
               <button type="button" disabled={!(selected ?? original)} onClick={() => sendVehicle((selected ?? original)!)} className="btn-secondary !py-2 text-xs flex items-center justify-center gap-1.5 disabled:opacity-40"><Car size={13} /> Send vehicle</button>
               <button type="button" disabled={!sendList.length} onClick={() => sendAlternatives(sendList)} className="btn-secondary !py-2 text-xs flex items-center justify-center gap-1.5 disabled:opacity-40"><Sparkles size={13} /> Send alternatives</button>
@@ -642,7 +777,7 @@ export default function InquiryConsultation() {
             </div>
           </Section>
 
-          <Section n={15} icon={CalendarCheck} title="Customer decision & booking"
+          <Section icon={CalendarCheck} title="Customer decision & booking"
                    hint="Record changes of mind, confirm the agreed price and payment terms, then create the booking.">
             <BookingDecision
               inq={inq}
@@ -656,7 +791,7 @@ export default function InquiryConsultation() {
             />
           </Section>
 
-          <Section n={12} icon={Flag} title="Lead quality, next action & outcome">
+          <Section icon={Flag} title="Lead quality, next action & outcome">
             <p className="label">Customer intent</p>
             <Chips options={LEAD_QUALITY} value={c.leadQuality} onChange={(l) => set('leadQuality', l)} />
             <div className="grid sm:grid-cols-2 gap-2 mt-3">
@@ -684,7 +819,7 @@ export default function InquiryConsultation() {
             )}
           </Section>
 
-          <Section n={13} icon={ClipboardList} title="Consultation summary" hint="Generated automatically — saved to the inquiry when you finish.">
+          <Section icon={ClipboardList} title="Consultation summary" hint="Generated automatically — saved to the inquiry when you finish.">
             <pre className="text-xs text-navy-700 bg-navy-50/70 rounded-xl p-3 whitespace-pre-wrap font-sans leading-relaxed max-h-80 overflow-y-auto">{summary}</pre>
             {todo.length > 0 && <p className="text-[11px] text-amber-700 mt-2">Still missing: {todo.join(' · ')}</p>}
             <div className="flex gap-2 mt-3">
