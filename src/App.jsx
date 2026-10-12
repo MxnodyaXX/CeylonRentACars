@@ -18,6 +18,11 @@ import AlternativesPage from './components/AlternativesPage';
 import AssistantChat from './components/AssistantChat';
 import { useLinkInterception, useRoute } from './lib/router';
 import { usePageSeo } from './lib/seo';
+import { initAnalytics, useClickTracking, usePageViews } from './lib/analytics';
+import ConsentBanner from './components/ConsentBanner';
+
+// Analytics only starts here if the visitor accepted on an earlier visit
+initAnalytics();
 
 function Toast() {
   const { toast } = useApp();
@@ -42,6 +47,8 @@ export default function App() {
   useLinkInterception();
   const { path, search } = useRoute();
   usePageSeo(path);
+  usePageViews(path);
+  useClickTracking();
 
   return (
     <>
@@ -70,6 +77,7 @@ export default function App() {
         </main>
       )}
       <Footer />
+      <ConsentBanner />
       <VehicleModal />
       <AssistantChat />
       <Toast />

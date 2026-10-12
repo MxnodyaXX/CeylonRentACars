@@ -7,6 +7,7 @@ import MapPicker, { MAPS_KEY } from './MapPicker';
 import Dropdown from './ui/Dropdown';
 import { DatePicker, TimePicker, label12 } from './ui/DateTime';
 import { openVehicle } from './VehicleModal';
+import { track, vehicleItem } from '../lib/analytics';
 
 const LOCATION_OPTIONS = PICKUP_LOCATIONS.map(l => ({ value: l, label: l, icon: /airport/i.test(l) ? 'plane' : 'pin' }));
 
@@ -135,10 +136,6 @@ export default function BookingPage({ search = '' }) {
   }, [status]);
   const scrollToSummary = () => summaryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-  useEffect(() => {
-    document.title = 'Book a vehicle — Ceylon Rent A Cars';
-    return () => { document.title = 'Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka'; };
-  }, []);
 
   const submit = async e => {
     e.preventDefault();
@@ -164,6 +161,11 @@ export default function BookingPage({ search = '' }) {
       });
       setReference(ref);
       setStatus('done');
+      // Counted only once the request is saved — no name, phone, email or reference is sent
+      track('generate_lead', {
+        currency: 'LKR', value: estimate || undefined, inquiry_type: altOf ? 'alternative_request' : 'booking_request',
+        rental_mode: form.mode, rental_days: days, items: [vehicleItem(vehicle)],
+      });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       setStatus('error');

@@ -46,11 +46,6 @@ export default function FeedbackPage({ search = '' }) {
   const [error, setError] = useState('');
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  useEffect(() => {
-    document.title = 'Share your feedback — Ceylon Rent A Cars';
-    return () => { document.title = 'Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka'; };
-  }, []);
-
   const vehicle = vehicles.find(v => v.id === form.vehicleId);
   const sorted = vehicles; // already sorted by name, then plate
 

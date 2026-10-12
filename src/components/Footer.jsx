@@ -1,6 +1,7 @@
 import { Icon } from './Icon';
 import { CurrencySelect, Logo } from './Header';
 import { CONTACT, FOOTER_COLUMNS, waLink } from '../data/site';
+import { analyticsEnabled, openConsentSettings } from '../lib/analytics';
 
 const SOCIALS = [
   { icon: 'fb', label: 'Facebook' },
@@ -58,7 +59,10 @@ export default function Footer() {
           <CurrencySelect long className="currency--footer" />
         </div>
 
-        <p className="footer__legal">© {new Date().getFullYear()} Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka</p>
+        <p className="footer__legal">
+          © {new Date().getFullYear()} Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka
+          {analyticsEnabled() && <> · <button type="button" className="footer__cookies" onClick={openConsentSettings}>Cookie settings</button></>}
+        </p>
       </div>
     </footer>
   );

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Icon } from './Icon';
 import { PICKUP_LOCATIONS, VEHICLE_TYPES } from '../data/site';
 import { useApp } from '../context/AppContext';
+import { track } from '../lib/analytics';
 
 const AIRPORT = PICKUP_LOCATIONS[0];
 
@@ -51,6 +52,12 @@ export default function SearchPanel() {
     e.preventDefault();
     const where = form.pickup.trim() || 'Sri Lanka';
     const days = Math.max(1, Math.round((new Date(form.returnDate) - new Date(form.pickupDate)) / 864e5));
+    // Only the known pickup points are reported — a typed-in address could be personal
+    track('search', {
+      search_term: `${MODES.find(m => m.id === mode).label} · ${form.type}`,
+      rental_mode: mode, vehicle_type: form.type, rental_days: days,
+      pickup_location: PICKUP_LOCATIONS.includes(form.pickup) ? form.pickup : 'Other',
+    });
     showToast(`Showing vehicles near ${where} for ${days} day${days > 1 ? 's' : ''}.`);
     document.getElementById('vehicles')?.scrollIntoView({ behavior: 'smooth' });
   };

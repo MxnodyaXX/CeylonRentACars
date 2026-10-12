@@ -4,6 +4,7 @@ import { Price } from '../context/AppContext';
 import { fetchReviews, useCatalog, useFleet } from '../lib/fleet';
 import { useRoute } from '../lib/router';
 import { CONTACT } from '../data/site';
+import { track, vehicleItem } from '../lib/analytics';
 
 const EVENT = 'vehicle:open';
 
@@ -121,6 +122,11 @@ export default function VehicleModal() {
     window.addEventListener(EVENT, onOpen);
     return () => window.removeEventListener(EVENT, onOpen);
   }, []);
+
+  // One detail view per vehicle opened
+  useEffect(() => {
+    if (v) track('view_item', { currency: 'LKR', value: v.price || undefined, items: [vehicleItem(v)] });
+  }, [v?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!v) return;

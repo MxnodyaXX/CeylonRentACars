@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import { Price } from '../context/AppContext';
 import { useCatalog } from '../lib/fleet';
 import { openVehicle } from './VehicleModal';
+import { track } from '../lib/analytics';
 import { CONTACT } from '../data/site';
 import Dropdown from './ui/Dropdown';
 
@@ -145,7 +146,22 @@ export default function AllVehicles({ search = '' }) {
     return () => { document.body.style.overflow = ''; };
   }, [sheetOpen]);
 
-  useEffect(() => { document.title = 'All Vehicles — Ceylon Rent A Cars'; return () => { document.title = 'Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka'; }; }, []);
+  // Filters used on the fleet page count as a search — sent once the visitor stops changing them
+  const filterKey = [[...typeSel].sort().join(','), [...fuelSel].sort().join(','), minSeats, trans, price?.join('-') ?? '', availableOnly].join('|');
+  // the filters the page opened with (e.g. a category link) are not a search by the visitor
+  const firstFilters = useRef(filterKey);
+  useEffect(() => {
+    if (!activeCount || filterKey === firstFilters.current) return;
+    firstFilters.current = null;
+    const t = setTimeout(() => track('search', {
+      search_term: 'Fleet filters',
+      vehicle_type: [...typeSel].join(', '), fuel_type: [...fuelSel].join(', '),
+      min_seats: minSeats || undefined, transmission: trans !== 'all' ? trans : undefined,
+      price_min: price?.[0], price_max: price?.[1], available_only: availableOnly || undefined,
+      results: results.length,
+    }), 1500);
+    return () => clearTimeout(t);
+  }, [filterKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filters = (
     <>

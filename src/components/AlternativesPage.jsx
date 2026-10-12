@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './Icon';
 import { chooseAlternative, useCatalog } from '../lib/fleet';
+import { track, vehicleItem } from '../lib/analytics';
 import { VehicleRow } from './AllVehicles';
 import { CONTACT, waLink } from '../data/site';
 
@@ -40,6 +41,8 @@ export default function AlternativesPage({ search = '' }) {
     try {
       const reference = await chooseAlternative(original, v.id);
       setChosen({ vehicle: v, reference });
+      track('select_item', { item_list_name: 'alternatives', items: [vehicleItem(v)] });
+      track('generate_lead', { currency: 'LKR', value: v.price || undefined, inquiry_type: 'alternative_chosen', items: [vehicleItem(v)] });
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       setError(err.message);
@@ -60,11 +63,6 @@ export default function AlternativesPage({ search = '' }) {
       </span>
     );
   };
-
-  useEffect(() => {
-    document.title = 'Alternative vehicles for you — Ceylon Rent A Cars';
-    return () => { document.title = 'Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka'; };
-  }, []);
 
   if (chosen) {
     return (
