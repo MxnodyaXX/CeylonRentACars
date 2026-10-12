@@ -58,6 +58,16 @@ serve(async (req) => {
     } catch (_) { /* swallow */ }
   };
 
+  // ── Paused in admin Settings? (app_settings 'sms' → enabled: false) ──
+  // Checked here so every sender — the admin app and the scheduled reminders — stops.
+  try {
+    const { data: setting } = await admin.from("app_settings").select("value").eq("key", "sms").maybeSingle();
+    if (setting?.value?.enabled === false) {
+      await log("skipped", null, null, "SMS sending is paused in admin Settings");
+      return json({ ok: false, skipped: true, reason: "sms_paused" }, 200);
+    }
+  } catch (_) { /* table missing or unreachable — behave as before */ }
+
   // ── Authoritative opt-out check (recipient sent STOP) ───────────
   try {
     const { data: optedOut } = await admin.from("sms_opt_out").select("phone").eq("phone", to).maybeSingle();

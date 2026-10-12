@@ -5,9 +5,11 @@ import { useEffect } from 'react';
  *
  *  - Runs only on the production site (ceylonrentacars.com). Locally it stays off unless
  *    VITE_GA_DEBUG=true is set, so testing never pollutes the real reports.
- *  - Nothing loads and nothing is sent until the visitor accepts in the cookie banner.
- *    Declining (or never answering) means Google's script is never downloaded.
- *  - The tag is injected once; page views are sent by hand on every in-app navigation
+ *  - The Google tag snippet is in index.html on every page (so Google can detect it), with
+ *    consent DENIED and the property not configured — so nothing is measured or stored.
+ *    Only after the visitor clicks Accept does this file grant consent and configure it.
+ *    Declining (or never answering) keeps it that way.
+ *  - One tag per page; page views are sent by hand on every in-app navigation
  *    (the automatic first page view is switched off so nothing is counted twice).
  *  - Page addresses are cleaned before sending: personal pages carry names and booking
  *    references in the link (?n=…, ?ref=…), so only harmless parameters are kept.
@@ -43,19 +45,20 @@ function cleanLocation(path = window.location.pathname, search = window.location
 
 let loaded = false;
 
-/** Inject the Google tag once (only ever called after consent) */
+/**
+ * Switch measurement on (only ever called after consent). The Google tag itself is already in
+ * index.html with consent DENIED — so Google can detect it — and nothing is measured until this
+ * runs: consent is updated to granted, then the property is configured. Runs once per page load.
+ */
 function loadTag() {
   if (loaded || !analyticsEnabled()) return;
   loaded = true;
   window.dataLayer = window.dataLayer || [];
+  // index.html defines gtag; this is only a fallback if that snippet is ever removed
   // eslint-disable-next-line prefer-rest-params
-  window.gtag = function gtag() { window.dataLayer.push(arguments); };
+  if (typeof window.gtag !== 'function') window.gtag = function gtag() { window.dataLayer.push(arguments); };
   window[`ga-disable-${GA_ID}`] = false;
-  window.gtag('consent', 'default', {
-    analytics_storage: 'granted',
-    ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied',   // no advertising use
-  });
-  window.gtag('js', new Date());
+  window.gtag('consent', 'update', { analytics_storage: 'granted' });   // advertising stays denied
   window.gtag('set', { page_location: cleanLocation(), page_referrer: document.referrer.split('?')[0] });
   window.gtag('config', GA_ID, {
     send_page_view: false,              // page views are sent by trackPageView (once per page)
@@ -63,6 +66,7 @@ function loadTag() {
     allow_ad_personalization_signals: false,
     ...(import.meta.env.VITE_GA_DEBUG === 'true' ? { debug_mode: true } : {}),
   });
+  // the script tag is in index.html — add it only if it's missing (never twice)
   if (!document.querySelector(`script[src*="googletagmanager.com/gtag/js?id=${GA_ID}"]`)) {
     const s = document.createElement('script');
     s.async = true;
@@ -79,8 +83,11 @@ export function initAnalytics() {
 /** Visitor accepted in the banner */
 export function grantConsent() {
   saveConsent('granted');
+  if (loaded) {   // accepted again after declining on this page
+    window[`ga-disable-${GA_ID}`] = false;
+    window.gtag?.('consent', 'update', { analytics_storage: 'granted' });
+  }
   loadTag();
-  window.gtag?.('consent', 'update', { analytics_storage: 'granted' });
   trackPageView();
 }
 

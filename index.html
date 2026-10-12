@@ -60,6 +60,22 @@
   }
   </script>
 
+  <!-- Google tag (gtag.js) — present on every page so Google can detect it. Consent starts
+       DENIED and the property is only configured after the visitor clicks Accept in the
+       cookie banner (src/lib/analytics.js), so nothing is measured before consent. -->
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('consent', 'default', {
+      analytics_storage: 'denied',
+      ad_storage: 'denied',
+      ad_user_data: 'denied',
+      ad_personalization: 'denied'
+    });
+    gtag('js', new Date());
+  </script>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-RT9GFSQY57"></script>
+
   <meta name="theme-color" content="#070708">
   <link rel="icon" href="/img/brand/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="/img/brand/icon-192.png">

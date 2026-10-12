@@ -10,6 +10,7 @@ import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import ManualBookingModal from '../components/ui/ManualBookingModal';
+import SmsSettingCard from '../components/ui/SmsSettingCard';
 import LocationInput from '../components/ui/LocationInput';
 import { sendSms } from '../lib/sms';
 import type { Owner } from '../types';
@@ -390,6 +391,16 @@ export default function Settings() {
           )}
         </div>
       </section>
+
+      {/* ── Messaging (admin only) ── */}
+      {admin && (
+        <section className="mb-10">
+          <p className="text-xs font-semibold text-navy-400 uppercase tracking-wider mb-3">Messaging</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <SmsSettingCard />
+          </div>
+        </section>
+      )}
 
       {/* ── User Profiles (admin only) ── */}
       {admin && (

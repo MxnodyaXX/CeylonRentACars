@@ -48,3 +48,18 @@ create policy "admin app uploads booking files" on storage.objects for insert wi
 create policy "admin app deletes booking files" on storage.objects for delete using (bucket_id = 'booking-files');
 
 notify pgrst, 'reload schema';
+
+-- ── App-wide settings (e.g. pause all SMS) ────────────────────────────────────
+-- One row per setting. 'sms' = { "enabled": true|false, "note": "...", "updated_by": "..." }.
+-- The send-sms Edge Function checks it before every message, so pausing here stops
+-- texts from the admin app AND the scheduled reminder run.
+create table if not exists app_settings (
+  key        text primary key,
+  value      jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table app_settings disable row level security;
+insert into app_settings (key, value) values ('sms', '{"enabled": true}'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

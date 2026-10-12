@@ -1,4 +1,5 @@
 import { supabase, supabaseEnabled } from './supabase';
+import { smsPaused } from './appSettings';
 
 /** Phone that receives internal admin/staff alerts (set VITE_ADMIN_PHONE in .env). */
 export const ADMIN_PHONE = (import.meta.env.VITE_ADMIN_PHONE as string | undefined) ?? '';
@@ -37,6 +38,11 @@ function inQuietHours(d = new Date()): boolean {
 export async function sendSms(to: string, message: string, opts: SmsOptions = {}): Promise<boolean> {
   if (!supabaseEnabled) {
     console.warn('[sms] skipped — Supabase not configured');
+    return false;
+  }
+  // Paused in Settings → SMS sending (the send-sms function enforces this too)
+  if (await smsPaused()) {
+    console.warn('[sms] skipped — SMS sending is paused in Settings:', opts.category ?? '');
     return false;
   }
   if (opts.optIn === false) {
