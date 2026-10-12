@@ -408,6 +408,8 @@ export async function submitBookingRequest(d) {
       p_pickup: d.pickup, p_return: d.returnTo || d.pickup, p_mode: d.mode, p_message: d.message || null,
       p_estimate: d.estimate ?? null,
       p_alternative_of: d.alternativeOf || null,
+      // secret from the team's alternatives link — needed to update the original request
+      ...(d.altToken ? { p_alt_token: d.altToken } : {}),
     }),
   });
   const body = await res.json().catch(() => null);
@@ -416,12 +418,12 @@ export async function submitBookingRequest(d) {
 }
 
 /** Customer picks one of the offered alternatives — reuses the original request's details. Returns the new reference. */
-export async function chooseAlternative(inquiryId, vehicleId) {
+export async function chooseAlternative(inquiryId, vehicleId, token) {
   if (!fleetEnabled) throw new Error('Please contact us to choose this vehicle.');
   const res = await fetch(`${URL}/rest/v1/rpc/choose_alternative`, {
     method: 'POST',
     headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ p_inquiry_id: inquiryId, p_vehicle_id: vehicleId }),
+    body: JSON.stringify({ p_inquiry_id: inquiryId, p_vehicle_id: vehicleId, ...(token ? { p_token: token } : {}) }),
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(body?.message || `Could not confirm your choice (HTTP ${res.status})`);

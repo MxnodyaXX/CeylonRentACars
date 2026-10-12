@@ -12,6 +12,9 @@ import Header from '../components/layout/Header';
 import ManualBookingModal from '../components/ui/ManualBookingModal';
 import SmsSettingCard from '../components/ui/SmsSettingCard';
 import LegacyLoginsCard from '../components/ui/LegacyLoginsCard';
+import ChangePasswordForm from '../components/ui/ChangePasswordForm';
+import { passwordProblem } from '../lib/staffAuth';
+import { supabaseEnabled } from '../lib/supabase';
 import LocationInput from '../components/ui/LocationInput';
 import { sendSms } from '../lib/sms';
 import type { Owner } from '../types';
@@ -108,7 +111,8 @@ function ProfileSetupModal({ owner, onClose, onCreated }: ProfileProps) {
     if (!nic.trim())              { setError('NIC / Passport number is required.'); return; }
     if (!address.trim())          { setError('Address is required.'); return; }
     if (!username.trim())         { setError('Username is required.'); return; }
-    if (password.length < 6)     { setError('Password must be at least 6 characters.'); return; }
+    const weak = passwordProblem(password, username.trim());
+    if (weak)                     { setError(weak); return; }
     if (password !== confirm)     { setError('Passwords do not match.'); return; }
     if (users.some((u) => u.username === username.trim())) {
       setError('That username is already taken — choose another.'); return;
@@ -392,6 +396,16 @@ export default function Settings() {
           )}
         </div>
       </section>
+
+      {/* ── My password (everyone, when logins are on Supabase) ── */}
+      {supabaseEnabled && (
+        <section className="mb-10">
+          <p className="text-xs font-semibold text-navy-400 uppercase tracking-wider mb-3">My password</p>
+          <div className="p-4 bg-white rounded-2xl shadow-card border border-gray-100 max-w-md">
+            <ChangePasswordForm compact />
+          </div>
+        </section>
+      )}
 
       {/* ── Messaging (admin only) ── */}
       {admin && (

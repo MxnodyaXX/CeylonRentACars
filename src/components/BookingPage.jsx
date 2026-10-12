@@ -100,6 +100,7 @@ export default function BookingPage({ search = '' }) {
 
   // Booked from the /alternatives page: link this request to the customer's original inquiry
   const altOf = params.get('alt') || '';
+  const altToken = params.get('at') || '';   // secret from the alternatives link
   const altRef = params.get('ref') || '';
 
   // "Book Now" inside the details window points here with ?v=… — switch to that vehicle
@@ -157,6 +158,7 @@ export default function BookingPage({ search = '' }) {
         pickup: withLink(form.pickup, form.pickupPos),
         returnTo: form.sameReturn ? withLink(form.pickup, form.pickupPos) : withLink(form.returnTo || form.pickup, form.returnPos),
         alternativeOf: altOf,
+        altToken,
         estimate,
       });
       setReference(ref);

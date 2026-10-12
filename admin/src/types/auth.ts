@@ -15,6 +15,8 @@ export interface AppUser {
   /** Login switched off by the admin */
   disabled?: boolean;
   lastSignIn?: string;
+  /** Signed in with a temporary password — must choose their own before using the app */
+  mustChangePassword?: boolean;
 }
 
 export interface OwnerPermissions {
@@ -54,10 +56,12 @@ export interface AuthState {
   addUser: (user: Omit<AppUser, 'id'>) => Promise<string | null>;
   updatePermissions: (ownerId: string, perms: Partial<OwnerPermissions>) => Promise<void>;
   getOwnerPermissions: (ownerId: string) => OwnerPermissions;
-  /** Creates a login with a generated username + 6-digit PIN, shown to the admin once */
+  /** Creates a login with a generated username + temporary password, shown to the admin once */
   createOwnerAccount: (ownerId: string, ownerName: string) => Promise<{ username: string; password: string } | null>;
-  /** Sets a new 6-digit PIN for a login and returns it (shown to the admin once) */
+  /** Sets a new temporary password for a login and returns it (shown to the admin once) */
   resetPassword: (userId: string) => Promise<string | null>;
+  /** Change your own password — null when done, otherwise the reason */
+  changePassword: (currentPassword: string, newPassword: string) => Promise<string | null>;
   isAdmin: () => boolean;
   isOwner: () => boolean;
   can: (perm: keyof Omit<OwnerPermissions, 'disabled'>) => boolean;

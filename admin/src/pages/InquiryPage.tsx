@@ -17,7 +17,7 @@ import { whatsappEnabled } from '../lib/whatsappInbox';
 import InquiryQuoteBuilder from '../components/ui/InquiryQuoteBuilder';
 import { FollowUp, addFollowUp, intlDigits, loadFollowUps, parseRequest, stageOf } from '../lib/inquiryFollowups';
 import {
-  CHECKLIST, alternativesFor, customerHistory, daysBetween, flagsOf, mapIn, placeIn, prettyDate, responseInfo, rs,
+  CHECKLIST, alternativesFor, customerHistory, daysBetween, flagsOf, mapIn, newAltToken, placeIn, prettyDate, responseInfo, rs,
   temperatureOf, templates, timeIn,
 } from '../lib/inquiryReview';
 import type { InquiryQuote } from '../types';
@@ -73,6 +73,8 @@ export default function InquiryPage() {
   const req = useMemo(() => parseRequest(inq?.notes), [inq?.notes]);
   const alt = useMemo(() => (inq ? alternativesFor(inq, vehicles, (vid, s, e) => isVehicleAvailable(vid, s, e)) : null), [inq, vehicles, isVehicleAvailable]);
   const history = useMemo(() => (inq ? customerHistory(inq, bookings) : null), [inq, bookings]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const altToken = useMemo(() => inq?.altToken ?? newAltToken(), [inq?.id, inq?.altToken]);
 
   if (!inq || !alt || !history) {
     return (
@@ -94,7 +96,7 @@ export default function InquiryPage() {
   const ready = done === CHECKLIST.length;
   const pending = inq.status === 'Pending';
   const TempIcon = TEMP[temp.level].icon;
-  const tpl = templates(inq, staff, alt.list, alt.requested?.id);
+  const tpl = templates({ ...inq, altToken }, staff, alt.list, alt.requested?.id);
 
   // Estimate on website requests: "9 · Estimate: Rs 65,000"
   const [dayCount, estimate] = (req.fields.Days ?? '').split(' · ');
@@ -117,7 +119,7 @@ export default function InquiryPage() {
 
   // Remember which vehicles were offered — the customer can only choose one of these on the website
   const offerAlternatives = () => {
-    if (alt.list.length) patchInquiry(inq.id, { alternativesOffered: alt.list.map((v) => v.id), stage: advance(inq.stage, 'OPTIONS_SENT') });
+    if (alt.list.length) patchInquiry(inq.id, { alternativesOffered: alt.list.map((v) => v.id), altToken, stage: advance(inq.stage, 'OPTIONS_SENT') });
     openWa(tpl.find((t) => t.id === 'alternatives')!.text);
   };
 

@@ -3,7 +3,8 @@ import { persist } from 'zustand/middleware';
 import { AuthState, AppUser, OwnerPermissions } from '../types/auth';
 import { supabase, supabaseEnabled } from '../lib/supabase';
 import {
-  cleanUsername, createStaff, currentSession, genPin, listStaff, signIn, signOut, updateStaff, userFromAuth,
+  changeOwnPassword, cleanUsername, createStaff, currentSession, listStaff, resetStaffPassword, signIn, signOut, tempPassword,
+  updateStaff, userFromAuth,
 } from '../lib/staffAuth';
 import { toast } from './useToast';
 
@@ -13,7 +14,7 @@ import { toast } from './useToast';
  * With Supabase connected, logins are real Supabase Auth accounts: passwords are hashed by
  * Supabase and never reach the browser, role / owner / permissions are set server-side
  * (Edge Function staff-users), and the database only answers signed-in staff
- * (supabase/security-lockdown.sql). The session is kept by Supabase, not by this store.
+ * (supabase/security/01_scoped_access.sql). The session is kept by Supabase, not by this store.
  *
  * Offline demo mode (no Supabase configured) keeps the sample logins below.
  */
@@ -125,7 +126,7 @@ export const useAuthStore = create<AuthState>()(
         }
         try {
           await createStaff({
-            username: userData.username, password: userData.password ?? '', name: userData.name, role: userData.role,
+            username: userData.username, password: userData.password, name: userData.name,
             ownerId: userData.ownerId, contactEmail: userData.email, nic: userData.nic,
           });
           await get().refreshUsers();
@@ -163,22 +164,48 @@ export const useAuthStore = create<AuthState>()(
       createOwnerAccount: async (ownerId, ownerName) => {
         if (get().users.some((u) => u.ownerId === ownerId)) return null;
         const username = usernameFor(ownerName, new Set(get().users.map((u) => u.username)));
-        const password = genPin();
-        const error = await get().addUser({ username, password, name: ownerName, role: 'owner', ownerId });
-        if (error) { toast.error('Login not created', error); return null; }
-        return { username, password };
+        if (!supabaseEnabled) {
+          const password = tempPassword();
+          const error = await get().addUser({ username, password, name: ownerName, role: 'owner', ownerId });
+          if (error) { toast.error('Login not created', error); return null; }
+          return { username, password };
+        }
+        // the server makes the temporary password; the owner must change it on first sign-in
+        try {
+          const r = await createStaff({ username, name: ownerName, ownerId });
+          await get().refreshUsers();
+          return r.tempPassword ? { username, password: r.tempPassword } : null;
+        } catch (e) { toast.error('Login not created', (e as Error).message); return null; }
       },
 
       resetPassword: async (userId) => {
-        const pin = genPin();
         if (!supabaseEnabled) {
-          set((s) => ({ users: s.users.map((u) => (u.id === userId ? { ...u, password: pin } : u)) }));
-          return pin;
+          const password = tempPassword();
+          set((s) => ({ users: s.users.map((u) => (u.id === userId ? { ...u, password } : u)) }));
+          return password;
         }
-        try { await updateStaff(userId, { password: pin }); return pin; } catch (e) {
+        try { const password = await resetStaffPassword(userId); get().refreshUsers(); return password; } catch (e) {
           toast.error('Password not reset', (e as Error).message);
           return null;
         }
+      },
+
+      changePassword: async (currentPassword, newPassword) => {
+        const me = get().currentUser;
+        if (!me) return 'You are not signed in.';
+        if (!supabaseEnabled) {
+          const u = get().users.find((x) => x.id === me.id);
+          if (u?.password !== currentPassword) return 'Your current password is not correct.';
+          set((s) => ({ users: s.users.map((x) => (x.id === me.id ? { ...x, password: newPassword } : x)), currentUser: { ...me, mustChangePassword: false } }));
+          return null;
+        }
+        try {
+          await changeOwnPassword(currentPassword, newPassword);
+          // pick up the cleared "must change password" flag from the server
+          const { data } = await supabase.auth.refreshSession();
+          set({ currentUser: userFromAuth(data.user) ?? { ...me, mustChangePassword: false } });
+          return null;
+        } catch (e) { return (e as Error).message; }
       },
 
       isAdmin: () => get().currentUser?.role === 'admin',

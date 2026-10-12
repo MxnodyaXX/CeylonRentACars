@@ -28,13 +28,13 @@ const PAGE_PERMS: { key: keyof Omit<OwnerPermissions, 'disabled'>; label: string
 // ── New credentials (shown once — passwords are hashed and can't be looked up later) ──
 
 function NewCredentials({ username, password, onDone }: { username: string; password: string; onDone: () => void }) {
-  const text = `Ceylon Rent A Cars admin login\nUsername: ${username}\nPIN: ${password}`;
+  const text = `Ceylon Rent A Cars admin login\nUsername: ${username}\nTemporary password: ${password}\n(You will be asked to choose your own password when you first sign in.)`;
   return (
     <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 mb-5 text-xs">
-      <p className="font-semibold text-emerald-800 mb-2">Give these to the owner now — the PIN can't be shown again.</p>
-      <div className="grid grid-cols-[4.5rem_1fr] gap-y-1 font-mono text-navy-800">
+      <p className="font-semibold text-emerald-800 mb-2">Give these to the owner now — the password can't be shown again. They'll choose their own when they first sign in.</p>
+      <div className="grid grid-cols-[8rem_1fr] gap-y-1 font-mono text-navy-800">
         <span className="font-sans text-navy-500">Username</span><span className="select-all">{username}</span>
-        <span className="font-sans text-navy-500">PIN</span><span className="select-all text-base font-bold tracking-widest">{password}</span>
+        <span className="font-sans text-navy-500">Temporary password</span><span className="select-all text-base font-bold tracking-wide">{password}</span>
       </div>
       <div className="flex gap-2 mt-3">
         <button type="button" onClick={() => navigator.clipboard?.writeText(text).then(() => toast.success('Copied', 'Login details copied.'))}
@@ -81,7 +81,7 @@ export default function Permissions() {
     setBusy(null);
   };
   const reset = async (ownerId: string, userId: string, username: string) => {
-    if (!confirm(`Give ${username} a new PIN? Their current PIN stops working.`)) return;
+    if (!confirm(`Give ${username} a new temporary password? Their current password stops working.`)) return;
     setBusy(ownerId);
     const pin = await resetPassword(userId);
     if (pin) setFresh((x) => ({ ...x, [ownerId]: { username, password: pin } }));
@@ -156,14 +156,14 @@ export default function Permissions() {
                   <span className="text-navy-400">{user.lastSignIn ? `Last signed in ${new Date(user.lastSignIn).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Not signed in yet'}</span>
                   <button type="button" onClick={() => reset(owner.id, user.id, user.username)} disabled={busy === owner.id}
                           className="ml-auto inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 font-semibold text-navy-600 border border-navy-100 hover:bg-navy-50 disabled:opacity-50">
-                    {busy === owner.id ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Reset PIN
+                    {busy === owner.id ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Reset password
                   </button>
                 </div>
               )}
 
               {!hasAccount && (
                 <p className="text-xs text-navy-400 bg-amber-50 rounded-xl px-3 py-2 mb-4">
-                  No login account yet. Click "Create Login Account" — you'll see the username and PIN once, to give to the owner.
+                  No login account yet. Click "Create Login Account" — you'll see the username and a temporary password once, to give to the owner.
                 </p>
               )}
 

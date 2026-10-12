@@ -272,6 +272,7 @@ export interface Inquiry {
   alternativeOf?: string;                   // this inquiry is the customer's alternative choice for that inquiry
   alternativeChosen?: string;               // the customer moved from this inquiry to that one
   alternativesOffered?: string[];           // vehicle ids offered to the customer as alternatives
+  altToken?: string;                        // secret in the alternatives link — the website needs it to change this inquiry
   vehicleHistory?: VehicleChange[];         // earlier vehicles of this inquiry (oldest first); requestedVehicle is the current one
   consultation?: Consultation;              // what staff confirmed with the customer — the original fields above are never overwritten
   stage?: InquiryStage;                     // pipeline stage (status stays Pending / Converted / Lost)

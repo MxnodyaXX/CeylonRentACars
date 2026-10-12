@@ -1,0 +1,12 @@
+{
+  "name": "crc-security-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node rls.test.mjs && node staff-users.test.mjs && node password.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "esbuild": "^0.21.5"
+  }
+}

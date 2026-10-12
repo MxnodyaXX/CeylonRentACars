@@ -123,11 +123,18 @@ export const prettyDate = (d?: string) =>
 const WEBSITE_URL = ((import.meta.env.VITE_WEBSITE_URL as string | undefined) ?? 'http://localhost:5173').replace(/\/$/, '');
 export const vehicleLink = (id: string) => `${WEBSITE_URL}/vehicles?vehicle=${encodeURIComponent(id)}`;
 
+/** Random secret for an inquiry's alternatives link — reuse inq.altToken when it already has one */
+export const newAltToken = () => {
+  const b = crypto.getRandomValues(new Uint8Array(18));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_');
+};
+
 /** One personal page listing all suggested vehicles, with an apology and the customer's dates */
 export function alternativesLink(inq: Inquiry, alternatives: Vehicle[], ref?: string) {
   const q = new URLSearchParams({
     ids: alternatives.map((v) => v.id).join(','),
     i: inq.id,                                             // links the customer's choice back to this inquiry
+    ...(inq.altToken ? { t: inq.altToken } : {}),          // proves the choice comes from this link
     req: inq.requestedVehicle.replace(/\s*\(.*\)$/, ''),     // without the plate number
     n: inq.customerName.trim().split(' ')[0],
     ...(inq.startDate ? { from: inq.startDate } : {}),

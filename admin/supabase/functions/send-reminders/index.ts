@@ -36,9 +36,11 @@ async function sendOne(to: string, message: string, category: string, role: stri
 
 serve(async (req) => {
   const url = new URL(req.url);
-  if (CRON_SECRET && url.searchParams.get("key") !== CRON_SECRET) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  // Fail closed: without CRON_SECRET set nobody can trigger a reminder run (it sends real SMS).
+  const given = url.searchParams.get("key") ?? "";
+  const same = CRON_SECRET.length > 0 && given.length === CRON_SECRET.length &&
+    [...given].reduce((d, c, i) => d | (c.charCodeAt(0) ^ CRON_SECRET.charCodeAt(i)), 0) === 0;
+  if (!same) return new Response("Unauthorized", { status: 401 });
 
   const today = slDate(0);
   const tomorrow = slDate(1);

@@ -1,6 +1,8 @@
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type { AppUser, OwnerPermissions } from '../types/auth';
+// Same rules the server applies (one copy, shared with the Edge Function)
+export { passwordProblem, tempPassword } from '../../supabase/functions/_shared/password';
 
 /*
  * Staff logins on Supabase Auth. Staff still sign in with a username: it maps to the
@@ -25,6 +27,7 @@ export function userFromAuth(u: User | null | undefined): AppUser | null {
     email: u.user_metadata?.contact_email ?? undefined,
     nic: u.user_metadata?.nic ?? undefined,
     permissions: m.permissions as Partial<OwnerPermissions> | undefined,
+    mustChangePassword: !!m.must_change_password,
   };
 }
 
@@ -54,13 +57,22 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 export const listStaff = () => call<{ users: StaffLogin[] }>({ action: 'list' }).then((r) => r.users);
-export const createStaff = (p: { username: string; password: string; name: string; role?: 'admin' | 'owner'; ownerId?: string; contactEmail?: string; nic?: string }) =>
-  call<{ user: StaffLogin }>({ action: 'create', ...p }).then((r) => r.user);
-export const updateStaff = (id: string, p: { name?: string; password?: string; permissions?: Partial<OwnerPermissions>; disabled?: boolean }) =>
+/** Owner logins only (admins are made in the Supabase dashboard). Without a password the server
+ *  makes a temporary one, returns it once, and the owner must change it on first sign-in. */
+export const createStaff = (p: { username: string; password?: string; name: string; ownerId?: string; contactEmail?: string; nic?: string }) =>
+  call<{ user: StaffLogin; tempPassword?: string }>({ action: 'create', ...p });
+export const updateStaff = (id: string, p: { name?: string; permissions?: Partial<OwnerPermissions>; disabled?: boolean }) =>
   call<{ user: StaffLogin }>({ action: 'update', id, ...p }).then((r) => r.user);
+/** New temporary password for an owner login (shown to the admin once) */
+export const resetStaffPassword = (id: string) =>
+  call<{ user: StaffLogin; tempPassword: string }>({ action: 'reset-password', id }).then((r) => r.tempPassword);
+/** Change your own password — the server checks the current one */
+export const changeOwnPassword = (currentPassword: string, newPassword: string) =>
+  call<{ ok: true }>({ action: 'change-password', currentPassword, newPassword });
 export const deleteStaff = (id: string) => call<{ ok: true }>({ action: 'delete', id });
-export const migrateLegacyLogins = () =>
-  call<{ created: string[]; skipped: string[]; failed: string[] }>({ action: 'migrate-legacy' });
 
-/** 6-digit PIN for new owner logins — easy to read out over the phone */
-export const genPin = () => String(Math.floor(100000 + Math.random() * 900000));
+export interface LegacyPlan { username: string; ownerId: string | null; ownerName?: string; status: 'move' | 'already-moved' | 'rejected'; reason?: string }
+export interface MovedLogin { username: string; ownerName?: string; tempPassword: string }
+/** What moving the old logins would do — changes nothing */
+export const migratePreview = () => call<{ plan: LegacyPlan[] }>({ action: 'migrate-preview' }).then((r) => r.plan);
+export const migrateLegacy = () => call<{ plan: LegacyPlan[]; moved: MovedLogin[]; failed: string[] }>({ action: 'migrate-legacy' });

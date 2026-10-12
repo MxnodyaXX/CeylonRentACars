@@ -137,8 +137,8 @@ export const useStore = create<AppState>()(
       addOwner: (o) => {
         const newO: Owner = { ...o, id: uid(), createdAt: now(), totalEarnings: 0, pendingPayout: 0 };
         set((s) => ({ owners: [...s.owners, newO] }));
-        // The owner's login is created on the Permissions page, where the PIN is shown once
-        // (logins are Supabase Auth accounts — the PIN can't be looked up later).
+        // The owner's login is created on the Permissions page, where its temporary password is
+        // shown once (logins are Supabase Auth accounts — passwords can't be looked up later).
         if (supabaseEnabled) {
           Promise.resolve(db.insertOwner(newO)).then(ok)
             .catch((err) => reportDbError(err, 'The owner was not saved.'));

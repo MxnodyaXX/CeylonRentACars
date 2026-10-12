@@ -28,6 +28,7 @@ import CreditManagement from './pages/CreditManagement';
 import Handovers from './pages/Handovers';
 import Customers from './pages/Customers';
 import Settings from './pages/Settings';
+import ChangePasswordScreen from './pages/ChangePasswordScreen';
 import Incomplete from './pages/Incomplete';
 import Website from './pages/Website';
 import Feedback from './pages/Feedback';
@@ -49,12 +50,13 @@ export default function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The database only answers signed-in staff, so data and live updates start after sign-in
+  // (and after a temporary password has been replaced)
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.mustChangePassword) return;
     loadAll();
     const cleanup = setupRealtime(loadAll);
     return () => { cleanup?.(); };
-  }, [currentUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.mustChangePassword]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Run insurance reminders once per session, immediately after data is loaded.
   // Uses getState() snapshot to avoid subscribing to rapidly-changing store slices.
@@ -79,6 +81,16 @@ export default function App() {
       <>
         <Toaster />
         <Login />
+      </>
+    );
+  }
+
+  // Signed in with a temporary password — choose a real one before anything else
+  if (currentUser.mustChangePassword) {
+    return (
+      <>
+        <Toaster />
+        <ChangePasswordScreen />
       </>
     );
   }

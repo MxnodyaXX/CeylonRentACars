@@ -12,7 +12,7 @@ import { toast } from '../store/useToast';
 import StartInquiryModal from '../components/ui/StartInquiryModal';
 import BookingDecision from '../components/ui/BookingDecision';
 import { addFollowUp, intlDigits, parseRequest } from '../lib/inquiryFollowups';
-import { alternativesFor, alternativesLink, placeIn, prettyDate, rs, vehicleLink } from '../lib/inquiryReview';
+import { alternativesFor, alternativesLink, newAltToken, placeIn, prettyDate, rs, vehicleLink } from '../lib/inquiryReview';
 import {
   LEAD_QUALITY, LOST_REASONS, NEXT_ACTIONS, PRIORITIES, SPECIAL, STAGES, Suitability, advance, buildSummary,
   consultDates, consultDays, emptyConsultation, luggageOf, missing, passengerSeats, passengers, recommend, stageInfo,
@@ -307,8 +307,9 @@ export default function InquiryConsultation() {
   const sendAlternatives = (list: Vehicle[]) => {
     if (!list.length) return;
     const ids = list.map((x) => x.id);
-    const link = alternativesLink({ ...inq, startDate: start, endDate: end }, list, ref);
-    patchInquiry(inq.id, { alternativesOffered: ids, consultation: { ...c, suggested: ids }, stage: advance(inq.stage, 'OPTIONS_SENT') });
+    const altToken = inq.altToken ?? newAltToken();
+    const link = alternativesLink({ ...inq, startDate: start, endDate: end, altToken }, list, ref);
+    patchInquiry(inq.id, { alternativesOffered: ids, altToken, consultation: { ...c, suggested: ids }, stage: advance(inq.stage, 'OPTIONS_SENT') });
     setC((x) => ({ ...x, suggested: ids }));
     setStage((s) => advance(s, 'OPTIONS_SENT'));
     const why = fit && fit.verdict === 'Not recommended'

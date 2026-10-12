@@ -22,12 +22,13 @@ export default function AlternativesPage({ search = '' }) {
   const to = isDate(p.get('to')) ? p.get('to') : '';
   const ref = p.get('ref');
   const original = p.get('i');   // original inquiry id — links the new request to it
+  const token = p.get('t') || ''; // secret from the team's link — proves this is the customer's own request
 
   const { vehicles, status } = useCatalog();
   // Keep the order the team chose
   const list = ids.map(id => vehicles.find(v => v.id === id)).filter(Boolean);
   const bookQuery = `${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}`
-    + `${original ? `&alt=${encodeURIComponent(original)}` : ''}${name ? `&n=${encodeURIComponent(name)}` : ''}${ref ? `&ref=${encodeURIComponent(ref)}` : ''}`;
+    + `${original ? `&alt=${encodeURIComponent(original)}` : ''}${token ? `&at=${encodeURIComponent(token)}` : ''}${name ? `&n=${encodeURIComponent(name)}` : ''}${ref ? `&ref=${encodeURIComponent(ref)}` : ''}`;
   const wa = waLink(`Hi, about my booking request${ref ? ` ${ref}` : ''} — I'd like one of the alternative vehicles.`);
 
   // One-tap choice (no form): the original request's dates, locations and contact details are reused
@@ -39,7 +40,7 @@ export default function AlternativesPage({ search = '' }) {
   const choose = async v => {
     setBusy(true); setError('');
     try {
-      const reference = await chooseAlternative(original, v.id);
+      const reference = await chooseAlternative(original, v.id, token);
       setChosen({ vehicle: v, reference });
       track('select_item', { item_list_name: 'alternatives', items: [vehicleItem(v)] });
       track('generate_lead', { currency: 'LKR', value: v.price || undefined, inquiry_type: 'alternative_chosen', items: [vehicleItem(v)] });

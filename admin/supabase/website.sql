@@ -1,4 +1,7 @@
 -- =============================================================================
+-- ⚠ SECURITY: this file predates the security lockdown (security/01_scoped_access.sql).
+--   It turns row-level security OFF. If you ever run it again on a locked-down database,
+--   run security/01_scoped_access.sql straight after, then security/verify.sql.
 -- Ceylon Rent A Cars — public website listing
 -- Run once in the Supabase SQL Editor (after schema.sql).
 --

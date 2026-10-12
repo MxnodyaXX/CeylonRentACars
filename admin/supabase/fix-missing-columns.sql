@@ -40,12 +40,19 @@ insert into storage.buckets (id, name, public)
 values ('booking-files', 'booking-files', false)
 on conflict (id) do nothing;
 
-drop policy if exists "admin app reads booking files"   on storage.objects;
-drop policy if exists "admin app uploads booking files" on storage.objects;
-drop policy if exists "admin app deletes booking files" on storage.objects;
-create policy "admin app reads booking files"   on storage.objects for select using (bucket_id = 'booking-files');
-create policy "admin app uploads booking files" on storage.objects for insert with check (bucket_id = 'booking-files');
-create policy "admin app deletes booking files" on storage.objects for delete using (bucket_id = 'booking-files');
+-- Open file rules — only until the security lockdown is applied. After it, security/01 owns
+-- the storage rules, so re-running this file must not put the open ones back.
+do $$
+begin
+  if to_regprocedure('private.is_admin()') is null then
+    drop policy if exists "admin app reads booking files"   on storage.objects;
+    drop policy if exists "admin app uploads booking files" on storage.objects;
+    drop policy if exists "admin app deletes booking files" on storage.objects;
+    create policy "admin app reads booking files"   on storage.objects for select using (bucket_id = 'booking-files');
+    create policy "admin app uploads booking files" on storage.objects for insert with check (bucket_id = 'booking-files');
+    create policy "admin app deletes booking files" on storage.objects for delete using (bucket_id = 'booking-files');
+  end if;
+end $$;
 
 notify pgrst, 'reload schema';
 
@@ -58,8 +65,15 @@ create table if not exists app_settings (
   value      jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
-alter table app_settings disable row level security;
+-- Row-level security is left as it is: off on an old database, on (admin-only write) after the lockdown.
 insert into app_settings (key, value) values ('sms', '{"enabled": true}'::jsonb)
 on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
+
+-- ── Secret for the alternatives link ─────────────────────────────────────────
+-- The admin saves a random token with each "alternatives" message; the website must send it
+-- back before it may change that inquiry (checked by security/02_public_functions.sql).
+alter table inquiries add column if not exists alt_token text;
 
 notify pgrst, 'reload schema';

@@ -309,21 +309,28 @@ async function captureReceiptAsPdf(html: string): Promise<Blob | null> {
 }
 
 // ── Supabase Storage upload (PDF) ────────────────────────────────────────────
-// Requires a public bucket named "receipts" in Supabase Storage.
-// Dashboard → Storage → New bucket → name: receipts → Public: ON → Create.
+// The "receipts" bucket is PRIVATE (security/01_scoped_access.sql). Each receipt is stored
+// as <booking id>/<random>.pdf — the folder lets only admins and the vehicle's owner touch it,
+// the random name means links can't be guessed — and the customer gets a signed link.
 
-async function uploadReceiptPdf(filename: string, blob: Blob): Promise<string | null> {
+const RECEIPT_LINK_DAYS = 30;
+
+async function uploadReceiptPdf(bookingId: string, blob: Blob): Promise<string | null> {
   if (!supabaseEnabled) return null;
-  const path = filename;
+  const rand = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const path = `${bookingId}/${rand}.pdf`;
   const { error } = await supabase.storage
     .from('receipts')
-    .upload(path, blob, { upsert: true, cacheControl: '3600', contentType: 'application/pdf' });
+    .upload(path, blob, { cacheControl: '3600', contentType: 'application/pdf' });
   if (error) {
     console.warn('[receipt] PDF upload failed:', error.message);
     return null;
   }
-  const { data } = supabase.storage.from('receipts').getPublicUrl(path);
-  return data?.publicUrl ?? null;
+  const { data, error: linkError } = await supabase.storage
+    .from('receipts')
+    .createSignedUrl(path, RECEIPT_LINK_DAYS * 24 * 60 * 60);
+  if (linkError) console.warn('[receipt] link failed:', linkError.message);
+  return data?.signedUrl ?? null;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -341,7 +348,7 @@ export async function sendBookingReceipt(
 
   // 1. Render receipt as a PDF and upload to Supabase Storage
   const pdfBlob    = await captureReceiptAsPdf(html);
-  const receiptUrl = pdfBlob ? await uploadReceiptPdf(`${ref}.pdf`, pdfBlob) : null;
+  const receiptUrl = pdfBlob ? await uploadReceiptPdf(booking.id, pdfBlob) : null;
 
   // 2. Send email if the customer has an email address
   if (booking.customerEmail) {

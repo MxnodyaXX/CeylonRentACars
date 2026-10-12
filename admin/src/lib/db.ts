@@ -234,6 +234,7 @@ function iFromDb(r: Record<string, unknown>): Inquiry {
     alternativeOf: (r.alternative_of as string) ?? undefined,
     alternativeChosen: (r.alternative_chosen as string) ?? undefined,
     alternativesOffered: Array.isArray(r.alternatives_offered) ? (r.alternatives_offered as string[]) : undefined,
+    altToken: (r.alt_token as string) ?? undefined,
     vehicleHistory: Array.isArray(r.vehicle_history) ? (r.vehicle_history as Inquiry['vehicleHistory']) : undefined,
     consultation: (r.consultation as Inquiry['consultation']) ?? undefined,
     stage: (r.stage as Inquiry['stage']) ?? undefined,
@@ -253,6 +254,7 @@ function iToDb(i: Inquiry) {
     ...(i.stage && { stage: i.stage }),
     ...(i.consultation && { consultation: i.consultation }),
     ...(i.alternativesOffered && { alternatives_offered: i.alternativesOffered }),
+    ...(i.altToken && { alt_token: i.altToken }),
   }
 }
 
@@ -548,6 +550,7 @@ export const db = {
     if (u.checklist !== undefined) row.checklist = u.checklist
     if (u.quote !== undefined) row.quote = u.quote
     if (u.alternativesOffered !== undefined) row.alternatives_offered = u.alternativesOffered
+    if (u.altToken !== undefined) row.alt_token = u.altToken
     if (u.consultation !== undefined) row.consultation = u.consultation
     if (u.stage !== undefined) row.stage = u.stage
     if (u.preferredBrand !== undefined) row.preferred_brand = u.preferredBrand
