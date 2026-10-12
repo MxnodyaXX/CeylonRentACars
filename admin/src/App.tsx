@@ -36,18 +36,25 @@ export default function App() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const isAdmin     = useAuthStore((s) => s.isAdmin);
   const can         = useAuthStore((s) => s.can);
-  const loadUsers   = useAuthStore((s) => s.loadUsers);
+  const initAuth    = useAuthStore((s) => s.initAuth);
+  const authReady   = useAuthStore((s) => s.ready);
   const loadAll     = useStore((s) => s.loadAll);
   const loaded      = useStore((s) => s.loaded);
   const [minDone, setMinDone] = useState(false);
 
   useEffect(() => {
-    loadAll();
-    loadUsers();   // hydrate login profiles from the database
+    initAuth();   // restore the saved Supabase session (if any)
     const timer = setTimeout(() => setMinDone(true), 900); // keep the loader visible briefly
-    const cleanup = setupRealtime(loadAll);
-    return () => { clearTimeout(timer); cleanup?.(); };
+    return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The database only answers signed-in staff, so data and live updates start after sign-in
+  useEffect(() => {
+    if (!currentUser) return;
+    loadAll();
+    const cleanup = setupRealtime(loadAll);
+    return () => { cleanup?.(); };
+  }, [currentUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Run insurance reminders once per session, immediately after data is loaded.
   // Uses getState() snapshot to avoid subscribing to rapidly-changing store slices.
@@ -57,8 +64,8 @@ export default function App() {
     runInsuranceReminders({ vehicles, owners, notifications, addNotification });
   }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Boot loading screen until data is ready (and a short minimum so it doesn't flash).
-  if (!loaded || !minDone) {
+  // Boot loading screen while the saved session is checked (and a short minimum so it doesn't flash).
+  if (!authReady || !minDone) {
     return (
       <>
         <Toaster />
@@ -72,6 +79,16 @@ export default function App() {
       <>
         <Toaster />
         <Login />
+      </>
+    );
+  }
+
+  // Signed in — wait for the data
+  if (!loaded) {
+    return (
+      <>
+        <Toaster />
+        <LoadingScreen />
       </>
     );
   }

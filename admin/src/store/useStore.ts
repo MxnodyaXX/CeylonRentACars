@@ -137,14 +137,13 @@ export const useStore = create<AppState>()(
       addOwner: (o) => {
         const newO: Owner = { ...o, id: uid(), createdAt: now(), totalEarnings: 0, pendingPayout: 0 };
         set((s) => ({ owners: [...s.owners, newO] }));
-        // Auto-create a login account for the new owner so they appear in Permissions.
-        // The login row references the owner, so it can only be saved after the owner is.
-        const createLogin = () => useAuthStore.getState().createOwnerAccount(newO.id, newO.name);
+        // The owner's login is created on the Permissions page, where the PIN is shown once
+        // (logins are Supabase Auth accounts — the PIN can't be looked up later).
         if (supabaseEnabled) {
-          Promise.resolve(db.insertOwner(newO)).then(ok).then(createLogin)
-            .catch((err) => reportDbError(err, 'The owner (and their login) was not saved.'));
-        } else createLogin();
-        toast.success('Owner added', `${newO.name} has been registered.`);
+          Promise.resolve(db.insertOwner(newO)).then(ok)
+            .catch((err) => reportDbError(err, 'The owner was not saved.'));
+        } else useAuthStore.getState().createOwnerAccount(newO.id, newO.name);
+        toast.success('Owner added', `${newO.name} has been registered. Create their login on the Permissions page.`);
       },
 
       updateOwner: (id, updates) => {

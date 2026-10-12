@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useAuthStore, DEFAULT_PERMS } from '../store/useAuthStore';
+import { useAuthStore } from '../store/useAuthStore';
 import { useStore } from '../store/useStore';
 import Header from '../components/layout/Header';
-import { ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, Eye, EyeOff, UserPlus, Key } from 'lucide-react';
+import { ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, UserPlus, Key, RotateCcw, Copy, Loader2 } from 'lucide-react';
+import { toast } from '../store/useToast';
 import { OwnerPermissions } from '../types/auth';
 
 // ── Permission definitions ────────────────────────────────────────────────────
@@ -24,23 +25,22 @@ const PAGE_PERMS: { key: keyof Omit<OwnerPermissions, 'disabled'>; label: string
   { key: 'canViewIncomplete', label: 'Incomplete Page', desc: 'See incomplete / draft processes'              },
 ];
 
-// ── Credential reveal component ───────────────────────────────────────────────
+// ── New credentials (shown once — passwords are hashed and can't be looked up later) ──
 
-function CredentialRow({ label, value }: { label: string; value: string }) {
-  const [show, setShow] = useState(false);
+function NewCredentials({ username, password, onDone }: { username: string; password: string; onDone: () => void }) {
+  const text = `Ceylon Rent A Cars admin login\nUsername: ${username}\nPIN: ${password}`;
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="text-navy-400 w-16">{label}</span>
-      <span className="font-mono text-navy-700 bg-navy-50 px-2 py-1 rounded-lg select-all flex-1">
-        {show ? value : '••••••••'}
-      </span>
-      <button
-        onClick={() => setShow((v) => !v)}
-        className="p-1 rounded-lg hover:bg-navy-50 text-navy-400 hover:text-navy-600"
-        title={show ? 'Hide' : 'Reveal'}
-      >
-        {show ? <EyeOff size={13} /> : <Eye size={13} />}
-      </button>
+    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 mb-5 text-xs">
+      <p className="font-semibold text-emerald-800 mb-2">Give these to the owner now — the PIN can't be shown again.</p>
+      <div className="grid grid-cols-[4.5rem_1fr] gap-y-1 font-mono text-navy-800">
+        <span className="font-sans text-navy-500">Username</span><span className="select-all">{username}</span>
+        <span className="font-sans text-navy-500">PIN</span><span className="select-all text-base font-bold tracking-widest">{password}</span>
+      </div>
+      <div className="flex gap-2 mt-3">
+        <button type="button" onClick={() => navigator.clipboard?.writeText(text).then(() => toast.success('Copied', 'Login details copied.'))}
+                className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 font-semibold text-emerald-700 border border-emerald-200"><Copy size={12} /> Copy</button>
+        <button type="button" onClick={onDone} className="rounded-lg px-2.5 py-1 font-semibold text-navy-500 hover:text-navy-800">Done</button>
+      </div>
     </div>
   );
 }
@@ -70,7 +70,23 @@ function PermToggle({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function Permissions() {
-  const { users, permissions, getOwnerPermissions, updatePermissions, createOwnerAccount } = useAuthStore();
+  const { users, getOwnerPermissions, updatePermissions, createOwnerAccount, resetPassword } = useAuthStore();
+  // credentials just created / reset, keyed by owner id (shown once)
+  const [fresh, setFresh] = useState<Record<string, { username: string; password: string }>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const create = async (ownerId: string, name: string) => {
+    setBusy(ownerId);
+    const c = await createOwnerAccount(ownerId, name);
+    if (c) setFresh((x) => ({ ...x, [ownerId]: c }));
+    setBusy(null);
+  };
+  const reset = async (ownerId: string, userId: string, username: string) => {
+    if (!confirm(`Give ${username} a new PIN? Their current PIN stops working.`)) return;
+    setBusy(ownerId);
+    const pin = await resetPassword(userId);
+    if (pin) setFresh((x) => ({ ...x, [ownerId]: { username, password: pin } }));
+    setBusy(null);
+  };
   const owners = useStore((s) => s.owners);
 
   return (
@@ -119,30 +135,35 @@ export default function Permissions() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => createOwnerAccount(owner.id, owner.name)}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold bg-navy-50 text-navy-600 hover:bg-navy-100 transition-all flex-shrink-0"
+                    onClick={() => create(owner.id, owner.name)}
+                    disabled={busy === owner.id}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold bg-navy-50 text-navy-600 hover:bg-navy-100 transition-all flex-shrink-0 disabled:opacity-50"
                   >
-                    <UserPlus size={14} />
+                    {busy === owner.id ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
                     Create Login Account
                   </button>
                 )}
               </div>
 
-              {/* ── Login credentials (shown when account exists) ── */}
-              {hasAccount && (
-                <div className="bg-navy-50/50 rounded-xl px-4 py-3 mb-5 space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs text-navy-500 font-medium mb-1">
-                    <Key size={12} />
-                    Login Credentials
-                  </div>
-                  <CredentialRow label="Username" value={user.username} />
-                  <CredentialRow label="Password" value={user.password} />
+              {/* ── Login (passwords are hashed — they can be reset, never shown) ── */}
+              {fresh[owner.id] && (
+                <NewCredentials {...fresh[owner.id]} onDone={() => setFresh((x) => { const n = { ...x }; delete n[owner.id]; return n; })} />
+              )}
+              {hasAccount && !fresh[owner.id] && (
+                <div className="bg-navy-50/50 rounded-xl px-4 py-3 mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+                  <span className="flex items-center gap-1.5 text-navy-500 font-medium"><Key size={12} /> Login</span>
+                  <span className="font-mono text-navy-800 bg-white px-2 py-1 rounded-lg select-all">{user.username}</span>
+                  <span className="text-navy-400">{user.lastSignIn ? `Last signed in ${new Date(user.lastSignIn).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'Not signed in yet'}</span>
+                  <button type="button" onClick={() => reset(owner.id, user.id, user.username)} disabled={busy === owner.id}
+                          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 font-semibold text-navy-600 border border-navy-100 hover:bg-navy-50 disabled:opacity-50">
+                    {busy === owner.id ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Reset PIN
+                  </button>
                 </div>
               )}
 
               {!hasAccount && (
                 <p className="text-xs text-navy-400 bg-amber-50 rounded-xl px-3 py-2 mb-4">
-                  No login account yet. Click "Create Login Account" to generate credentials for this owner.
+                  No login account yet. Click "Create Login Account" — you'll see the username and PIN once, to give to the owner.
                 </p>
               )}
 

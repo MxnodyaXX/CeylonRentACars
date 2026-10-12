@@ -3,7 +3,6 @@ import type {
   Vehicle, Owner, Booking, Inquiry, Commission,
   Expense, Driver, Notification, VehicleHandover, Customer,
 } from '../types'
-import type { AppUser } from '../types/auth'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mappers: DB row (snake_case) ↔ TS types (camelCase)
@@ -355,23 +354,6 @@ function custToDb(c: Customer) {
   }
 }
 
-function userFromDb(r: Record<string, unknown>): AppUser {
-  return {
-    id: r.id as string, username: r.username as string, password: r.password as string,
-    name: r.name as string, role: r.role as AppUser['role'],
-    ownerId: (r.owner_id as string) ?? undefined,
-    email: (r.email as string) ?? undefined, nic: (r.nic as string) ?? undefined,
-  }
-}
-
-function userToDb(u: AppUser) {
-  return {
-    id: u.id, username: u.username, password: u.password, name: u.name,
-    role: u.role, owner_id: fk(u.ownerId), email: u.email ?? null,
-    nic: u.nic ?? null, created_at: new Date().toISOString(),
-  }
-}
-
 function hFromDb(r: Record<string, unknown>): VehicleHandover {
   return {
     id: r.id as string, bookingId: r.booking_id as string,
@@ -431,11 +413,6 @@ export async function dbFetchAll() {
       fetchTable<Customer>('customers', custFromDb),
     ])
   return { vehicles, owners, bookings, inquiries, commissions, expenses, drivers, notifications, handovers, customers }
-}
-
-/** Login profiles — fetched by the auth store (not part of dbFetchAll). */
-export async function dbFetchUsers(): Promise<AppUser[]> {
-  return fetchTable<AppUser>('users', userFromDb)
 }
 
 export const db = {
@@ -644,18 +621,4 @@ export const db = {
   },
   deleteCustomer: (id: string) => supabase.from('customers').delete().eq('id', id),
 
-  // ── Users (login profiles) ──────────────────────────────────────────────────
-  insertUser: (u: AppUser) => supabase.from('users').insert(userToDb(u)),
-  updateUser: (id: string, u: Partial<AppUser>) => {
-    const row: Record<string, unknown> = {}
-    if (u.username !== undefined) row.username = u.username
-    if (u.password !== undefined) row.password = u.password
-    if (u.name !== undefined) row.name = u.name
-    if (u.role !== undefined) row.role = u.role
-    if (u.ownerId !== undefined) row.owner_id = fk(u.ownerId)
-    if (u.email !== undefined) row.email = u.email
-    if (u.nic !== undefined) row.nic = u.nic
-    return supabase.from('users').update(row).eq('id', id)
-  },
-  deleteUser: (id: string) => supabase.from('users').delete().eq('id', id),
 }

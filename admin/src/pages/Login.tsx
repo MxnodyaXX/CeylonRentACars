@@ -16,15 +16,13 @@ export default function Login() {
   const [error,    setError]    = useState('');
   const [loading,  setLoading]  = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    setTimeout(() => {
-      const ok = login(username.trim(), password);
-      if (!ok) setError('Invalid credentials or account disabled.');
-      setLoading(false);
-    }, 400);
+    const problem = await login(username.trim(), password);
+    if (problem) setError(problem);
+    setLoading(false);
   };
 
   return (

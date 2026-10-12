@@ -3,12 +3,18 @@ export type UserRole = 'admin' | 'owner';
 export interface AppUser {
   id: string;
   username: string;
-  password: string;
+  /** Only in offline demo mode — real logins live in Supabase Auth (hashed, never readable) */
+  password?: string;
   name: string;
   role: UserRole;
   ownerId?: string; // only when role === 'owner'
   nic?: string;
   email?: string;
+  /** Owner permissions as saved on the login (server-side app_metadata) */
+  permissions?: Partial<OwnerPermissions>;
+  /** Login switched off by the admin */
+  disabled?: boolean;
+  lastSignIn?: string;
 }
 
 export interface OwnerPermissions {
@@ -30,16 +36,28 @@ export interface OwnerPermissions {
 }
 
 export interface AuthState {
+  /** Staff logins (loaded for the admin from the server) */
   users: AppUser[];
   currentUser: AppUser | null;
+  /** The saved session has been checked (so the login page doesn't flash on reload) */
+  ready: boolean;
+  /** Offline demo mode only — real permissions are saved on each login */
   permissions: Record<string, OwnerPermissions>; // keyed by ownerId
-  login: (username: string, password: string) => boolean;
-  logout: () => void;
-  addUser: (user: Omit<AppUser, 'id'>) => void;
-  loadUsers: () => Promise<void>;
-  updatePermissions: (ownerId: string, perms: Partial<OwnerPermissions>) => void;
+  /** null when signed in, otherwise the reason */
+  login: (username: string, password: string) => Promise<string | null>;
+  logout: () => Promise<void>;
+  /** Restore the saved session and follow sign-in / sign-out */
+  initAuth: () => Promise<void>;
+  /** Reload the staff list (admin) */
+  refreshUsers: () => Promise<void>;
+  /** null when created, otherwise the reason */
+  addUser: (user: Omit<AppUser, 'id'>) => Promise<string | null>;
+  updatePermissions: (ownerId: string, perms: Partial<OwnerPermissions>) => Promise<void>;
   getOwnerPermissions: (ownerId: string) => OwnerPermissions;
-  createOwnerAccount: (ownerId: string, ownerName: string) => void;
+  /** Creates a login with a generated username + 6-digit PIN, shown to the admin once */
+  createOwnerAccount: (ownerId: string, ownerName: string) => Promise<{ username: string; password: string } | null>;
+  /** Sets a new 6-digit PIN for a login and returns it (shown to the admin once) */
+  resetPassword: (userId: string) => Promise<string | null>;
   isAdmin: () => boolean;
   isOwner: () => boolean;
   can: (perm: keyof Omit<OwnerPermissions, 'disabled'>) => boolean;

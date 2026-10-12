@@ -7,6 +7,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { staffCaller, unauthorized } from "../_shared/staff.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,6 +30,8 @@ const admin = createClient(
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  // Only signed-in staff (or other functions using the service key) — never the public website key
+  if (!(await staffCaller(req))) return unauthorized(corsHeaders);
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   let to = "", message = "", category = "", role = "", relatedId = "";

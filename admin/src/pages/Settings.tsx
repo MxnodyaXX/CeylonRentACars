@@ -11,6 +11,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import ManualBookingModal from '../components/ui/ManualBookingModal';
 import SmsSettingCard from '../components/ui/SmsSettingCard';
+import LegacyLoginsCard from '../components/ui/LegacyLoginsCard';
 import LocationInput from '../components/ui/LocationInput';
 import { sendSms } from '../lib/sms';
 import type { Owner } from '../types';
@@ -101,7 +102,7 @@ function ProfileSetupModal({ owner, onClose, onCreated }: ProfileProps) {
   };
 
   // ── Save ───────────────────────────────────────────────────────────────────
-  const handleSave = () => {
+  const handleSave = async () => {
     setError('');
     if (!bothVerified)            { setError('Both email and phone must be verified first.'); return; }
     if (!nic.trim())              { setError('NIC / Passport number is required.'); return; }
@@ -113,11 +114,11 @@ function ProfileSetupModal({ owner, onClose, onCreated }: ProfileProps) {
       setError('That username is already taken — choose another.'); return;
     }
     setSaving(true);
-    // Persist the full profile to the owners table (DB): verified email, address,
-    // NIC and the chosen login username.
+    // Create the login first (Supabase Auth — the password is hashed there, never stored by us)
+    const problem = await addUser({ username: username.trim(), password, name: owner.name, role: 'owner', ownerId: owner.id, email: email.trim(), nic: nic.trim() });
+    if (problem) { setError(problem); setSaving(false); return; }
+    // Then save the profile on the owner: verified email, address, NIC and the login username
     updateOwner(owner.id, { email: email.trim(), address: address.trim(), nic: nic.trim(), username: username.trim() });
-    // Create the login profile (auth)
-    addUser({ username: username.trim(), password, name: owner.name, role: 'owner', ownerId: owner.id, email: email.trim(), nic: nic.trim() });
     setSaving(false);
     onCreated();
     onClose();
@@ -395,9 +396,10 @@ export default function Settings() {
       {/* ── Messaging (admin only) ── */}
       {admin && (
         <section className="mb-10">
-          <p className="text-xs font-semibold text-navy-400 uppercase tracking-wider mb-3">Messaging</p>
+          <p className="text-xs font-semibold text-navy-400 uppercase tracking-wider mb-3">Messaging & security</p>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <SmsSettingCard />
+            <LegacyLoginsCard />
           </div>
         </section>
       )}

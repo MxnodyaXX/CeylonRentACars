@@ -11,6 +11,7 @@
 // Secrets:  WHATSAPP_TOKEN, WHATSAPP_WABA_ID (WhatsApp Business Account ID — shown on the admin's WhatsApp setup page)
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+import { staffCaller, unauthorized } from "../_shared/staff.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -22,6 +23,8 @@ const json = (body: unknown, status = 200) =>
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  // Only signed-in staff (or other functions using the service key) — never the public website key
+  if (!(await staffCaller(req))) return unauthorized(cors);
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const token = Deno.env.get("WHATSAPP_TOKEN");
