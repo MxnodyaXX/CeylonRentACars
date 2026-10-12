@@ -1,3 +1,9 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/vehicles", "destination": "/vehicles/index.html" },
+    { "source": "/feedback", "destination": "/feedback/index.html" },
+    { "source": "/book", "destination": "/book/index.html" },
+    { "source": "/alternatives", "destination": "/alternatives/index.html" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

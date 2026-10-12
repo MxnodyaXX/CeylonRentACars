@@ -1832,3 +1832,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 @media (max-width: 600px) {
   .ai-panel { width: 100vw; height: 100dvh; right: 0; bottom: 0; border-radius: 0; border: 0; }
 }
+
+/* Visually hidden, still read by screen readers and search engines */
+.sr-only {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}

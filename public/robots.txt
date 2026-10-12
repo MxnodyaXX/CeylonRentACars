@@ -1,0 +1,8 @@
+# Ceylon Rent A Cars — https://ceylonrentacars.com
+# All public pages may be crawled. The personal booking pages (/book, /alternatives)
+# are not blocked here on purpose: they carry a "noindex" tag, which search engines
+# can only see if they are allowed to fetch the page.
+User-agent: *
+Allow: /
+
+Sitemap: https://ceylonrentacars.com/sitemap.xml

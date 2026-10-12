@@ -17,6 +17,7 @@ import BookingPage from './components/BookingPage';
 import AlternativesPage from './components/AlternativesPage';
 import AssistantChat from './components/AssistantChat';
 import { useLinkInterception, useRoute } from './lib/router';
+import { usePageSeo } from './lib/seo';
 
 function Toast() {
   const { toast } = useApp();
@@ -40,6 +41,7 @@ export default function App() {
   useScrollReveal(revealed);
   useLinkInterception();
   const { path, search } = useRoute();
+  usePageSeo(path);
 
   return (
     <>

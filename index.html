@@ -3,8 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ceylon Rent A Cars — Vehicle Rentals Across Sri Lanka</title>
-  <meta name="description" content="Rent verified cars, SUVs, vans and premium vehicles from trusted owners across Sri Lanka. Clear pricing, secure booking, airport pickup and chauffeur options.">
+
+  <!-- SEO: the build (vite.config.js → seoPages) writes a copy of this file per public page
+       with its own title, description and canonical. Keep the markers on these tags. -->
+  <title>Ceylon Rent A Cars | Car Rental in Sri Lanka</title>
+  <meta name="description" content="Find your ideal rental car in Sri Lanka with Ceylon Rent A Cars. Explore vehicles, compare rental options and send your inquiry online.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://ceylonrentacars.com/">
+
+  <!-- Open Graph (Facebook, WhatsApp, LinkedIn…) -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Ceylon Rent A Cars">
+  <meta property="og:locale" content="en_LK">
+  <meta property="og:title" content="Ceylon Rent A Cars | Car Rental in Sri Lanka">
+  <meta property="og:description" content="Find your ideal rental car in Sri Lanka with Ceylon Rent A Cars. Explore vehicles, compare rental options and send your inquiry online.">
+  <meta property="og:url" content="https://ceylonrentacars.com/">
+  <meta property="og:image" content="https://ceylonrentacars.com/img/brand/og-image.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:type" content="image/jpeg">
+  <meta property="og:image:alt" content="Ceylon Rent A Cars logo">
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Ceylon Rent A Cars | Car Rental in Sri Lanka">
+  <meta name="twitter:description" content="Find your ideal rental car in Sri Lanka with Ceylon Rent A Cars. Explore vehicles, compare rental options and send your inquiry online.">
+  <meta name="twitter:image" content="https://ceylonrentacars.com/img/brand/og-image.jpg">
+  <meta name="twitter:image:alt" content="Ceylon Rent A Cars logo">
+
+  <!-- Structured data: only verified details (name, website, logo) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": "https://ceylonrentacars.com/#organization",
+        "name": "Ceylon Rent A Cars",
+        "url": "https://ceylonrentacars.com/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://ceylonrentacars.com/img/brand/logo-512.png",
+          "width": 512,
+          "height": 512
+        }
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://ceylonrentacars.com/#website",
+        "name": "Ceylon Rent A Cars",
+        "url": "https://ceylonrentacars.com/",
+        "inLanguage": "en",
+        "publisher": { "@id": "https://ceylonrentacars.com/#organization" }
+      }
+    ]
+  }
+  </script>
+
   <meta name="theme-color" content="#070708">
   <link rel="icon" href="/img/brand/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="/img/brand/icon-192.png">
@@ -19,6 +74,12 @@
 </head>
 <body>
   <div id="root"></div>
+  <!-- Crawlers that don't run JavaScript still get the essentials -->
+  <noscript>
+    <h1>Ceylon Rent A Cars — Car Rental in Sri Lanka</h1>
+    <p>Find your ideal rental car in Sri Lanka with Ceylon Rent A Cars. Explore cars, SUVs, vans and premium vehicles, choose self drive or a chauffeur, and send your inquiry online.</p>
+    <p><a href="/vehicles">Browse our rental vehicles</a></p>
+  </noscript>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

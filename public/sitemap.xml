@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Public, indexable pages only. /book and /alternatives are personal booking pages (noindex). -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://ceylonrentacars.com/</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://ceylonrentacars.com/vehicles</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://ceylonrentacars.com/feedback</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+</urlset>

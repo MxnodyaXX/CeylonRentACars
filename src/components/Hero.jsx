@@ -278,7 +278,9 @@ export default function Hero({ revealed = true }) {
         <div className="hero__copy">
           <span className="pill cr"><Icon name="badge" size="sm" />Verified Vehicle Rentals Across Sri Lanka</span>
           <h1 className="hero__title">
-            <span className="line"><span className="cr">Drive Sri Lanka.</span></span>
+            {/* Brand + main search phrase for search engines and screen readers; the visible headline is unchanged */}
+            <span className="sr-only">Ceylon Rent A Cars — car rental in Sri Lanka. </span>
+            <span className="line"><span className="cr">Drive Sri Lanka.</span></span>{' '}
             <span className="line"><span className="text-red cr">Your Way.</span></span>
           </h1>
           <p className="hero__sub cr">
