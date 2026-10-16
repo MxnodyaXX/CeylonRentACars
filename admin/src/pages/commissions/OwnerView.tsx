@@ -15,6 +15,7 @@ import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, 
 import { Booking, VehicleHandover } from '../../types';
 import { bookingDiscount } from '../../lib/revenue';
 import { durationLabel } from '../../lib/rentalPeriod';
+import { bookingTouchesVehicles, legsOf, ownerCommissions } from '../../lib/exchange';
 
 const BAR_COLORS = ['#E11D2A', '#10B981', '#F59E0B', '#8B5CF6', '#111114', '#EC4899'];
 type PeriodKey = 'all' | 'week' | 'month' | 'year' | 'custom';
@@ -253,7 +254,26 @@ export default function OwnerView() {
   const myName       = myOwner?.name ?? '';
   const myVehicles   = vehicles.filter((v) => v.ownerId === ownerId);
   const myVehicleIds = useMemo(() => new Set(myVehicles.map((v) => v.id)), [myVehicles]);
-  const myBookings   = useMemo(() => bookings.filter((b) => myVehicleIds.has(b.vehicleId)), [bookings, myVehicleIds]);
+  const myBookings   = useMemo(() => bookings.filter((b) => bookingTouchesVehicles(b, myVehicleIds)), [bookings, myVehicleIds]);
+  /** This owner's part of a booking — after a mid-trip exchange only their own car's days and share */
+  const mine = (b: Booking) => {
+    const cs = ownerCommissions(commissions, b.id, ownerId);
+    const legs = legsOf(b).filter((l) => myVehicleIds.has(l.vehicleId));
+    const comm = cs.length ? {
+      ...cs[0],
+      status: cs.every((c) => c.status === 'Paid') ? 'Paid' as const : cs[0].status,
+      coordinatorFee: cs.reduce((sum, c) => sum + (c.coordinatorFee ?? 0), 0),
+      ownerPayout: cs.reduce((sum, c) => sum + c.ownerPayout, 0),
+    } : undefined;
+    const exchanged = !!b.exchanges?.length;
+    return {
+      comm,
+      total: exchanged ? legs.reduce((sum, l) => sum + l.revenue, 0) : b.totalAmount,
+      days: exchanged ? legs.reduce((sum, l) => sum + l.days, 0) : b.totalDays,
+      vehicleId: legs[legs.length - 1]?.vehicleId ?? b.vehicleId,
+      exchanged,
+    };
+  };
   const myCommissions  = commissions.filter((c) => c.ownerId === ownerId);
   const pendingPayouts = myCommissions.filter((c) => c.status === 'Pending');
 
@@ -313,7 +333,7 @@ export default function OwnerView() {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .filter((b) => {
         if (rhStatus) {
-          const comm = commissions.find((c) => c.bookingId === b.id);
+          const comm = mine(b).comm;
           const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
           if (cs !== rhStatus) return false;
         }
@@ -330,9 +350,9 @@ export default function OwnerView() {
   }, [myBookings, rhStatus, rhDateRange, rhSearch, vehicles, commissions]);
 
   const rhBillable         = filteredRentHistory.filter((b) => b.status !== 'Cancelled');
-  const rhTotalAmount      = rhBillable.reduce((s, b) => s + b.totalAmount, 0);
-  const rhTotalReferralFee = rhBillable.reduce((s, b) => s + (commissions.find((c) => c.bookingId === b.id)?.coordinatorFee ?? 0), 0);
-  const rhTotalOwnerGets   = rhBillable.reduce((s, b) => s + (commissions.find((c) => c.bookingId === b.id)?.ownerPayout ?? 0), 0);
+  const rhTotalAmount      = rhBillable.reduce((s, b) => s + mine(b).total, 0);
+  const rhTotalReferralFee = rhBillable.reduce((s, b) => s + (mine(b).comm?.coordinatorFee ?? 0), 0);
+  const rhTotalOwnerGets   = rhBillable.reduce((s, b) => s + (mine(b).comm?.ownerPayout ?? 0), 0);
   const rhFiltersActive    = !!(rhSearch.trim() || rhStatus || rhPeriod !== 'all');
   const clearRhFilters     = () => { setRhSearch(''); setRhStatus(''); setRhPeriod('all'); setRhDateFrom(''); setRhDateTo(''); };
 
@@ -376,10 +396,11 @@ export default function OwnerView() {
     const cols = ['Booking', 'Phone', 'Vehicle', 'Reg No', 'Date Period', 'Referral', 'Total', 'Referral Fee', 'Owner Gets', 'Status'] as const;
     type Row = Record<(typeof cols)[number], string | number>;
     const rows: Row[] = filteredRentHistory.map((b) => {
-      const v    = vehicles.find((vv) => vv.id === b.vehicleId);
-      const comm = commissions.find((c) => c.bookingId === b.id);
+      const m    = mine(b);
+      const v    = vehicles.find((vv) => vv.id === m.vehicleId);
+      const comm = m.comm;
       const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
-      return { Booking: b.customerName, Phone: b.customerPhone, Vehicle: v ? `${v.brand} ${v.model}` : '', 'Reg No': v?.vehicleNumber ?? '', 'Date Period': `${b.startDate} to ${b.endDate}`, Referral: b.referral || comm?.referral || 'Direct', Total: b.totalAmount, 'Referral Fee': comm?.coordinatorFee ?? 0, 'Owner Gets': comm?.ownerPayout ?? 0, Status: cs };
+      return { Booking: b.customerName, Phone: b.customerPhone, Vehicle: v ? `${v.brand} ${v.model}` : '', 'Reg No': v?.vehicleNumber ?? '', 'Date Period': `${b.startDate} to ${b.endDate}`, Referral: b.referral || comm?.referral || 'Direct', Total: m.total, 'Referral Fee': comm?.coordinatorFee ?? 0, 'Owner Gets': comm?.ownerPayout ?? 0, Status: cs };
     });
     const lines = [cols.join(','), ...rows.map((r) => cols.map((h) => esc(r[h])).join(','))];
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
@@ -389,11 +410,12 @@ export default function OwnerView() {
 
   const exportRhPDF = () => {
     const body = filteredRentHistory.map((b) => {
-      const v    = vehicles.find((vv) => vv.id === b.vehicleId);
-      const comm = commissions.find((c) => c.bookingId === b.id);
+      const m    = mine(b);
+      const v    = vehicles.find((vv) => vv.id === m.vehicleId);
+      const comm = m.comm;
       const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
       const ref  = b.referral || comm?.referral || 'Direct';
-      return `<tr><td>${b.customerName}<br><small>${b.customerPhone}</small></td><td>${v ? `${v.brand} ${v.model}` : '—'}<br><small>${v?.vehicleNumber ?? ''}</small></td><td>${b.startDate}<br><small>to ${b.endDate} · ${b.totalDays}d</small></td><td>${ref}</td><td class="num">${fmtRs(b.totalAmount)}</td><td class="num">${(comm?.coordinatorFee ?? 0) > 0 ? fmtRs(comm!.coordinatorFee!) : '—'}</td><td class="num">${fmtRs(comm?.ownerPayout ?? 0)}</td><td class="ctr"><span class="badge">${cs}</span></td></tr>`;
+      return `<tr><td>${b.customerName}<br><small>${b.customerPhone}</small></td><td>${v ? `${v.brand} ${v.model}` : '—'}<br><small>${v?.vehicleNumber ?? ''}</small></td><td>${b.startDate}<br><small>to ${b.endDate} · ${m.days}d${m.exchanged ? ' (exchanged)' : ''}</small></td><td>${ref}</td><td class="num">${fmtRs(m.total)}</td><td class="num">${(comm?.coordinatorFee ?? 0) > 0 ? fmtRs(comm!.coordinatorFee!) : '—'}</td><td class="num">${fmtRs(comm?.ownerPayout ?? 0)}</td><td class="ctr"><span class="badge">${cs}</span></td></tr>`;
     }).join('');
     const thead = '<tr><th>Booking</th><th>Vehicle</th><th>Date Period</th><th>Referral</th><th class="num">Total</th><th class="num">Referral Fee</th><th class="num">Owner Gets</th><th class="ctr">Status</th></tr>';
     const tfoot = `<tr><td colspan="4">TOTALS · ${filteredRentHistory.length} record${filteredRentHistory.length !== 1 ? 's' : ''}</td><td class="num">${fmtRs(rhTotalAmount)}</td><td class="num">${rhTotalReferralFee > 0 ? fmtRs(rhTotalReferralFee) : '—'}</td><td class="num">${fmtRs(rhTotalOwnerGets)}</td><td></td></tr>`;
@@ -619,8 +641,9 @@ export default function OwnerView() {
             </thead>
             <tbody>
               {filteredRentHistory.map((b) => {
-                const v    = vehicles.find((vv) => vv.id === b.vehicleId);
-                const comm = commissions.find((c) => c.bookingId === b.id);
+                const m    = mine(b);
+                const v    = vehicles.find((vv) => vv.id === m.vehicleId);
+                const comm = m.comm;
                 const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
                 const ref  = b.referral || comm?.referral || 'Direct';
                 return (
@@ -635,12 +658,12 @@ export default function OwnerView() {
                     </td>
                     <td className="py-3">
                       <p className="text-sm text-navy-700">{b.startDate}</p>
-                      <p className="text-xs text-navy-400">to {b.endDate} · {b.totalDays}d</p>
+                      <p className="text-xs text-navy-400">to {b.endDate} · {m.days}d{m.exchanged && <span className="ml-1 text-amber-700">· exchanged</span>}</p>
                     </td>
                     <td className="py-3">
                       <span className="text-xs bg-navy-50 text-navy-600 px-2 py-0.5 rounded-full">{ref}</span>
                     </td>
-                    <td className="py-3 text-right text-sm font-semibold text-navy-800">Rs {b.totalAmount.toLocaleString()}</td>
+                    <td className="py-3 text-right text-sm font-semibold text-navy-800">Rs {m.total.toLocaleString()}</td>
                     <td className="py-3 text-right">
                       {(comm?.coordinatorFee ?? 0) > 0
                         ? <span className="text-sm font-semibold text-amber-700">Rs {comm!.coordinatorFee!.toLocaleString()}</span>

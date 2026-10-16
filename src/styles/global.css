@@ -1485,6 +1485,12 @@ a.pt-stat:hover { border-color: var(--line-2); }
 .pt-sum__total dd { font-size: 18px; }
 .pt-detail-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
+.pt-swap { border-color: rgba(251, 191, 36, .35); background: linear-gradient(180deg, rgba(251, 191, 36, .06), var(--surface)); }
+.pt-swap__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pt-swap__list li { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 14px; }
+.pt-swap__list b { color: var(--muted); font-weight: 600; min-width: 150px; }
+.pt-swap__list span { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+
 /* payments */
 .pt-payments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .pt-payments li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }

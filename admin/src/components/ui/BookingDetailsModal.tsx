@@ -9,6 +9,8 @@ import { vehicleBodyColor } from './CarSVG';
 import HandoverModal from './HandoverModal';
 import ExtendRentalModal from './ExtendRentalModal';
 import SwapVehicleModal from './SwapVehicleModal';
+import ExchangeVehicleModal from './ExchangeVehicleModal';
+import { earlierKm, legsOf, mainCommission } from '../../lib/exchange';
 import { bookingTiming, StatusPill } from './BookingCard';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -96,7 +98,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const by = currentUser?.name ?? 'Staff';
   const b = bookings.find((x) => x.id === bookingId);
   const [tab, setTab] = useState<Tab>('overview');
-  const [dialog, setDialog] = useState<null | 'pickup' | 'return' | 'extend' | 'swap'>(null);
+  const [dialog, setDialog] = useState<null | 'pickup' | 'return' | 'extend' | 'swap' | 'exchange'>(null);
 
   if (!b) return null;
   const vehicle = vehicles.find((v) => v.id === b.vehicleId);
@@ -184,7 +186,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
           <div className="min-h-[320px]">
             {tab === 'overview' && <Overview b={b} vehicleName={vehicle ? `${vehicle.brand} ${vehicle.model}` : '—'} by={by} price={price}
               extra={{ vehicle, owner, driver }} />}
-            {tab === 'payments' && <Payments b={b} by={by} price={price} commissionPayout={commissions.find((c) => c.bookingId === b.id)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
+            {tab === 'payments' && <Payments b={b} by={by} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
             {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} />}
             {tab === 'documents' && <Documents b={b} by={by} canDelete={isAdmin()} onPrintAgreement={() => {
               printRentalAgreement(b, vehicle, by);
@@ -200,8 +202,11 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
             <button type="button" onClick={() => setTab('payments')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CreditCard size={13} /> Record payment</button>
             {isAdmin() && <button type="button" onClick={() => onEdit(b)} className={`${smallBtn} bg-amber-100 text-amber-800 hover:bg-amber-200`}><Pencil size={13} /> Edit</button>}
             <span className="flex-1" />
-            {(b.status === 'Confirmed' || b.status === 'Ongoing') && (
+            {b.status === 'Confirmed' && (
               <button type="button" onClick={() => setDialog('swap')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><ArrowLeftRight size={13} /> Swap vehicle</button>
+            )}
+            {b.status === 'Ongoing' && (
+              <button type="button" onClick={() => setDialog('exchange')} className={`${smallBtn} bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200`}><ArrowLeftRight size={13} /> Exchange vehicle</button>
             )}
             {b.status === 'Ongoing' && (
               <button type="button" onClick={() => setDialog('extend')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CalendarPlus size={13} /> Extend</button>
@@ -226,6 +231,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
       {(dialog === 'pickup' || dialog === 'return') && <HandoverModal booking={b} kind={dialog} onClose={() => setDialog(null)} />}
       {dialog === 'extend' && <ExtendRentalModal booking={b} onClose={() => setDialog(null)} />}
       {dialog === 'swap' && <SwapVehicleModal booking={b} onClose={() => setDialog(null)} />}
+      {dialog === 'exchange' && <ExchangeVehicleModal booking={b} onClose={() => setDialog(null)} />}
     </>
   );
 }
@@ -238,7 +244,7 @@ function Overview({ b, by, price, extra }: {
   b: Booking; vehicleName: string; by: string; price: ReturnType<typeof priceBreakdown>;
   extra: { vehicle?: import('../../types').Vehicle; owner?: import('../../types').Owner; driver?: import('../../types').Driver };
 }) {
-  const { logBookingActivity } = useStore();
+  const { logBookingActivity, vehicles: allVehicles } = useStore();
   const { vehicle, owner, driver } = extra;
   const t = bookingTiming(b);
   const type = (b.rentalType ?? 'Daily') as RentalType;
@@ -274,8 +280,16 @@ function Overview({ b, by, price, extra }: {
         <KV k="Pickup" v={<>{fmtDate(b.startDate)} {fmtTime(b.startTime)}<br /><span className="text-navy-400 font-normal">{b.pickupLocation || 'Location not set'}</span></>} />
         <KV k="Return" v={<>{fmtDate(b.endDate)} {fmtTime(b.endTime)}<br /><span className="text-navy-400 font-normal">{b.dropLocation || b.pickupLocation || 'Location not set'}</span></>} />
         <KV k="Length" v={`${durationLabel(b)}${type !== 'Daily' && b.unitRate ? ` × ${rs(b.unitRate)} ${UNIT[type].rate}` : ''}`} />
-        {(b.checklists?.pickup || b.checklists?.return) && (
-          <KV k="Actual" v={`${b.checklists?.pickup ? `out ${fmtDateTime(b.checklists.pickup.at)}` : ''}${b.checklists?.return ? ` · back ${fmtDateTime(b.checklists.return.at)}` : ''}`} />
+        {(b.checklists?.pickup || b.checklists?.return) && (() => {
+          // after a mid-trip exchange the booking's pickup is the replacement's — the trip began with the first car
+          const out = b.exchanges?.[0]?.pickup ?? b.checklists?.pickup;
+          return <KV k="Actual" v={`${out ? `out ${fmtDateTime(out.at)}` : ''}${b.checklists?.return ? ` · back ${fmtDateTime(b.checklists.return.at)}` : ''}`} />;
+        })()}
+        {!!b.exchanges?.length && (
+          <KV k="Exchanged" v={<span className="text-amber-700">{b.exchanges.map((e) => {
+            const v = allVehicles.find((x) => x.id === e.fromVehicleId);
+            return `from ${v ? `${v.brand} ${v.model} (${v.vehicleNumber})` : 'previous car'} on ${fmtDateTime(e.at)}`;
+          }).join('; ')}</span>} />
         )}
         <p className={`text-xs font-semibold mt-2 ${t.tone === 'warn' ? 'text-red-600' : t.tone === 'live' ? 'text-emerald-700' : t.tone === 'soon' ? 'text-sky-700' : 'text-navy-400'}`}>{t.text}</p>
       </Card>
@@ -371,7 +385,7 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
   const [dep, setDep] = useState({ returned: held, deduction: 0, method: 'Cash', notes: '' });
   const [charge, setCharge] = useState({ kind: 'Traffic fine' as ChargeKind, amount: 0, date: today(), note: '' });
   const pickupKm = b.checklists?.pickup?.odometer, returnKm = b.checklists?.return?.odometer;
-  const extraKm = pickupKm !== undefined && returnKm !== undefined ? Math.max(0, returnKm - pickupKm - includedKm) : 0;
+  const extraKm = pickupKm !== undefined && returnKm !== undefined ? Math.max(0, returnKm - pickupKm + earlierKm(b) - includedKm) : 0;
   const extraKmCharged = (b.charges ?? []).some((c) => c.kind === 'Other' && /extra km/i.test(c.note ?? ''));
 
   const sign = (k: PaymentKind) => (k === 'Refund' || k === 'Deposit returned' ? -1 : 1);
@@ -499,7 +513,7 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
         <div className="grid sm:grid-cols-2 gap-x-6">
           <KV k="Referral" v={b.referral || 'Direct'} />
           <KV k="Referral fee" v={(b.referralFee ?? 0) > 0 ? `${rs(b.referralFee ?? 0)} · ${b.referralPaid ? 'paid' : 'not paid yet'}` : 'None'} />
-          <KV k="Owner payout" v={commissionPayout !== undefined ? rs(commissionPayout) : undefined} />
+          <KV k={b.exchanges?.length ? 'Owner payouts (all cars)' : 'Owner payout'} v={commissionPayout !== undefined ? rs(commissionPayout) : undefined} />
           <KV k="Payment method" v={b.paymentMethod} />
         </div>
       </Card>
@@ -543,7 +557,7 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
 }) {
   const included = (vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1);
   const out = b.checklists?.pickup?.odometer, back = b.checklists?.return?.odometer;
-  const driven = out !== undefined && back !== undefined ? back - out : undefined;
+  const driven = out !== undefined && back !== undefined ? back - out + earlierKm(b) : undefined;
   const ins = vehicle?.insurance;
   const insExpiresSoon = ins?.expiryDate && ins.expiryDate < b.endDate;
   return (
@@ -566,6 +580,7 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
           <KV k="Customer excess" v={b.agreement?.insuranceExcess ? rs(b.agreement.insuranceExcess) : 'Not set (Documents → Agreement)'} />
         </Card>
       </div>
+      {!!b.exchanges?.length && <ExchangeHistory b={b} />}
       {legacy.length > 0 && !b.checklists?.pickup && !b.checklists?.return && (
         <Card title="Handover records" icon={History}>
           {legacy.map((h) => (
@@ -574,6 +589,43 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
         </Card>
       )}
     </div>
+  );
+}
+
+/** Every car this booking used, with each exchange's details and owner split */
+function ExchangeHistory({ b }: { b: Booking }) {
+  const { vehicles, owners } = useStore();
+  const car = (id: string) => { const v = vehicles.find((x) => x.id === id); return v ? `${v.brand} ${v.model} (${v.vehicleNumber})` : '—'; };
+  const ownerOf = (id: string) => owners.find((o) => o.id === vehicles.find((v) => v.id === id)?.ownerId)?.name ?? '—';
+  const legs = legsOf(b);
+  return (
+    <Card title="Vehicle exchanges" icon={ArrowLeftRight}>
+      <div className="space-y-3">
+        {b.exchanges!.map((e) => (
+          <div key={e.id} className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 text-sm space-y-1">
+            <p className="font-semibold text-navy-800">{fmtDateTime(e.at)} · {car(e.fromVehicleId)} → {car(e.toVehicleId)}</p>
+            <p className="text-navy-600">{e.reason}{e.details ? ` — ${e.details}` : ''}</p>
+            <p className="text-xs text-navy-500">
+              Returned {e.returned.odometer.toLocaleString()} km{e.kmDriven !== undefined ? ` (${e.kmDriven.toLocaleString()} km driven)` : ''} · fuel {e.returned.fuel}
+              {' · '}replacement out at {e.delivered.odometer.toLocaleString()} km · fuel {e.delivered.fuel}
+            </p>
+            {(e.returned.damage || e.damage) && (
+              <p className="text-xs text-red-700">Damage: {e.returned.damage || e.damage?.description}{e.damage ? ` — paid by ${e.damage.payer === 'Undecided' ? 'not decided yet' : e.damage.payer.toLowerCase()}${e.damage.amount ? ` (${rs(e.damage.amount)})` : ''}` : ''}</p>
+            )}
+            {e.compensation && <p className="text-xs text-navy-500">Compensation to {ownerOf(e.fromVehicleId)}: {rs(e.compensation.amount)} (paid by {e.compensation.paidBy.toLowerCase()})</p>}
+            <p className="text-[11px] text-navy-400">by {e.by}</p>
+          </div>
+        ))}
+        <div className="rounded-lg bg-navy-50/60 divide-y divide-navy-100 text-sm">
+          {legs.map((l, i) => (
+            <div key={i} className="flex justify-between gap-3 px-3 py-2">
+              <span>{car(l.vehicleId)} · {ownerOf(l.vehicleId)} · {l.days} day{l.days === 1 ? '' : 's'}{i === legs.length - 1 ? ' (now)' : ''}</span>
+              <b>{rs(l.payout)}</b>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
   );
 }
 

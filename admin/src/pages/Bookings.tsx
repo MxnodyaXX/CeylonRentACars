@@ -32,6 +32,7 @@ import { bookingBill, bookingDue } from '../lib/credit';
 import VehicleImage from '../components/ui/VehicleImage';
 import { vehicleBodyColor } from '../components/ui/CarSVG';
 import RentalPeriodFields, { PeriodValue } from '../components/ui/RentalPeriodFields';
+import RentalPriceField, { PriceMode, priceFor } from '../components/ui/RentalPriceField';
 import { durationLabel, unitLabel, RentalType } from '../lib/rentalPeriod';
 import LocationInput from '../components/ui/LocationInput';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap, rentalDays } from '../lib/availability';
@@ -198,6 +199,9 @@ export default function Bookings() {
   const [customerMode,    setCustomerMode]    = useState<'new' | 'existing'>('new');
   const [selectedCustomer, setSelectedCustomer] = useState('');
   const [referralCustom,   setReferralCustom]   = useState(false);
+  // Daily price: standard (days × daily rent) or an agreed custom rate per day / total
+  const STANDARD_PRICE = { mode: 'standard' as PriceMode, customRate: 0, customTotal: 0 };
+  const [price, setPrice] = useState(STANDARD_PRICE);
 
   // Auto-open booking form when navigated from an inquiry conversion
   useEffect(() => {
@@ -221,6 +225,8 @@ export default function Bookings() {
     if (inq.dropLocation)   f.dropLocation   = inq.dropLocation;
     if (inq.customerEmail)  f.customerEmail  = inq.customerEmail;
     if (inq.totalAmount)    f.totalAmount    = inq.totalAmount;
+    if (f.startDate && f.endDate && f.startDate <= f.endDate) f.totalDays = rentalDays(f.startDate, f.endDate, f.startTime, f.endTime, f.waiveExtraDay);
+    setPrice(inq.totalAmount ? { mode: 'total', customRate: 0, customTotal: inq.totalAmount } : STANDARD_PRICE);
     if (inq.paidAmount)     f.paidAmount     = inq.paidAmount;
     if (inq.depositAmount)  { f.depositAmount = inq.depositAmount; f.depositType = inq.depositType ?? 'cash'; }
     if (inq.totalKm)        f.quotation = { ...f.quotation, totalKm: inq.totalKm };
@@ -303,6 +309,7 @@ export default function Bookings() {
     form.referral.trim().toLowerCase() === bookedVehicleOwner.name.trim().toLowerCase();
 
   const set = (field: string, value: unknown) => {
+    if (field === 'vehicleId') setPrice(STANDARD_PRICE);
     setForm((f) => {
       const updated = { ...f, [field]: value };
       // Dates, times and the vehicle all affect both the billed duration and
@@ -342,6 +349,13 @@ export default function Bookings() {
     const extraCost  = extraKm * (vehicle.extraKmRate ?? 50);
     f.estimatedAmount = f.totalAmount + extraCost;
   };
+
+  const standardRate = vehicles.find((v) => v.id === form.vehicleId)?.dailyRent ?? 0;
+  const dailyTotal = priceFor(price.mode, form.totalDays, standardRate, price.customRate, price.customTotal);
+  useEffect(() => {
+    if (form.rentalType !== 'Daily' || form.totalAmount === dailyTotal) return;
+    setForm((f) => { const updated = { ...f, totalAmount: dailyTotal }; recalcEstimate(updated); return updated; });
+  }, [dailyTotal, form.rentalType, form.totalAmount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Hourly / monthly / type change from RentalPeriodFields — merge it and re-check availability
   const applyPeriod = (patch: Partial<PeriodValue>) => setForm((f) => {
@@ -388,6 +402,7 @@ export default function Bookings() {
 
   const openAdd = (startDate = '') => {
     const f = emptyForm();
+    setPrice(STANDARD_PRICE);
     if (startDate) { f.startDate = startDate; f.endDate = startDate; }
     setForm(f);
     setModal('add');
@@ -410,6 +425,10 @@ export default function Bookings() {
       setError(`Enter the number of ${form.rentalType === 'Hourly' ? 'hours' : 'months'} and the rate.`);
       return;
     }
+    if (form.rentalType === 'Daily' && price.mode !== 'standard' && !(dailyTotal > 0)) {
+      setError('Enter the custom rental amount, or switch back to the standard price.');
+      return;
+    }
     if (!isVehicleAvailable(form.vehicleId, form.startDate, form.endDate, undefined, form.startTime, form.endTime)) {
       setError('Vehicle is not available for the selected dates and times.');
       return;
@@ -419,8 +438,15 @@ export default function Bookings() {
       return;
     }
     const { depositVehicleModel, depositVehicleColor, depositVehicleNumber, ...bookingData } = form;
+    // Record an agreed price next to the standard one, so the difference is explained later
+    const standardTotal = form.totalDays * standardRate;
+    const priceNote = form.rentalType === 'Daily' && price.mode !== 'standard' && dailyTotal !== standardTotal
+      ? [{ at: new Date().toISOString(), by: useAuthStore.getState().currentUser?.name ?? 'Staff', type: 'Note' as const,
+           text: `Custom price Rs ${dailyTotal.toLocaleString('en-LK')} (${price.mode === 'perDay' ? `Rs ${price.customRate.toLocaleString('en-LK')} / day` : 'agreed total'}) — standard was Rs ${standardTotal.toLocaleString('en-LK')} (${form.totalDays} days × Rs ${standardRate.toLocaleString('en-LK')})` }]
+      : [];
     const bookingId = addBooking({
       ...bookingData,
+      ...(priceNote.length ? { activity: priceNote } : {}),
       depositAssetDescription: form.depositType === 'vehicle'
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
@@ -1140,6 +1166,17 @@ export default function Bookings() {
           </label>
           </>}
           />
+
+          {form.rentalType === 'Daily' && form.vehicleId && form.totalDays > 0 && (
+            <RentalPriceField
+              days={form.totalDays}
+              standardRate={standardRate}
+              mode={price.mode}
+              customRate={price.customRate}
+              customTotal={price.customTotal}
+              onChange={(p) => setPrice((x) => ({ ...x, ...p }))}
+            />
+          )}
 
           {/* Full date-range conflict banner — shown after both dates are picked */}
           {form.vehicleId && form.startDate && form.endDate && availability !== null && (

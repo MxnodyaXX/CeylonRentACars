@@ -307,6 +307,21 @@ function TripDetail({ b, name }) {
         </div>
       </div>
 
+      {Array.isArray(b.vehicle_changes) && b.vehicle_changes.length > 0 && (
+        <section className="pt-card pt-swap">
+          <h3><Icon name="car" size="sm" /> Your vehicle was changed during the trip</h3>
+          <ol className="pt-swap__list">
+            {b.vehicle_changes.map((c, i) => (
+              <li key={i}>
+                <b>{fmtDate(c.at)}{' · '}{new Date(c.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</b>
+                <span>{c.from || 'Previous car'} <Icon name="arrow" size="sm" /> {c.to || 'Replacement'}{c.to_number ? ` (${c.to_number})` : ''}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="portal-muted pt-note">Your price stays the same. Questions? Message us any time.</p>
+        </section>
+      )}
+
       {phase !== 'cancelled' && (
         <ol className="pt-timeline">
           {steps.map((s) => (

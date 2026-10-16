@@ -289,11 +289,14 @@ await db.exec(sql('security/05_customer_portal.sql'));
 await db.exec(sql('security/05_customer_portal.sql'));   // safe to re-run
 const mine = (who, fn) => as(who, async () => (await db.query(`select * from ${fn}()`)).rows);
 await db.exec(`update bookings set payments = '[{"id":"p1","at":"2026-10-01T10:00:00Z","kind":"Advance","amount":5000,"method":"Cash","receiptNo":"R-1","note":"staff only note","by":"Admin"}]' where id = 'bA'`);
+await db.exec(`update bookings set exchanges = '[{"id":"x1","at":"2026-10-05T10:00:00Z","fromVehicleId":"vB","toVehicleId":"vA","fromDays":2,"fromRevenue":9000,"fromPayout":9000,"toRate":6000,"commissionId":"k9","reason":"Accident","returned":{"odometer":1,"fuel":"Full"},"delivered":{"odometer":1,"fuel":"Full"},"damage":{"description":"bumper","payer":"Customer","amount":20000}}]' where id = 'bA'`);
 const custA = await mine('custA', 'my_bookings');
 ok(custA.length === 1 && custA[0].id === 'bA', 'customer sees their own booking (phone typed 0711000001, login +94711000001)');
 ok(custA[0].reference === 'MRAC-BA' && custA[0].vehicle === 'Toyota Aqua' && Number(custA[0].balance) === 12000, 'with reference, car and balance');
 ok(!('internal_notes' in custA[0]) && !('notes' in custA[0]) && !('referral' in custA[0]), 'no staff notes or referral details');
 ok(custA[0].payments.length === 1 && custA[0].payments[0].amount === 5000 && custA[0].payments[0].receipt_no === 'R-1', 'payments listed (amount, method, receipt no)');
+ok(custA[0].vehicle_changes.length === 1 && custA[0].vehicle_changes[0].from === 'Honda Fit' && custA[0].vehicle_changes[0].to === 'Toyota Aqua', 'vehicle exchange shown (which car, when)');
+ok(!/fromPayout|toRate|9000|20000|bumper/.test(JSON.stringify(custA[0].vehicle_changes)), '…without owner payouts or damage costs');
 ok(!JSON.stringify(custA[0].payments).includes('staff only note') && !JSON.stringify(custA[0].payments).includes('Admin'), "…without staff notes or who entered them");
 const prof = await mine('custA', 'my_profile');
 ok(prof.length === 1 && prof[0].name === 'Customer of A' && prof[0].phone === '+94711000001', 'profile: name from their customer record + phone');

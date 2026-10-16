@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft, ActivityEntry, PaymentEntry, ExtraCharge } from '../types';
+import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft, ActivityEntry, PaymentEntry, ExtraCharge, VehicleExchange, HandoverChecklist } from '../types';
 import { sampleData } from '../data/sampleData';
 import { supabaseEnabled } from '../lib/supabase';
 import { db, dbFetchAll } from '../lib/db';
 import { resolveReferralFee } from '../lib/referral';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap } from '../lib/availability';
+import { legsOf, mainCommission, previewExchange } from '../lib/exchange';
 import { sendSms, smsTemplates, ADMIN_PHONE } from '../lib/sms';
 import { toast } from './useToast';
 
@@ -653,10 +654,12 @@ export const useStore = create<AppState>()(
           if (c.status !== 'Paid') a.pending += c.ownerPayout;
         });
 
-        const vehicles = s.vehicles.map((v) => {
-          const vb = active.filter((b) => b.vehicleId === v.id);
-          return { ...v, revenue: vb.reduce((sum, b) => sum + b.totalAmount, 0), rentCount: vb.length };
-        });
+        const vehicleAgg: Record<string, { revenue: number; count: number }> = {};
+        active.forEach((b) => legsOf(b).forEach((leg) => {
+          const a = (vehicleAgg[leg.vehicleId] ??= { revenue: 0, count: 0 });
+          a.revenue += leg.revenue; a.count += 1;
+        }));
+        const vehicles = s.vehicles.map((v) => ({ ...v, revenue: vehicleAgg[v.id]?.revenue ?? 0, rentCount: vehicleAgg[v.id]?.count ?? 0 }));
         const owners = s.owners.map((o) => {
           const agg = ownerAgg[o.id] ?? { total: 0, pending: 0 };
           return { ...o, totalEarnings: agg.total, pendingPayout: agg.pending };
@@ -695,10 +698,12 @@ export const useStore = create<AppState>()(
         const next: Booking = { ...prev, ...changes };
 
         const live = (b: Booking) => b.status !== 'Cancelled';
-        const comm = s.commissions.find((c) => c.bookingId === id);
+        const comm = mainCommission(s.commissions, prev);
         const ownerOf = (vid: string) => s.vehicles.find((v) => v.id === vid)?.ownerId;
-        const payout = (b: Booking) => Math.max(0, b.totalAmount - (b.referralFee ?? 0));
         const commPaid = comm?.status === 'Paid';
+        // the car the customer has now; after a mid-trip exchange earlier cars keep their fixed share
+        const current = (b: Booking) => { const l = legsOf(b); return l[l.length - 1]; };
+        const legPaid = (commissionId?: string) => s.commissions.find((c) => c.id === commissionId)?.status === 'Paid';
         const referrerOf = (b: Booking) =>
           b.referral && b.referral !== 'Direct'
             ? s.owners.find((o) => o.name.trim().toLowerCase() === b.referral!.trim().toLowerCase())
@@ -714,18 +719,25 @@ export const useStore = create<AppState>()(
           if (!oid) return;
           const d = (oDelta[oid] ??= { total: 0, pending: 0 }); d.total += total; d.pending += pending;
         };
-        const apply = (b: Booking, sign: 1 | -1, ownerPayout: number) => {
+        const apply = (b: Booking, sign: 1 | -1, currentPayout?: number) => {
           if (!live(b)) return;
-          addV(b.vehicleId, sign * b.totalAmount, sign);
-          addO(ownerOf(b.vehicleId), sign * ownerPayout, commPaid ? 0 : sign * ownerPayout);
+          const legs = legsOf(b);
+          legs.forEach((leg, i) => {
+            const isCurrent = i === legs.length - 1;
+            const p = isCurrent && currentPayout !== undefined ? currentPayout : leg.payout;
+            const paid = isCurrent ? commPaid : legPaid(leg.commissionId);
+            addV(leg.vehicleId, sign * leg.revenue, sign);
+            addO(ownerOf(leg.vehicleId), sign * p, paid ? 0 : sign * p);
+          });
           const ref = referrerOf(b), fee = b.referralFee ?? 0;
           if (ref && fee > 0) addO(ref.id, sign * fee, b.referralPaid ? 0 : sign * fee);
         };
-        apply(prev, -1, comm?.ownerPayout ?? payout(prev));
-        apply(next, 1, payout(next));
+        apply(prev, -1, comm?.ownerPayout);
+        apply(next, 1);
 
+        const exchanged = !!next.exchanges?.length;
         const commUpdates: Partial<Commission> | undefined = comm && {
-          totalIncome: next.totalAmount, coordinatorFee: next.referralFee ?? 0, ownerPayout: payout(next),
+          totalIncome: current(next).revenue, coordinatorFee: exchanged ? 0 : next.referralFee ?? 0, ownerPayout: current(next).payout,
           vehicleId: next.vehicleId, ownerId: ownerOf(next.vehicleId) ?? '', referral: next.referral ?? 'Direct',
         };
         const bookings = s.bookings.map((b) => (b.id === id ? next : b));
@@ -840,6 +852,142 @@ export const useStore = create<AppState>()(
       },
 
       // Pickup / return handover with its checklist — starts or completes the rental
+      exchangeVehicle: (bookingId, x) => {
+        const s = get();
+        const b = s.bookings.find((v) => v.id === bookingId);
+        if (!b) return 'Booking not found.';
+        if (b.status !== 'Ongoing') return 'Only a rental in progress can have its vehicle exchanged.';
+        if (x.toVehicleId === b.vehicleId) return 'Choose a different vehicle.';
+        const from = s.vehicles.find((v) => v.id === b.vehicleId);
+        const to = s.vehicles.find((v) => v.id === x.toVehicleId);
+        if (!from || !to) return 'Vehicle not found.';
+        const comm = mainCommission(s.commissions, b);
+        if (comm?.status === 'Paid') return 'The owner payout for this booking is already marked paid — change it in Commissions first.';
+        const atDate = new Date(x.at);
+        if (!get().isVehicleAvailable(to.id, atDate.toLocaleDateString('en-CA'), b.endDate, b.id, atDate.toTimeString().slice(0, 5), b.endTime)) {
+          return `${to.brand} ${to.model} is not free from the exchange time to the end of this booking.`;
+        }
+
+        const p = previewExchange(b, x.fromDays, to.dailyRent);
+        const ownerOf = (vid: string) => s.vehicles.find((v) => v.id === vid)?.ownerId;
+        const comp = x.compensation && x.compensation.amount > 0 ? x.compensation : undefined;
+        const pickupKm = b.checklists?.pickup?.odometer;
+        const ex: VehicleExchange = {
+          id: uid(), at: x.at, by: x.by, fromVehicleId: from.id, toVehicleId: to.id,
+          fromDays: p.fromDays, fromRevenue: p.fromRevenue, fromPayout: p.fromPayout, toRate: to.dailyRent,
+          commissionId: uid(), reason: x.reason, ...(x.details ? { details: x.details } : {}),
+          ...(b.checklists?.pickup ? { pickup: b.checklists.pickup } : {}),
+          returned: x.returned, delivered: x.delivered,
+          ...(pickupKm !== undefined ? { kmDriven: Math.max(0, x.returned.odometer - pickupKm) } : {}),
+          ...(x.damage?.description ? { damage: x.damage } : {}),
+          ...(comp ? { compensation: comp } : {}),
+        };
+        const name = (v: Vehicle) => `${v.brand} ${v.model} (${v.vehicleNumber})`;
+        const rsF = (n: number) => `Rs ${Math.round(n).toLocaleString('en-LK')}`;
+
+        // customer charges: damage they pay for, and the owner's lost days if they cover them
+        const today = x.at.slice(0, 10);
+        const newCharges: ExtraCharge[] = [
+          ...(x.damage?.payer === 'Customer' && (x.damage.amount ?? 0) > 0
+            ? [{ id: uid(), kind: 'Damage' as const, amount: x.damage.amount!, date: today, note: `${name(from)}: ${x.damage.description}`, status: 'Charged' as const, by: x.by, at: now() }] : []),
+          ...(comp?.paidBy === 'Customer'
+            ? [{ id: uid(), kind: 'Other' as const, amount: comp.amount, date: today, note: `Owner compensation for lost days — ${name(from)}`, status: 'Charged' as const, by: x.by, at: now() }] : []),
+        ];
+        const extra = newCharges.reduce((sum, c) => sum + c.amount, 0);
+        const text = [
+          `Vehicle exchanged: ${name(from)} → ${name(to)} — ${x.reason}${x.details ? ` (${x.details})` : ''}`,
+          `${from.vehicleNumber}: ${p.fromDays} day${p.fromDays === 1 ? '' : 's'}, owner gets ${rsF(p.fromPayout + (comp?.amount ?? 0))}; ${to.vehicleNumber}: ${p.toDays} day${p.toDays === 1 ? '' : 's'} × ${rsF(to.dailyRent)} = ${rsF(p.toPayout)}`,
+          ...(x.damage?.description ? [`Damage: ${x.damage.description} — paid by ${x.damage.payer}${x.damage.amount ? ` (${rsF(x.damage.amount)})` : ''}`] : []),
+        ].join('. ');
+        const deliveredList: HandoverChecklist = { at: x.at, by: x.by, odometer: x.delivered.odometer, fuel: x.delivered.fuel, items: {}, notes: `Replacement for ${name(from)}` };
+        const bookingChanges: Partial<Booking> = {
+          vehicleId: to.id,
+          exchanges: [...(b.exchanges ?? []), ex],
+          checklists: { ...(b.checklists ?? {}), pickup: deliveredList },
+          ...(newCharges.length ? { charges: [...(b.charges ?? []), ...newCharges], extraCharges: (b.extraCharges ?? 0) + extra } : {}),
+          activity: [...(b.activity ?? []), { at: now(), by: x.by, type: 'Swapped' as const, text }],
+        };
+        const next: Booking = { ...b, ...bookingChanges };
+        const legsBefore = legsOf(b), legsAfter = legsOf(next);
+        const curBefore = legsBefore[legsBefore.length - 1], curAfter = legsAfter[legsAfter.length - 1];
+
+        // commissions: the main row follows the new car; the old car's part gets its own row
+        const mainUpdates: Partial<Commission> = {
+          vehicleId: to.id, ownerId: ownerOf(to.id) ?? '', totalIncome: curAfter.revenue, ownerPayout: curAfter.payout, coordinatorFee: 0,
+        };
+        const legComm: Commission = {
+          id: ex.commissionId, bookingId: b.id, vehicleId: from.id, ownerId: ownerOf(from.id) ?? '',
+          referral: b.referral ?? 'Direct', totalIncome: p.fromRevenue, commissionRate: 0, commissionAmount: 0,
+          ownerPayout: p.fromPayout + (comp?.amount ?? 0), coordinatorFee: p.isFirst ? b.referralFee ?? 0 : 0,
+          status: 'Pending', createdAt: now(),
+        };
+
+        // older bookings may have no commission row — the replacement's share then gets a new one
+        const newMain: Commission | null = comm ? null : {
+          id: uid(), bookingId: b.id, referral: b.referral ?? 'Direct', commissionRate: 0, commissionAmount: 0,
+          status: 'Pending', createdAt: now(), ...(mainUpdates as Required<Pick<Commission, 'vehicleId' | 'ownerId' | 'totalIncome' | 'ownerPayout' | 'coordinatorFee'>>),
+        };
+        // owners: rebuild both owners' totals from their commission rows (the record of what they earn),
+        // the same way "Recalculate statistics" does — so the split is exact whatever the totals were before
+        const commissions = [...s.commissions.map((c) => (comm && c.id === comm.id ? { ...c, ...mainUpdates } : c)), legComm, ...(newMain ? [newMain] : [])];
+        const bookingsAfter = s.bookings.map((v) => (v.id === b.id ? next : v));
+        const liveIds = new Set(bookingsAfter.filter((v) => v.status !== 'Cancelled').map((v) => v.id));
+        const ownerUpdates: Record<string, Partial<Owner>> = {};
+        new Set([ownerOf(from.id), ownerOf(to.id)].filter(Boolean) as string[]).forEach((oid) => {
+          const mine = commissions.filter((c) => c.ownerId === oid && liveIds.has(c.bookingId));
+          const referrals = bookingsAfter.filter((v) => liveIds.has(v.id) && (v.referralFee ?? 0) > 0
+            && v.referral && s.owners.find((o) => o.id === oid)?.name.trim().toLowerCase() === v.referral.trim().toLowerCase());
+          ownerUpdates[oid] = {
+            totalEarnings: mine.reduce((sum, c) => sum + c.ownerPayout, 0) + referrals.reduce((sum, v) => sum + (v.referralFee ?? 0), 0),
+            pendingPayout: mine.filter((c) => c.status !== 'Paid').reduce((sum, c) => sum + c.ownerPayout, 0)
+              + referrals.filter((v) => !v.referralPaid).reduce((sum, v) => sum + (v.referralFee ?? 0), 0),
+          };
+        });
+
+        // vehicles: revenue follows each car's share; old car to maintenance (or free), new car on the trip
+        const fromUpdates: Partial<Vehicle> = {
+          revenue: Math.max(0, from.revenue - curBefore.revenue + p.fromRevenue), status: x.oldCarTo,
+          ...(x.returned.odometer > (from.mileage ?? 0) ? { mileage: x.returned.odometer } : {}),
+        };
+        const toUpdates: Partial<Vehicle> = {
+          revenue: to.revenue + curAfter.revenue, rentCount: to.rentCount + 1, status: 'Ongoing',
+          ...(x.delivered.odometer > (to.mileage ?? 0) ? { mileage: x.delivered.odometer } : {}),
+        };
+
+        // handover records (Handovers page) and a repair expense when the company / owner pays
+        const place = x.location || '—';
+        const handovers: VehicleHandover[] = [
+          { id: uid(), bookingId: b.id, vehicleId: from.id, type: 'return', location: place, dateTime: x.at, mileage: x.returned.odometer, fuelLevel: x.returned.fuel,
+            notes: ['Exchanged mid-trip', x.reason, x.returned.damage].filter(Boolean).join(' · '), createdAt: now() },
+          { id: uid(), bookingId: b.id, vehicleId: to.id, type: 'delivery', location: place, dateTime: x.at, mileage: x.delivered.odometer, fuelLevel: x.delivered.fuel,
+            notes: `Replacement for ${name(from)}`, createdAt: now() },
+        ];
+        const expense: Expense | null = x.damage && (x.damage.payer === 'Company' || x.damage.payer === 'Owner') && (x.damage.amount ?? 0) > 0
+          ? { id: uid(), vehicleId: from.id, category: 'Damage', amount: x.damage.amount!, date: today,
+              description: `${x.damage.description} — during booking of ${b.customerName} (paid by ${x.damage.payer === 'Owner' ? 'the owner' : 'the company'})`, createdAt: now() }
+          : null;
+
+        set((st) => ({
+          bookings: st.bookings.map((v) => (v.id === b.id ? next : v)),
+          commissions: [...st.commissions.map((c) => (comm && c.id === comm.id ? { ...c, ...mainUpdates } : c)), legComm, ...(newMain ? [newMain] : [])],
+          vehicles: st.vehicles.map((v) => (v.id === from.id ? { ...v, ...fromUpdates } : v.id === to.id ? { ...v, ...toUpdates } : v)),
+          owners: st.owners.map((o) => (ownerUpdates[o.id] ? { ...o, ...ownerUpdates[o.id] } : o)),
+          handovers: [...st.handovers, ...handovers],
+          expenses: expense ? [...st.expenses, expense] : st.expenses,
+        }));
+        sync(() => db.updateBooking(b.id, bookingChanges));
+        if (comm) sync(() => db.updateCommission(comm.id, mainUpdates));
+        if (newMain) sync(() => db.insertCommission(newMain));
+        sync(() => db.insertCommission(legComm));
+        sync(() => db.updateVehicle(from.id, fromUpdates));
+        sync(() => db.updateVehicle(to.id, toUpdates));
+        Object.entries(ownerUpdates).forEach(([oid, u]) => sync(() => db.updateOwner(oid, u)));
+        handovers.forEach((h) => sync(() => db.insertHandover(h)));
+        if (expense) sync(() => db.insertExpense(expense));
+        toast.success('Vehicle exchanged', `${b.customerName} continues in ${to.brand} ${to.model}.`);
+        return null;
+      },
+
       recordHandover: (id, kind, list, location) => {
         const st = get();
         const b = st.bookings.find((x) => x.id === id);
@@ -935,12 +1083,15 @@ export const useStore = create<AppState>()(
         const candStart = bookingStartMs({ startDate, startTime });
         const candEnd   = bookingEndMs({ endDate, endTime });
         return !bookings.some((b) => {
-          if (b.vehicleId !== vehicleId) return false;
           // Only live bookings (Confirmed/Ongoing) hold the vehicle — Completed
           // and Cancelled bookings release it, so they never block new dates.
           if (!blocksAvailability(b)) return false;
           if (excludeBookingId && b.id === excludeBookingId) return false;
-          return rangesOverlap(candStart, candEnd, bookingStartMs(b), bookingEndMs(b));
+          // After a mid-trip exchange each car is held only for its own part of the trip
+          return legsOf(b).some((leg) => leg.vehicleId === vehicleId && rangesOverlap(
+            candStart, candEnd,
+            leg.from ? new Date(leg.from).getTime() : bookingStartMs(b),
+            leg.until ? new Date(leg.until).getTime() : bookingEndMs(b)));
         });
       },
     }),

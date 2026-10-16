@@ -173,6 +173,7 @@ export interface Booking {
   documents?: BookingDocument[];    // licence / ID photos, signed agreement, receipts
   checklists?: { pickup?: HandoverChecklist; return?: HandoverChecklist };
   charges?: ExtraCharge[];          // fines, tolls, damage — added during or after the rental
+  exchanges?: VehicleExchange[];    // mid-trip vehicle exchanges, oldest first; vehicleId is the car the customer has now
   agreement?: RentalAgreement;
   activity?: ActivityEntry[];       // what happened to this booking, oldest first
   internalNotes?: string;           // staff only — never shown to the customer
@@ -225,6 +226,51 @@ export interface HandoverChecklist {
 }
 
 export type ChargeKind = 'Traffic fine' | 'Toll' | 'Parking' | 'Damage' | 'Fuel' | 'Late return' | 'Cleaning' | 'Other';
+/** What staff enter on the Exchange vehicle screen */
+export interface ExchangeInput {
+  at: string;                 // ISO
+  by: string;
+  toVehicleId: string;
+  fromDays: number;           // days with the old car (suggested, can be corrected)
+  reason: string;
+  details?: string;
+  returned: { odometer: number; fuel: string; damage?: string };
+  delivered: { odometer: number; fuel: string };
+  location?: string;
+  damage?: { description: string; payer: DamagePayer; amount?: number };
+  compensation?: { amount: number; paidBy: 'Customer' | 'Company' };
+  oldCarTo: 'Maintenance' | 'Available';
+}
+
+/** Damage found when a car is exchanged mid-trip */
+export type DamagePayer = 'Customer' | 'Insurance' | 'Company' | 'Owner' | 'Undecided';
+
+/**
+ * One mid-trip exchange: the customer gives back `fromVehicleId` and continues in `toVehicleId`.
+ * The old car's part of the trip is fixed here (days, share of the price, owner payout); the
+ * current car's part is the rest of the booking (lib/exchange.ts → legsOf).
+ */
+export interface VehicleExchange {
+  id: string;
+  at: string;                 // ISO — when the cars were exchanged
+  by: string;
+  fromVehicleId: string;      // car taken back
+  toVehicleId: string;        // replacement
+  fromDays: number;           // days the old car was with the customer (this part of the trip)
+  fromRevenue: number;        // share of the booking price for those days
+  fromPayout: number;         // what the old car's owner earns for them (referral fee already taken off)
+  toRate: number;             // replacement's daily rent at the time — its owner earns this per day
+  commissionId: string;       // the commission row for the old car's part
+  reason: string;
+  details?: string;
+  pickup?: HandoverChecklist; // the old car's original pickup checklist (the booking's pickup is now the replacement's)
+  returned: { odometer: number; fuel: string; damage?: string; photos?: string[] };
+  delivered: { odometer: number; fuel: string };
+  kmDriven?: number;          // old car: returned − pickup odometer
+  damage?: { description: string; payer: DamagePayer; amount?: number };
+  compensation?: { amount: number; paidBy: 'Customer' | 'Company' };   // old car owner's lost days
+}
+
 export interface ExtraCharge {
   id: string;
   kind: ChargeKind;
@@ -550,6 +596,8 @@ export interface AppState {
   addCharge: (id: string, c: Omit<ExtraCharge, 'id' | 'at' | 'status'>) => void;
   waiveCharge: (id: string, chargeId: string, by: string) => void;
   recordHandover: (id: string, kind: 'pickup' | 'return', list: HandoverChecklist, location?: string) => void;
+  /** Mid-trip vehicle exchange — returns an error message, or null when done */
+  exchangeVehicle: (bookingId: string, x: ExchangeInput) => string | null;
   settleCredit: (bookingId: string) => void;
 
   drafts: ProcessDraft[];

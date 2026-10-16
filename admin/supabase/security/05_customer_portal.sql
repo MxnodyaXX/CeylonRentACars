@@ -11,6 +11,9 @@
 -- Needs private.allow() from 02. Safe to re-run. Undo: rollback/05_rollback_customer_portal.sql
 -- =====================================================================
 
+-- Mid-trip vehicle exchanges (also in fix-missing-columns.sql) — needed by my_bookings below
+alter table public.bookings add column if not exists exchanges jsonb;
+
 -- One form for every way a phone gets typed: 077 123 4567 / +94771234567 / 0094 77… → 94771234567
 create or replace function private.phone_key(p text) returns text
 language sql immutable set search_path = '' as $$
@@ -57,7 +60,7 @@ create function public.my_bookings() returns table (
   id text, reference text, vehicle_id text, vehicle text, vehicle_number text, image_url text,
   start_date text, end_date text, start_time text, end_time text, total_days int, rental_type text,
   status text, total_amount numeric, paid_amount numeric, balance numeric, deposit_amount numeric,
-  pickup_location text, drop_location text, payments jsonb, created_at text
+  pickup_location text, drop_location text, payments jsonb, vehicle_changes jsonb, created_at text
 )
 language sql stable security definer set search_path = '' as $$
   select b.id,
@@ -76,6 +79,14 @@ language sql stable security definer set search_path = '' as $$
                      'at', p ->> 'at', 'kind', p ->> 'kind', 'amount', (p ->> 'amount')::numeric,
                      'method', p ->> 'method', 'receipt_no', p ->> 'receiptNo') order by p ->> 'at')
                    from jsonb_array_elements(case when jsonb_typeof(b.payments) = 'array' then b.payments else '[]'::jsonb end) p),
+                  '[]'::jsonb),
+         -- cars exchanged mid-trip: only which car and when (no payouts, damage costs or staff notes)
+         coalesce((select jsonb_agg(jsonb_build_object(
+                     'at', e ->> 'at',
+                     'from', (select trim(coalesce(f.brand, '') || ' ' || coalesce(f.model, '')) from public.vehicles f where f.id = e ->> 'fromVehicleId'),
+                     'to', (select trim(coalesce(t.brand, '') || ' ' || coalesce(t.model, '')) from public.vehicles t where t.id = e ->> 'toVehicleId'),
+                     'to_number', (select t.vehicle_number from public.vehicles t where t.id = e ->> 'toVehicleId')) order by e ->> 'at')
+                   from jsonb_array_elements(case when jsonb_typeof(b.exchanges) = 'array' then b.exchanges else '[]'::jsonb end) e),
                   '[]'::jsonb),
          b.created_at
   from public.bookings b

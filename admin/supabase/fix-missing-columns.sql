@@ -77,3 +77,9 @@ notify pgrst, 'reload schema';
 alter table inquiries add column if not exists alt_token text;
 
 notify pgrst, 'reload schema';
+
+-- ── Mid-trip vehicle exchanges (Booking → Exchange vehicle) ─────────────────
+-- Each exchange: which car was taken back, when, its days / share / owner payout, damage notes.
+alter table bookings add column if not exists exchanges jsonb;
+
+notify pgrst, 'reload schema';

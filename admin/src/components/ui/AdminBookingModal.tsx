@@ -10,7 +10,7 @@
  * identified and labelled throughout the app.
  */
 
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Modal from './Modal';
 import Select from './Select';
 import TimePicker from './TimePicker';
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap, rentalDays } from '../../lib/availability';
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
+import RentalPriceField, { PriceMode, priceFor } from './RentalPriceField';
 import DoNotRentWarning from './DoNotRentWarning';
 import { CustomerIdFields, MissingDetailsPanel } from './NewBookingDetails';
 import { unitLabel, RentalType } from '../../lib/rentalPeriod';
@@ -197,9 +198,13 @@ export default function AdminBookingModal({ open, onClose }: Props) {
   const [customerMode,    setCustomerMode]    = useState<'new' | 'existing'>('new');
   const [selectedCustomer, setSelectedCustomer] = useState('');
   const [referralCustom,  setReferralCustom]  = useState(false);
+  // Daily price: standard (days × daily rent) or an agreed custom rate per day / total
+  const STANDARD_PRICE = { mode: 'standard' as PriceMode, customRate: 0, customTotal: 0 };
+  const [price, setPrice] = useState(STANDARD_PRICE);
 
   // Reset everything when modal is opened/closed
   const handleClose = () => {
+    setPrice(STANDARD_PRICE);
     setStep('owner');
     setSelectedOwner(null);
     setSelectedVehicle(null);
@@ -255,6 +260,14 @@ export default function AdminBookingModal({ open, onClose }: Props) {
     if (s && e && vid && s <= e) setAvailability(isVehicleAvailable(vid, s, e, undefined, updated.startTime, updated.endTime));
     return updated;
   });
+
+  // A daily booking's total follows the chosen price (standard or custom); a new vehicle starts at standard
+  const standardRate = vehicles.find((v) => v.id === form.vehicleId)?.dailyRent ?? 0;
+  const dailyTotal = priceFor(price.mode, form.totalDays, standardRate, price.customRate, price.customTotal);
+  useEffect(() => { setPrice(STANDARD_PRICE); }, [form.vehicleId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (form.rentalType === 'Daily' && form.totalAmount !== dailyTotal) setForm((f) => ({ ...f, totalAmount: dailyTotal }));
+  }, [dailyTotal, form.rentalType, form.totalAmount]);
 
   // Pick owner → go to vehicle step
   const pickOwner = (owner: Owner) => {
@@ -327,6 +340,10 @@ export default function AdminBookingModal({ open, onClose }: Props) {
       setError(`Enter the number of ${form.rentalType === 'Hourly' ? 'hours' : 'months'} and the rate.`);
       return;
     }
+    if (form.rentalType === 'Daily' && price.mode !== 'standard' && !(dailyTotal > 0)) {
+      setError('Enter the custom rental amount, or switch back to the standard price.');
+      return;
+    }
     if (!isVehicleAvailable(form.vehicleId, form.startDate, form.endDate, undefined, form.startTime, form.endTime)) {
       setError('Vehicle is not available for the selected dates.');
       return;
@@ -336,8 +353,15 @@ export default function AdminBookingModal({ open, onClose }: Props) {
       return;
     }
     const { depositVehicleModel, depositVehicleColor, depositVehicleNumber, ...bookingData } = form;
+    // Record an agreed price next to the standard one, so the difference is explained later
+    const standardTotal = form.totalDays * standardRate;
+    const priceNote = form.rentalType === 'Daily' && price.mode !== 'standard' && dailyTotal !== standardTotal
+      ? [{ at: new Date().toISOString(), by: useAuthStore.getState().currentUser?.name ?? 'Staff', type: 'Note' as const,
+           text: `Custom price Rs ${dailyTotal.toLocaleString('en-LK')} (${price.mode === 'perDay' ? `Rs ${price.customRate.toLocaleString('en-LK')} / day` : 'agreed total'}) — standard was Rs ${standardTotal.toLocaleString('en-LK')} (${form.totalDays} days × Rs ${standardRate.toLocaleString('en-LK')})` }]
+      : [];
     const bookingId = addBooking({
       ...bookingData,
+      ...(priceNote.length ? { activity: priceNote } : {}),
       depositAssetDescription: form.depositType === 'vehicle'
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
@@ -576,6 +600,17 @@ export default function AdminBookingModal({ open, onClose }: Props) {
             </label>
               </>}
             />
+
+            {form.rentalType === 'Daily' && form.vehicleId && form.totalDays > 0 && (
+              <RentalPriceField
+                days={form.totalDays}
+                standardRate={standardRate}
+                mode={price.mode}
+                customRate={price.customRate}
+                customTotal={price.customTotal}
+                onChange={(p) => setPrice((x) => ({ ...x, ...p }))}
+              />
+            )}
 
             {/* Availability banner */}
             {form.vehicleId && form.startDate && form.endDate && availability !== null && (

@@ -99,6 +99,7 @@ function oToDb(o: Owner) {
 const BOOKING_EXT: [keyof Booking, string][] = [
   ['payments', 'payments'], ['customerInfo', 'customer_info'], ['documents', 'documents'], ['checklists', 'checklists'],
   ['charges', 'charges'], ['agreement', 'agreement'], ['activity', 'activity'], ['internalNotes', 'internal_notes'],
+  ['exchanges', 'exchanges'],
 ]
 function bookingExtRow(u: Partial<Booking>) {
   const row: Record<string, unknown> = {}
@@ -160,6 +161,7 @@ function bFromDb(r: Record<string, unknown>): Booking {
     documents: Array.isArray(r.documents) ? (r.documents as Booking['documents']) : undefined,
     checklists: (r.checklists as Booking['checklists']) ?? undefined,
     charges: Array.isArray(r.charges) ? (r.charges as Booking['charges']) : undefined,
+    exchanges: Array.isArray(r.exchanges) ? (r.exchanges as Booking['exchanges']) : undefined,
     agreement: (r.agreement as Booking['agreement']) ?? undefined,
     activity: Array.isArray(r.activity) ? (r.activity as Booking['activity']) : undefined,
     internalNotes: (r.internal_notes as string) ?? undefined,
