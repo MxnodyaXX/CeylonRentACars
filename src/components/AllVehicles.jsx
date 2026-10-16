@@ -109,6 +109,7 @@ export default function AllVehicles({ search = '' }) {
   const [price, setPrice] = useState(null); // null = full range
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sort, setSort] = useState('recommended');
+  const [query, setQuery] = useState(() => new URLSearchParams(search).get('q') || '');
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // Category links ("/vehicles?type=suv") pre-select a type
@@ -117,8 +118,10 @@ export default function AllVehicles({ search = '' }) {
   const range = price ?? bounds;
   const hasAvailability = vehicles.some(v => v.available != null);
 
+  const words = useMemo(() => query.toLowerCase().split(/\s+/).filter(Boolean), [query]);
   const results = useMemo(() => {
     const list = vehicles.filter(v =>
+      words.every(w => `${v.name} ${v.year ?? ''} ${v.catLabel}`.toLowerCase().includes(w)) &&
       (!typeSel.size || typeSel.has(v.cat)) &&
       (!fuelSel.size || fuelSel.has(v.fuel)) &&
       v.seats >= minSeats &&
@@ -134,12 +137,20 @@ export default function AllVehicles({ search = '' }) {
       recommended: (a, b) => (b.available === true) - (a.available === true) || (b.hires ?? 0) - (a.hires ?? 0) || a.price - b.price,
     }[sort];
     return [...list].sort(by);
-  }, [vehicles, typeSel, fuelSel, minSeats, trans, range, bounds, availableOnly, sort]);
+  }, [vehicles, words, typeSel, fuelSel, minSeats, trans, range, bounds, availableOnly, sort]);
 
   const activeCount = typeSel.size + fuelSel.size + (minSeats ? 1 : 0) + (trans !== 'all' ? 1 : 0) + (price ? 1 : 0) + (availableOnly ? 1 : 0);
   const clearAll = () => {
-    setTypeSel(new Set()); setFuelSel(new Set()); setMinSeats(0); setTrans('all'); setPrice(null); setAvailableOnly(false);
+    setTypeSel(new Set()); setFuelSel(new Set()); setMinSeats(0); setTrans('all'); setPrice(null); setAvailableOnly(false); setQuery('');
   };
+
+  // A typed search is sent to analytics once the visitor stops typing (the words only)
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) return undefined;
+    const t = setTimeout(() => track('search', { search_term: term.slice(0, 60), results: results.length }), 1200);
+    return () => clearTimeout(t);
+  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     document.body.style.overflow = sheetOpen ? 'hidden' : '';
@@ -263,8 +274,14 @@ export default function AllVehicles({ search = '' }) {
           </aside>
           {sheetOpen && <div className="filters__scrim" onClick={() => setSheetOpen(false)} />}
 
-          <section className="catalog__results" aria-live="polite">
-            <div className="catalog__bar">
+          <section className="catalog__results">
+            <div className="catalog__search" role="search">
+              <Icon name="search" />
+              <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by vehicle name — e.g. Toyota Aqua, Prius, Wagon R"
+                     aria-label="Search vehicles by name" autoComplete="off" enterKeyHint="search" maxLength={60} />
+              {query && <button type="button" className="catalog__search-clear" aria-label="Clear search" onClick={() => setQuery('')}><Icon name="x" size="sm" /></button>}
+            </div>
+            <div className="catalog__bar" aria-live="polite">
               <p className="catalog__count">
                 <strong>{status === 'loading' ? '…' : results.length}</strong> {results.length === 1 ? 'vehicle' : 'vehicles'} found
                 <span className="live"><i />Live availability</span>
@@ -293,6 +310,15 @@ export default function AllVehicles({ search = '' }) {
                     <h3>We couldn’t load the fleet right now</h3>
                     <p>Please check your connection and try again.</p>
                     <div className="fleet-empty__ctas"><button className="btn btn--red" onClick={retry}>Try again</button></div>
+                  </>
+                ) : vehicles.length && words.length ? (
+                  <>
+                    <h3>No vehicles named “{query.trim()}”</h3>
+                    <p>Check the spelling, try just the model (e.g. “Aqua”){activeCount ? ', or clear the filters' : ''}.</p>
+                    <div className="fleet-empty__ctas">
+                      <button className="btn btn--red" onClick={() => setQuery('')}>Clear search</button>
+                      {activeCount > 0 && <button className="btn btn--ghost" onClick={clearAll}>Clear all filters</button>}
+                    </div>
                   </>
                 ) : vehicles.length ? (
                   <>

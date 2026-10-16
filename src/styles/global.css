@@ -1165,6 +1165,17 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 
 /* ---- Results ---- */
 .catalog__results { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.catalog__search { position: relative; display: flex; align-items: center; }
+.catalog__search > .ic { position: absolute; left: 16px; color: var(--muted); pointer-events: none; }
+.catalog__search input {
+  width: 100%; height: 52px; padding: 0 46px 0 46px; border-radius: 14px; font: inherit; font-size: 15px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--line); transition: border-color .2s, box-shadow .2s;
+}
+.catalog__search input::placeholder { color: var(--dim); }
+.catalog__search input:focus { outline: none; border-color: var(--red); box-shadow: 0 0 0 4px var(--red-soft); }
+.catalog__search input::-webkit-search-cancel-button { display: none; }
+.catalog__search-clear { position: absolute; right: 10px; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: var(--muted); }
+.catalog__search-clear:hover { color: var(--text); background: rgba(255, 255, 255, .06); }
 .catalog__bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
 .catalog__count { font-size: 15px; color: var(--muted); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .catalog__count strong { color: var(--text); font-size: 20px; }
@@ -1226,7 +1237,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   .catalog-page { padding-top: 24px; }
   .catalog__bar { flex-direction: column; align-items: stretch; }
   .catalog__actions { justify-content: space-between; }
-  .sort span { display: none; }
+  .sort > span { display: none; }   /* the "Sort by" label only — not the chosen option */
   .vrow { grid-template-columns: 1fr; gap: 14px; padding: 12px; }
   .vrow__media { aspect-ratio: 16 / 9; }
   .vrow__price { flex-direction: row; align-items: center; justify-content: space-between; border-left: 0; border-top: 1px solid var(--line); padding: 12px 2px 0; gap: 8px; }
