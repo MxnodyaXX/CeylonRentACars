@@ -28,6 +28,8 @@ import CreditManagement from './pages/CreditManagement';
 import Handovers from './pages/Handovers';
 import Customers from './pages/Customers';
 import Settings from './pages/Settings';
+import Breakdowns from './pages/Breakdowns';
+import BreakdownIncident from './pages/BreakdownIncident';
 import ChangePasswordScreen from './pages/ChangePasswordScreen';
 import Incomplete from './pages/Incomplete';
 import Website from './pages/Website';
@@ -135,6 +137,8 @@ export default function App() {
           <Route path="/permissions" element={isAdmin() ? <Permissions />      : <Navigate to="/" replace />} />
           <Route path="/settings"    element={isAdmin() || currentUser?.role === 'owner' ? <Settings /> : <Navigate to="/" replace />} />
           <Route path="/credit"      element={isAdmin() ? <CreditManagement /> : <Navigate to="/" replace />} />
+          <Route path="/breakdowns"     element={isAdmin() ? <Breakdowns /> : <Navigate to="/" replace />} />
+          <Route path="/breakdowns/:id" element={isAdmin() ? <BreakdownIncident /> : <Navigate to="/" replace />} />
           <Route path="/website"     element={isAdmin() ? <Website />          : <Navigate to="/" replace />} />
           <Route path="/feedback"    element={isAdmin() ? <Feedback />         : <Navigate to="/" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />

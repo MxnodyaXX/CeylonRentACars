@@ -20,6 +20,7 @@ import { vehicleNetRevenue } from '../lib/revenue';
 const STATUS_OPTIONS: VehicleStatus[] = ['Available', 'Reserved', 'Ongoing', 'Maintenance'];
 const FUEL_TYPES    = ['Petrol', 'Diesel', 'Hybrid', 'Electric', 'CNG'];
 const TRANSMISSIONS = ['Manual', 'Automatic', 'CVT', 'Semi-Automatic'];
+const MAX_HEROES = 3;   // hero images per vehicle — the admin picks which one the website shows
 
 const empty = (): Omit<Vehicle, 'id' | 'createdAt' | 'revenue' | 'rentCount'> => ({
   vehicleNumber: '',
@@ -58,8 +59,12 @@ export default function Vehicles() {
   // Admin image (cut-out) and hero image: one each — saved URL plus an optional new file
   const [adminSaved,      setAdminSaved]      = useState<string | null>(null);
   const [adminPending,    setAdminPending]    = useState<{ file: File; preview: string } | null>(null);
-  const [heroSaved,       setHeroSaved]       = useState<string | null>(null);
-  const [heroPending,     setHeroPending]     = useState<{ file: File; preview: string } | null>(null);
+  // Hero images: up to 3 (saved URLs + new files); heroShown = the one the website shows (its URL / preview)
+  const [heroSaved,       setHeroSaved]       = useState<string[]>([]);
+  const [heroPending,     setHeroPending]     = useState<{ file: File; preview: string }[]>([]);
+  const [heroShown,       setHeroShown]       = useState<string | null>(null);
+  const heroSavedRef = useRef<string[]>([]);
+  heroSavedRef.current = heroSaved;   // read inside the async file reader
   const [cropSlot,        setCropSlot]        = useState<ImageSlot>('photos');
   const cardFileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef  = useRef<string | null>(null);
@@ -82,8 +87,10 @@ export default function Vehicles() {
     setPendingPreviews([]);
     setAdminSaved(v?.imageUrl ?? null);
     setAdminPending(null);
-    setHeroSaved(v?.heroImageUrl ?? null);
-    setHeroPending(null);
+    const heroes = v?.heroImages?.length ? v.heroImages : v?.heroImageUrl ? [v.heroImageUrl] : [];
+    setHeroSaved(heroes.slice(0, MAX_HEROES));
+    setHeroPending([]);
+    setHeroShown(v?.heroImageUrl ?? heroes[0] ?? null);
     setGalleryIndex(0);
   };
 
@@ -128,7 +135,10 @@ export default function Vehicles() {
     const reader = new FileReader();
     reader.onload = (e) => {
       const next = { file, preview: e.target!.result as string };
-      if (slot === 'admin') setAdminPending(next); else setHeroPending(next);
+      if (slot === 'admin') { setAdminPending(next); return; }
+      // a hero image goes into a free slot (max 3); the first one becomes the shown one
+      setHeroPending((list) => (heroSavedRef.current.length + list.length >= MAX_HEROES ? list : [...list, next]));
+      setHeroShown((cur) => cur ?? next.preview);
     };
     reader.readAsDataURL(file);
   };
@@ -141,16 +151,24 @@ export default function Vehicles() {
     if (!accepted.length) return;
     cropSlotRef.current = slot;
     setCropSlot(slot);
-    // Admin and hero take a single image; vehicle photos can be several
-    cropQueueRef.current = slot === 'photos' ? accepted.slice(1) : [];
+    // Admin takes a single image; hero images fill the free slots (up to 3); vehicle photos can be several
+    const freeHero = MAX_HEROES - heroSaved.length - heroPending.length;
+    if (slot === 'hero' && freeHero <= 0) { toast.warning('Hero images are full', 'Remove one first — up to 3 per vehicle.'); return; }
+    cropQueueRef.current = slot === 'photos' ? accepted.slice(1) : slot === 'hero' ? accepted.slice(1, freeHero) : [];
     startCropFor(accepted[0]);
   };
 
   const clearSingle = (slot: 'admin' | 'hero') => {
     if (slot === 'admin') { setAdminSaved(null); setAdminPending(null); }
-    else { setHeroSaved(null); setHeroPending(null); }
+    else { setHeroSaved([]); setHeroPending([]); setHeroShown(null); }
   };
 
+  const removeHero = (url: string) => {
+    const rest = [...heroSaved, ...heroPending.map((h) => h.preview)].filter((u) => u !== url);
+    setHeroSaved((list) => list.filter((u) => u !== url));
+    setHeroPending((list) => list.filter((h) => h.preview !== url));
+    if (heroShown === url) setHeroShown(rest[0] ?? null);
+  };
   const removeSavedUrl = (url: string) => setSavedUrls((prev) => prev.filter((u) => u !== url));
   const removePending  = (idx: number) => {
     setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
@@ -208,7 +226,15 @@ export default function Vehicles() {
 
       // Upload new files for each image kind
       const adminUrl = adminPending ? (await upload(adminPending.file)) ?? adminSaved : adminSaved;
-      const heroUrl  = heroPending  ? (await upload(heroPending.file))  ?? heroSaved  : heroSaved;
+      // hero images: upload the new ones, keep the order, and work out which URL is shown
+      const uploadedHeroes: { preview: string; url: string }[] = [];
+      for (const h of heroPending) {
+        const url = await upload(h.file);
+        if (url) uploadedHeroes.push({ preview: h.preview, url });
+      }
+      const heroList = [...heroSaved, ...uploadedHeroes.map((h) => h.url)].slice(0, MAX_HEROES);
+      const shownUrl = uploadedHeroes.find((h) => h.preview === heroShown)?.url ?? heroShown;
+      const heroUrl = (shownUrl && heroList.includes(shownUrl) ? shownUrl : heroList[0]) ?? null;
       const uploadedPhotos: string[] = [];
       for (const file of pendingFiles) {
         const url = await upload(file);
@@ -225,18 +251,20 @@ export default function Vehicles() {
         imageUpdates.imageUrls = adminUrl ? [adminUrl] : [];
       }
       if (heroUrl !== (orig?.heroImageUrl ?? null)) imageUpdates.heroImageUrl = heroUrl ?? undefined;
+      const origHeroes = orig?.heroImages?.length ? orig.heroImages : orig?.heroImageUrl ? [orig.heroImageUrl] : [];
+      if (JSON.stringify(heroList) !== JSON.stringify(origHeroes)) imageUpdates.heroImages = heroList;
       if (JSON.stringify(photoUrls) !== JSON.stringify(orig?.photoUrls ?? [])) imageUpdates.photoUrls = photoUrls;
 
       // Delete replaced/removed files from storage (best-effort)
       if (orig) {
         if (orig.imageUrl && orig.imageUrl !== adminUrl) deleteVehicleImage(orig.imageUrl);
-        if (orig.heroImageUrl && orig.heroImageUrl !== heroUrl) deleteVehicleImage(orig.heroImageUrl);
+        origHeroes.filter((u) => !heroList.includes(u)).forEach(deleteVehicleImage);
         (orig.photoUrls ?? []).filter((u) => !photoUrls.includes(u)).forEach(deleteVehicleImage);
       }
 
       if (modal === 'edit') {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { imageUrl, imageUrls, heroImageUrl, photoUrls: _p, ...details } = form as Vehicle;
+        const { imageUrl, imageUrls, heroImageUrl, heroImages: _h, photoUrls: _p, ...details } = form as Vehicle;
         // Only send the spec fields if they changed (keeps edits working before website.sql adds them)
         if (details.fuelEfficiency === (selected?.fuelEfficiency ?? undefined)) delete details.fuelEfficiency;
         if (details.tankCapacity === (selected?.tankCapacity ?? undefined)) delete details.tankCapacity;
@@ -614,7 +642,10 @@ export default function Vehicles() {
           <VehicleImageFields
             enabled={supabaseEnabled}
             admin={{ url: adminPending?.preview ?? adminSaved, isNew: !!adminPending }}
-            hero={{ url: heroPending?.preview ?? heroSaved, isNew: !!heroPending }}
+            heroes={[...heroSaved.map((url) => ({ url, isNew: false })), ...heroPending.map((h) => ({ url: h.preview, isNew: true }))]}
+            heroShown={heroShown}
+            onShowHero={setHeroShown}
+            onRemoveHero={removeHero}
             photos={{ saved: savedUrls, pending: pendingPreviews }}
             onPick={handleFileSelect}
             onClear={clearSingle}

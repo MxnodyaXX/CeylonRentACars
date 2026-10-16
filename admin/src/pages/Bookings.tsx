@@ -244,7 +244,11 @@ export default function Bookings() {
     if (status && ['All', 'Confirmed', 'Ongoing', 'Completed', 'Cancelled'].includes(status)) {
       setTab(status as BookingStatus | 'All');
     }
-  }, [location.search]);
+    // /bookings?open=<id> opens that booking's details (e.g. from a breakdown incident)
+    const open = new URLSearchParams(location.search).get('open');
+    const b = open ? bookings.find((x) => x.id === open) : undefined;
+    if (b) { setSelected(b); setModal('view'); }
+  }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Owner sees only their vehicle bookings
   const myVehicleIds = currentUser?.role === 'owner'

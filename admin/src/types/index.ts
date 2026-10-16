@@ -38,7 +38,8 @@ export interface Vehicle {
   imageUrl?: string;
   imageUrls?: string[];      // legacy local-only list; superseded by the three image kinds below
   // imageUrl (above) = ADMIN image: transparent cut-out shown on the admin cards
-  heroImageUrl?: string;     // HERO image: wide polished photo for the website hero
+  heroImageUrl?: string;     // HERO image shown on the website (vehicle cards + homepage banner) — one of heroImages
+  heroImages?: string[];     // up to 3 hero images; heroImageUrl says which one is shown
   photoUrls?: string[];      // VEHICLE photos: real photos customers browse in the details
   color?: string;
   seats?: number;
@@ -174,6 +175,7 @@ export interface Booking {
   checklists?: { pickup?: HandoverChecklist; return?: HandoverChecklist };
   charges?: ExtraCharge[];          // fines, tolls, damage — added during or after the rental
   exchanges?: VehicleExchange[];    // mid-trip vehicle exchanges, oldest first; vehicleId is the car the customer has now
+  payoutAdjustments?: PayoutAdjustment[];  // deductions from a car owner's payout (e.g. their share of a breakdown repair)
   agreement?: RentalAgreement;
   activity?: ActivityEntry[];       // what happened to this booking, oldest first
   internalNotes?: string;           // staff only — never shown to the customer
@@ -226,6 +228,23 @@ export interface HandoverChecklist {
 }
 
 export type ChargeKind = 'Traffic fine' | 'Toll' | 'Parking' | 'Damage' | 'Fuel' | 'Late return' | 'Cleaning' | 'Other';
+/**
+ * A deduction from (or, if negative, an addition to) what one car's owner earns on a booking —
+ * e.g. the owner's share of a breakdown repair, or days a partner vehicle covered. Kept on the
+ * booking so every recalculation of the payout keeps it; reversed, never deleted.
+ */
+export interface PayoutAdjustment {
+  id: string;
+  vehicleId: string;          // whose part of the booking it applies to
+  amount: number;             // + deducted from the payout, − added
+  reason: string;
+  source?: string;            // e.g. breakdown incident ref
+  by: string;
+  at: string;
+  reversedAt?: string;
+  reversedBy?: string;
+}
+
 /** What staff enter on the Exchange vehicle screen */
 export interface ExchangeInput {
   at: string;                 // ISO
@@ -591,11 +610,16 @@ export interface AppState {
   editBooking: (id: string, updates: Partial<Booking>, meta: { by: string; changes: string[]; reason?: string; type?: ActivityEntry['type'] }) => void;
   // ── Full booking record ──
   logBookingActivity: (id: string, entry: Omit<ActivityEntry, 'at'>, updates?: Partial<Booking>) => void;
-  recordPayment: (id: string, p: Omit<PaymentEntry, 'id' | 'at'> & { at?: string }) => void;
+  /** Returns the ledger entry id (pass id to record a known entry) */
+  recordPayment: (id: string, p: Omit<PaymentEntry, 'id' | 'at'> & { at?: string; id?: string }) => string | undefined;
   settleDeposit: (id: string, s: { returned: number; deduction: number; method: string; notes?: string }, by: string) => void;
-  addCharge: (id: string, c: Omit<ExtraCharge, 'id' | 'at' | 'status'>) => void;
+  /** Returns the charge id (pass id to create it with a known one) */
+  addCharge: (id: string, c: Omit<ExtraCharge, 'id' | 'at' | 'status'> & { id?: string }) => string | undefined;
   waiveCharge: (id: string, chargeId: string, by: string) => void;
   recordHandover: (id: string, kind: 'pickup' | 'return', list: HandoverChecklist, location?: string) => void;
+  /** Add / reverse a payout adjustment (owner offset) — the commission and owner totals follow */
+  adjustOwnerPayout: (bookingId: string, a: Omit<PayoutAdjustment, 'id' | 'at'> & { id?: string }) => string | null;
+  reverseOwnerPayoutAdjustment: (bookingId: string, adjustmentId: string, by: string) => string | null;
   /** Mid-trip vehicle exchange — returns an error message, or null when done */
   exchangeVehicle: (bookingId: string, x: ExchangeInput) => string | null;
   settleCredit: (bookingId: string) => void;

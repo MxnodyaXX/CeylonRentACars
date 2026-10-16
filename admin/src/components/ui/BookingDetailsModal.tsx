@@ -10,6 +10,7 @@ import HandoverModal from './HandoverModal';
 import ExtendRentalModal from './ExtendRentalModal';
 import SwapVehicleModal from './SwapVehicleModal';
 import ExchangeVehicleModal from './ExchangeVehicleModal';
+import BookingBreakdownsTab from '../breakdowns/BookingBreakdownsTab';
 import { earlierKm, legsOf, mainCommission } from '../../lib/exchange';
 import { bookingTiming, StatusPill } from './BookingCard';
 import { useStore } from '../../store/useStore';
@@ -28,12 +29,13 @@ import type {
   ActivityEntry, Booking, BookingDocument, ChargeKind, CustomerInfo, DocumentKind, HandoverChecklist, PaymentKind, RentalAgreement,
 } from '../../types';
 
-type Tab = 'overview' | 'payments' | 'vehicle' | 'documents' | 'history';
+type Tab = 'overview' | 'payments' | 'vehicle' | 'documents' | 'breakdowns' | 'history';
 const TABS: { id: Tab; label: string; icon: typeof FileText }[] = [
   { id: 'overview', label: 'Overview', icon: ClipboardList },
   { id: 'payments', label: 'Payments', icon: Wallet },
   { id: 'vehicle', label: 'Vehicle & handover', icon: ShieldCheck },
   { id: 'documents', label: 'Documents', icon: FileText },
+  { id: 'breakdowns', label: 'Breakdowns', icon: AlertTriangle },
   { id: 'history', label: 'History', icon: History },
 ];
 const PAYMENT_KINDS: PaymentKind[] = ['Payment', 'Advance', 'Refund', 'Deposit received', 'Deposit returned'];
@@ -192,6 +194,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
               printRentalAgreement(b, vehicle, by);
               store.logBookingActivity(b.id, { by, type: 'Agreement', text: 'Rental agreement printed' }, { agreement: { ...(b.agreement ?? {}), printedAt: new Date().toISOString() } });
             }} />}
+            {tab === 'breakdowns' && <BookingBreakdownsTab b={b} canReport={isAdmin() && (b.status === 'Ongoing' || b.status === 'Confirmed')} />}
             {tab === 'history' && <HistoryTab b={b} by={by} legacy={handovers.filter((h) => h.bookingId === b.id)} />}
           </div>
 

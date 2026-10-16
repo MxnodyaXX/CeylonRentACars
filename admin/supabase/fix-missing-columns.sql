@@ -83,3 +83,16 @@ notify pgrst, 'reload schema';
 alter table bookings add column if not exists exchanges jsonb;
 
 notify pgrst, 'reload schema';
+
+-- ── Up to 3 hero images per vehicle (Vehicles → Edit → Hero images) ──────────
+-- hero_images holds the choices; hero_image_url stays the one the website shows.
+alter table vehicles add column if not exists hero_images jsonb not null default '[]'::jsonb;
+update vehicles set hero_images = jsonb_build_array(hero_image_url)
+where hero_image_url is not null and hero_images = '[]'::jsonb;
+
+notify pgrst, 'reload schema';
+
+-- ── Owner payout adjustments (e.g. owner's share of a breakdown repair, deducted from the payout) ──
+alter table bookings add column if not exists payout_adjustments jsonb;
+
+notify pgrst, 'reload schema';

@@ -24,7 +24,25 @@ export interface Leg {
   commissionId?: string; // past legs: their own commission row
 }
 
+/** Live payout adjustments (owner offsets) per car on this booking */
+export const adjustmentsFor = (b: Booking, vehicleId: string) =>
+  (b.payoutAdjustments ?? []).filter((a) => !a.reversedAt && a.vehicleId === vehicleId).reduce((s, a) => s + a.amount, 0);
+
 export function legsOf(b: Booking): Leg[] {
+  const legs = baseLegs(b);
+  // an adjustment applies once, to that car's latest part of the booking
+  const seen = new Set<string>();
+  for (let i = legs.length - 1; i >= 0; i--) {
+    const l = legs[i];
+    if (seen.has(l.vehicleId)) continue;
+    seen.add(l.vehicleId);
+    const adj = adjustmentsFor(b, l.vehicleId);
+    if (adj) legs[i] = { ...l, payout: Math.max(0, Math.round((l.payout - adj) * 100) / 100) };
+  }
+  return legs;
+}
+
+function baseLegs(b: Booking): Leg[] {
   const ex = b.exchanges ?? [];
   const fee = b.referralFee ?? 0;
   if (!ex.length) {

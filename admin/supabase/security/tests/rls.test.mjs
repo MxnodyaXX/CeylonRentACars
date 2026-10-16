@@ -336,5 +336,44 @@ ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`
 await db.exec(sql('security/rollback/05_rollback_customer_portal.sql'));
 ok((await db.query(`select to_regprocedure('public.my_bookings()') f`)).rows[0].f === null, 'rollback removes the portal functions');
 
+console.log('\n06 — breakdown management');
+await db.exec(sql('security/06_breakdowns.sql'));
+await db.exec(sql('security/06_breakdowns.sql'));   // safe to re-run
+const incident = (id, booking, vehicle, owner) => `insert into breakdown_incidents (id, ref, booking_id, vehicle_id, owner_id, category, description, created_by)
+  values ('${id}', 'BD-${id}', '${booking}', '${vehicle}', '${owner}', 'mechanical', 'Engine stopped', 'Admin')`;
+ok((await as('admin', () => tryQ(incident('iA', 'bA', 'vA', 'oA')))) === null, 'admin can report a breakdown');
+await as('admin', () => db.exec(incident('iB', 'bB', 'vB', 'oB')));
+await as('admin', () => db.exec(`
+  insert into breakdown_events (id, incident_id, by, type, text) values ('eA1', 'iA', 'Admin', 'created', 'Reported'), ('eB1', 'iB', 'Admin', 'created', 'Reported');
+  insert into breakdown_solutions (id, incident_id, kind, created_by) values ('sA', 'iA', 'onsite_repair', 'Admin'), ('sB', 'iB', 'towing_garage', 'Admin');
+  insert into breakdown_expenses (id, incident_id, solution_id, category, description, quantity, unit_cost, amount, created_by)
+    values ('xA', 'iA', 'sA', 'labour', 'Labour', 2, 1500, 3000, 'Admin'), ('xB', 'iB', 'sB', 'towing', 'Tow', 1, 8000, 8000, 'Admin');
+  insert into breakdown_allocations (id, incident_id, party, mode, value, amount, reason, decided_by) values ('aA', 'iA', 'owner', 'percent', 100, 3000, 'Wear and tear', 'Admin');
+  insert into breakdown_payments (id, incident_id, kind, payer, payee, amount, idempotency_key, created_by) values ('pA', 'iA', 'vendor_payment', 'company', 'Garage', 3000, 'k-1', 'Admin');
+  insert into breakdown_documents (id, incident_id, kind, name, path, uploaded_by) values ('dA', 'iA', 'photo', 'x.jpg', 'bA/breakdowns/iA/x.jpg', 'Admin');`));
+for (const t of ['breakdown_incidents', 'breakdown_events', 'breakdown_solutions', 'breakdown_expenses', 'breakdown_allocations', 'breakdown_payments', 'breakdown_documents']) {
+  const key = t === 'breakdown_incidents' ? 'id' : 'incident_id';
+  const a = await as('A', () => ids(`select ${key} from ${t}`));
+  ok(a.length > 0 && a.every((x) => x === 'iA'), `owner A sees only their incident in ${t}`);
+}
+ok((await as('B', () => ids('select id from breakdown_incidents'))).join() === 'iB', "owner B doesn't see owner A's incident");
+ok(!!(await as('A', () => tryQ(incident('iX', 'bA', 'vA', 'oA')))), 'owners cannot report / change incidents (read-only)');
+ok((await as('A', () => db.query(`update breakdown_payments set amount = 1 where id = 'pA' returning id`))).rows.length === 0, 'owners cannot change payments');
+ok(!!(await as('anon', () => tryQ('select * from breakdown_incidents'))), 'website visitors have no access');
+ok((await as('custA', () => ids('select id from breakdown_incidents'))).length === 0, 'customer logins see nothing');
+ok(!!(await as('admin', () => tryQ(`delete from breakdown_payments where id = 'pA'`))), 'no one can delete financial history (even admins)');
+ok(!!(await as('admin', () => tryQ(`delete from breakdown_incidents where id = 'iA'`))), '…or incidents');
+ok(!!(await as('admin', () => tryQ(`insert into breakdown_payments (id, incident_id, kind, payer, payee, amount, idempotency_key, created_by) values ('pA2', 'iA', 'vendor_payment', 'company', 'Garage', 3000, 'k-1', 'Admin')`))), 'the same payment cannot be posted twice (one-time key)');
+ok(!!(await as('admin', () => tryQ(`insert into breakdown_expenses (id, incident_id, category, description, quantity, unit_cost, amount, created_by) values ('xBad', 'iA', 'parts', 'Wrong total', 2, 1000, 5000, 'Admin')`))), 'an expense total must equal quantity × unit cost');
+ok(!!(await as('admin', () => tryQ(`insert into breakdown_expenses (id, incident_id, category, description, quantity, unit_cost, amount, created_by) values ('xBad2', 'iA', 'parts', 'Negative part', 1, 1000, -1000, 'Admin')`))), 'only a discount can be negative');
+ok((await as('admin', () => tryQ(`insert into breakdown_expenses (id, incident_id, category, description, quantity, unit_cost, amount, created_by) values ('xDisc', 'iA', 'discount', 'Goodwill', 1, 500, -500, 'Admin')`))) === null, 'a discount line is negative');
+ok(!!(await as('admin', () => tryQ(`insert into breakdown_payments (id, incident_id, kind, payer, payee, amount, idempotency_key, created_by) values ('pZ', 'iA', 'refund', 'company', 'customer', 0, 'k-z', 'Admin')`))), 'payments must be more than zero');
+ok(!!(await as('admin', () => tryQ(`insert into breakdown_incidents (id, ref, booking_id, category, description, created_by) values ('iZ', 'BD-iZ', 'no-such-booking', 'tyre', 'x', 'Admin')`))), 'every incident belongs to a real booking');
+ok(!!(await as('admin', () => tryQ(`insert into breakdown_allocations (id, incident_id, party, mode, value, amount, reason, decided_by) values ('aBad', 'iA', 'owner', 'percent', 150, 0, 'x', 'Admin')`))), 'a share cannot be more than 100%');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 06');
+await db.exec(sql('security/rollback/06_rollback_breakdowns.sql'));
+ok((await db.query(`select to_regclass('public.breakdown_incidents') t`)).rows[0].t === null, 'rollback removes the breakdown tables');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -23,7 +23,7 @@ checked in the browser (`admin` / `admin123`). SMS / WhatsApp functions could be
   ```
   cd admin/supabase/security/tests
   npm install
-  npm test          # expect: 145 passed · 42 passed · 13 passed · 33 passed, 0 failed
+  npm test          # expect: 177 passed · 42 passed · 13 passed · 33 passed, 0 failed
   ```
 - [ ] Pick a quiet time (about 30–45 min). Have the owners' phone numbers ready (step 7).
 
@@ -206,6 +206,34 @@ booked or enquired get a code. Codes go out through Text.lk with the current sen
   An unknown number gets "We couldn't find any bookings" and no SMS.
 
 **New sender ID later:** `npx supabase secrets set TEXTLK_SENDER_ID="<new id>"` — used by all SMS, including portal codes.
+
+## Part 4 — breakdown management (Admin → Breakdowns, Booking details → Breakdowns)
+
+Report a breakdown on a booking, run one or more solutions (on-site repair, vehicle replacement, partner
+vehicle, towing & garage, alternative transport, termination & refund), record every cost, decide who is
+responsible, record what was actually paid, and close the incident only when the money is settled.
+
+- [ ] SQL Editor → run `admin/supabase/fix-missing-columns.sql` (adds `bookings.exchanges` and
+      `bookings.payout_adjustments` — safe to re-run).
+- [ ] SQL Editor → run `06_breakdowns.sql` (7 tables + security rules; undo: `rollback/06_rollback_breakdowns.sql`).
+- [ ] Run `verify.sql` → still 0 FAIL.
+- [ ] Push the admin.
+- [ ] Try it on a test booking: Bookings → open an ongoing booking → **Breakdowns** → Report breakdown →
+      add a solution → add an expense → Expenses & payments → decide responsibility → record the payment →
+      Resolution → Resolve → Close.
+
+How money flows (nothing is double-counted; nothing is deleted — expenses are voided, payments reversed):
+
+| Action | What happens |
+|---|---|
+| Expense line | Counted once in the incident cost; "Already paid" records who paid the provider |
+| Responsibility | Owner / customer / company / insurance, % or Rs, with a reason; anything undecided stays "pending investigation" |
+| Customer's share | **Approve & add to booking bill** → a Damage charge on the booking (once) |
+| Owner's share | **Deduct from payout** → a payout adjustment kept on the booking (survives later edits; reversible) |
+| Replacement price difference | Only after the customer agrees → booking charge (more) or discount (credit); the booking price is never rewritten |
+| Termination | Proposal (pro rata) → admin approves → booking shortened to the used days (audited, original price kept) → refund recorded in the booking payments |
+
+Owners can **read** incidents on their own vehicles; only admins can change anything.
 
 ## Review notes
 

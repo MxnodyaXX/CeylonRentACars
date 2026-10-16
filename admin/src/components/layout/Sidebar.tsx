@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import {
+import { Siren,
   LayoutDashboard, Car, CalendarDays, MessageSquare,
   Percent, Users, Receipt, UserCheck, Bell, Settings, ShieldCheck, Truck, Contact, HandCoins, CreditCard, AlertTriangle, Globe,
   ChevronsLeft, ChevronDown, MessageCircle, Smartphone, MessageSquareHeart, LucideIcon,
@@ -21,6 +21,7 @@ const groups: { title: string; links: Link[] }[] = [
     { to: '/inquiries',     icon: MessageSquare,   label: 'Inquiries'   },
     { to: '/messages',      icon: MessageCircle,   label: 'Messages'    },
     { to: '/handovers',     icon: Truck,           label: 'Handovers'   },
+    { to: '/breakdowns',    icon: Siren,           label: 'Breakdowns'  },
     { to: '/notifications', icon: Bell,            label: 'Alerts'      },
     { to: '/incomplete',    icon: AlertTriangle,   label: 'Incomplete'  },
   ] },
@@ -43,7 +44,7 @@ const groups: { title: string; links: Link[] }[] = [
   ] },
 ];
 
-const ADMIN_ONLY = ['/owners', '/credit', '/website', '/feedback', '/permissions', '/whatsapp-setup'];
+const ADMIN_ONLY = ['/breakdowns', '/owners', '/credit', '/website', '/feedback', '/permissions', '/whatsapp-setup'];
 
 /* 5 primary links shown in the mobile pill */
 const mobileNav = [

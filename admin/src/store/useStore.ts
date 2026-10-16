@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft, ActivityEntry, PaymentEntry, ExtraCharge, VehicleExchange, HandoverChecklist } from '../types';
+import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft, ActivityEntry, PaymentEntry, ExtraCharge, VehicleExchange, HandoverChecklist, PayoutAdjustment } from '../types';
 import { sampleData } from '../data/sampleData';
 import { supabaseEnabled } from '../lib/supabase';
 import { db, dbFetchAll } from '../lib/db';
@@ -766,15 +766,23 @@ export const useStore = create<AppState>()(
           ownerUpdates[o.id] = { totalEarnings: Math.max(0, o.totalEarnings + d.total), pendingPayout: Math.max(0, o.pendingPayout + d.pending) };
         });
 
+        // earlier cars' commission rows (mid-trip exchanges) follow their part too — e.g. a payout adjustment
+        const legRows: Record<string, Partial<Commission>> = {};
+        legsOf(next).forEach((l) => {
+          if (!l.commissionId) return;
+          const c = s.commissions.find((x) => x.id === l.commissionId);
+          if (c && c.status !== 'Paid' && Math.abs(c.ownerPayout - l.payout) > 0.005) legRows[c.id] = { ownerPayout: l.payout };
+        });
         set((st) => ({
           bookings,
-          commissions: commUpdates ? st.commissions.map((c) => (c.id === comm!.id ? { ...c, ...commUpdates } : c)) : st.commissions,
+          commissions: st.commissions.map((c) => (commUpdates && c.id === comm!.id ? { ...c, ...commUpdates } : legRows[c.id] ? { ...c, ...legRows[c.id] } : c)),
           vehicles: st.vehicles.map((v) => (vehicleUpdates[v.id] ? { ...v, ...vehicleUpdates[v.id] } : v)),
           owners: st.owners.map((o) => (ownerUpdates[o.id] ? { ...o, ...ownerUpdates[o.id] } : o)),
         }));
 
         sync(() => db.updateBooking(id, changes));
         if (commUpdates) sync(() => db.updateCommission(comm!.id, commUpdates));
+        Object.entries(legRows).forEach(([cid, u]) => sync(() => db.updateCommission(cid, u)));
         Object.entries(vehicleUpdates).forEach(([vid, u]) => sync(() => db.updateVehicle(vid, u)));
         Object.entries(ownerUpdates).forEach(([oid, u]) => sync(() => db.updateOwner(oid, u)));
         toast.success('Booking corrected', `${next.customerName}: ${meta.changes.length} change${meta.changes.length === 1 ? '' : 's'} saved.`);
@@ -794,7 +802,7 @@ export const useStore = create<AppState>()(
       recordPayment: (id, p) => {
         const b = get().bookings.find((x) => x.id === id);
         if (!b) return;
-        const entry: PaymentEntry = { ...p, id: uid(), at: p.at ?? now() };
+        const entry: PaymentEntry = { ...p, id: p.id ?? uid(), at: p.at ?? now() };
         const totals: Partial<Booking> =
           entry.kind === 'Payment'            ? { paidAmount: b.paidAmount + entry.amount, paymentMethod: entry.method }
           : entry.kind === 'Advance'          ? { advanceAmount: (b.advanceAmount ?? 0) + entry.amount, paymentMethod: entry.method }
@@ -813,6 +821,7 @@ export const useStore = create<AppState>()(
           sendSms(b.customerPhone, smsTemplates.paymentReceived(b.customerName, entry.amount, balance),
             { category: 'paymentReceived', role: 'customer', relatedId: id, optIn, transactional: true });
         }
+        return entry.id;
       },
 
       // Close out a cash deposit: what goes back to the customer and what is kept (and why)
@@ -836,10 +845,11 @@ export const useStore = create<AppState>()(
       addCharge: (id, c) => {
         const b = get().bookings.find((x) => x.id === id);
         if (!b) return;
-        const charge: ExtraCharge = { ...c, id: uid(), at: now(), status: 'Charged' };
+        const charge: ExtraCharge = { ...c, id: c.id ?? uid(), at: now(), status: 'Charged' };
         get().logBookingActivity(id, { by: c.by, type: 'Charge', text: `${c.kind} Rs ${c.amount.toLocaleString()} added${c.note ? ` — ${c.note}` : ''}` },
           { charges: [...(b.charges ?? []), charge], extraCharges: (b.extraCharges ?? 0) + c.amount });
         toast.success('Charge added', `${c.kind}: Rs ${c.amount.toLocaleString()} added to the bill.`);
+        return charge.id;
       },
       waiveCharge: (id, chargeId, by) => {
         const b = get().bookings.find((x) => x.id === id);
@@ -852,6 +862,35 @@ export const useStore = create<AppState>()(
       },
 
       // Pickup / return handover with its checklist — starts or completes the rental
+      adjustOwnerPayout: (bookingId, a) => {
+        const b = get().bookings.find((x) => x.id === bookingId);
+        if (!b) return 'Booking not found.';
+        if (!(Math.abs(a.amount) > 0)) return 'Enter an amount.';
+        if (!legsOf(b).some((l) => l.vehicleId === a.vehicleId)) return 'That vehicle is not on this booking.';
+        const legs = legsOf(b);
+        const leg = [...legs].reverse().find((l) => l.vehicleId === a.vehicleId)!;
+        const commId = leg.commissionId ?? mainCommission(get().commissions, b)?.id;
+        if (get().commissions.find((c) => c.id === commId)?.status === 'Paid') return 'That owner payout is already marked paid — record a reimbursement from the owner instead.';
+        if (a.amount > leg.payout + 0.005) return `The owner only earns Rs ${Math.round(leg.payout).toLocaleString('en-LK')} on this booking — deduct at most that, and record the rest as owed.`;
+        const adj: PayoutAdjustment = { ...a, id: a.id ?? uid(), at: now() };
+        if ((b.payoutAdjustments ?? []).some((x) => x.id === adj.id)) return null;   // already applied
+        get().editBooking(bookingId, { payoutAdjustments: [...(b.payoutAdjustments ?? []), adj] }, {
+          by: a.by, type: 'Edited', changes: [`Owner payout ${a.amount > 0 ? 'reduced' : 'increased'} by Rs ${Math.abs(a.amount).toLocaleString('en-LK')}`], reason: a.reason,
+        });
+        return null;
+      },
+
+      reverseOwnerPayoutAdjustment: (bookingId, adjustmentId, by) => {
+        const b = get().bookings.find((x) => x.id === bookingId);
+        const adj = b?.payoutAdjustments?.find((x) => x.id === adjustmentId);
+        if (!b || !adj) return 'Adjustment not found.';
+        if (adj.reversedAt) return null;
+        get().editBooking(bookingId, {
+          payoutAdjustments: (b.payoutAdjustments ?? []).map((x) => (x.id === adjustmentId ? { ...x, reversedAt: now(), reversedBy: by } : x)),
+        }, { by, type: 'Edited', changes: [`Owner payout adjustment of Rs ${Math.abs(adj.amount).toLocaleString('en-LK')} reversed`], reason: adj.reason });
+        return null;
+      },
+
       exchangeVehicle: (bookingId, x) => {
         const s = get();
         const b = s.bookings.find((v) => v.id === bookingId);
@@ -918,7 +957,8 @@ export const useStore = create<AppState>()(
         const legComm: Commission = {
           id: ex.commissionId, bookingId: b.id, vehicleId: from.id, ownerId: ownerOf(from.id) ?? '',
           referral: b.referral ?? 'Direct', totalIncome: p.fromRevenue, commissionRate: 0, commissionAmount: 0,
-          ownerPayout: p.fromPayout + (comp?.amount ?? 0), coordinatorFee: p.isFirst ? b.referralFee ?? 0 : 0,
+          // includes any payout adjustment already made for this car
+          ownerPayout: legsAfter.find((l) => l.commissionId === ex.commissionId)?.payout ?? p.fromPayout + (comp?.amount ?? 0), coordinatorFee: p.isFirst ? b.referralFee ?? 0 : 0,
           status: 'Pending', createdAt: now(),
         };
 

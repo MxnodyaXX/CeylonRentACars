@@ -42,8 +42,8 @@ function toCard(row) {
     cutoutImg: row.image_url || null,
     heroImg: row.hero_image_url || null,
     photos: Array.isArray(row.photo_urls) ? row.photo_urls.filter(Boolean) : [],
-    // Card cover: first real photo, else the hero photo, else the cut-out
-    img: (Array.isArray(row.photo_urls) && row.photo_urls[0]) || row.hero_image_url || row.image_url || null,
+    // Card cover: the hero image chosen in the admin, else the first real photo, else the cut-out
+    img: row.hero_image_url || (Array.isArray(row.photo_urls) && row.photo_urls[0]) || row.image_url || null,
     location: row.location || 'Sri Lanka',
     transmission: row.transmission || 'Automatic',
     fuel: fuel || '—',

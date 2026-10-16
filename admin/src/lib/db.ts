@@ -28,6 +28,7 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
     imageUrl: (r.image_url as string) ?? undefined,
     imageUrls: Array.isArray(r.image_urls) ? (r.image_urls as string[]) : undefined,
     heroImageUrl: (r.hero_image_url as string) ?? undefined,
+    heroImages: Array.isArray(r.hero_images) ? (r.hero_images as string[]) : undefined,
     photoUrls: Array.isArray(r.photo_urls) ? (r.photo_urls as string[]) : undefined,
     color: (r.color as string) ?? undefined, seats: numOpt(r.seats),
     fuelType: (r.fuel_type as string) ?? undefined,
@@ -99,7 +100,7 @@ function oToDb(o: Owner) {
 const BOOKING_EXT: [keyof Booking, string][] = [
   ['payments', 'payments'], ['customerInfo', 'customer_info'], ['documents', 'documents'], ['checklists', 'checklists'],
   ['charges', 'charges'], ['agreement', 'agreement'], ['activity', 'activity'], ['internalNotes', 'internal_notes'],
-  ['exchanges', 'exchanges'],
+  ['exchanges', 'exchanges'], ['payoutAdjustments', 'payout_adjustments'],
 ]
 function bookingExtRow(u: Partial<Booking>) {
   const row: Record<string, unknown> = {}
@@ -162,6 +163,7 @@ function bFromDb(r: Record<string, unknown>): Booking {
     checklists: (r.checklists as Booking['checklists']) ?? undefined,
     charges: Array.isArray(r.charges) ? (r.charges as Booking['charges']) : undefined,
     exchanges: Array.isArray(r.exchanges) ? (r.exchanges as Booking['exchanges']) : undefined,
+    payoutAdjustments: Array.isArray(r.payout_adjustments) ? (r.payout_adjustments as Booking['payoutAdjustments']) : undefined,
     agreement: (r.agreement as Booking['agreement']) ?? undefined,
     activity: Array.isArray(r.activity) ? (r.activity as Booking['activity']) : undefined,
     internalNotes: (r.internal_notes as string) ?? undefined,
@@ -439,6 +441,7 @@ export const db = {
     if (u.rentCount !== undefined) row.rent_count = u.rentCount
     if ('imageUrl' in u) row.image_url = u.imageUrl ?? null
     if ('heroImageUrl' in u) row.hero_image_url = u.heroImageUrl ?? null
+    if (u.heroImages !== undefined) row.hero_images = u.heroImages
     if (u.photoUrls !== undefined) row.photo_urls = u.photoUrls
     if (u.color !== undefined) row.color = u.color
     if (u.seats !== undefined) row.seats = u.seats
