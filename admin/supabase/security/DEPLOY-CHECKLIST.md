@@ -23,7 +23,7 @@ checked in the browser (`admin` / `admin123`). SMS / WhatsApp functions could be
   ```
   cd admin/supabase/security/tests
   npm install
-  npm test          # expect: 177 passed · 42 passed · 13 passed · 33 passed, 0 failed
+  npm test          # expect: 197 passed · 42 passed · 13 passed · 33 passed, 0 failed
   ```
 - [ ] Pick a quiet time (about 30–45 min). Have the owners' phone numbers ready (step 7).
 
@@ -234,6 +234,24 @@ How money flows (nothing is double-counted; nothing is deleted — expenses are 
 | Termination | Proposal (pro rata) → admin approves → booking shortened to the used days (audited, original price kept) → refund recorded in the booking payments |
 
 Owners can **read** incidents on their own vehicles; only admins can change anything.
+
+## Part 5 — automatic maintenance hold & vehicle breakdown history (after Part 4)
+
+Reporting a breakdown puts the vehicle **under maintenance** (status `Maintenance`): it disappears from the
+website, can't take new bookings, and stays that way until an admin uses **Mark vehicle as ready** on the
+breakdown (outcome + safety confirmation required). Finishing a repair, replacement or resolving the
+incident never returns it to service. Admin → Vehicles → a vehicle → **Breakdown history** lists every incident.
+
+- [ ] SQL Editor → run `07_breakdown_holds.sql` (after `06_breakdowns.sql`; undo: `rollback/07_rollback_breakdown_holds.sql`).
+- [ ] Run `verify.sql` → still 0 FAIL.
+- [ ] Push the admin (`git add admin src`).
+- [ ] Try it: report a breakdown on a test booking → the vehicle shows **Maintenance** and is gone from the
+      website → Overview → **Mark vehicle as ready** (pick an outcome, tick the safety box, confirm) → the
+      vehicle goes back to Ongoing / Reserved / Available → Vehicles → that car → Breakdown history shows it.
+
+The database enforces this too: one active hold per vehicle; the status can't be changed away from
+`Maintenance` while a hold is active (any page, any tool); the hold can only be cleared through
+`breakdown_mark_vehicle_ready` (admins only).
 
 ## Review notes
 

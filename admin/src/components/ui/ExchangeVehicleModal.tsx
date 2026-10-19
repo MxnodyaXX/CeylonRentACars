@@ -155,10 +155,14 @@ export default function ExchangeVehicleModal({ booking: b, onClose }: { booking:
               <p className="label">Damage</p>
               <textarea className="input" rows={2} value={retDamage} onChange={(e) => setRetDamage(e.target.value)} placeholder="e.g. Front bumper and left headlight broken" />
             </div>
-            <div>
-              <p className="label">This car now goes to</p>
-              <Chips value={oldCarTo} options={[['Maintenance', 'Maintenance (repair)'], ['Available', 'Available']]} onChange={setOldCarTo} />
-            </div>
+            {from?.status === 'Maintenance' ? (
+              <p className="text-[11px] text-navy-500">This car is under maintenance (breakdown hold) — it stays there until an admin confirms it ready.</p>
+            ) : (
+              <div>
+                <p className="label">This car now goes to</p>
+                <Chips value={oldCarTo} options={[['Maintenance', 'Maintenance (repair)'], ['Available', 'Available']]} onChange={setOldCarTo} />
+              </div>
+            )}
           </section>
 
           <section className={section}>

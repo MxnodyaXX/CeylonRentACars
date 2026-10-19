@@ -24,6 +24,9 @@ export interface BdIncident {
   causeStatus: 'pending' | 'assessed'; cause?: string; status: BdStatus; assignedTo?: string;
   resolution?: string; resolvedAt?: string; closedAt?: string; notes?: string;
   createdBy: string; createdAt: string; updatedAt: string;
+  // maintenance hold on the vehicle (07_breakdown_holds.sql) — cleared only by "Mark vehicle as ready"
+  holdVehicleId?: string; holdPlacedAt?: string; holdClearedAt?: string; holdClearedBy?: string;
+  readyOutcome?: string; readySafeConfirmed?: boolean; readyComments?: string; readyApprovedAt?: string;
 }
 
 export interface BdEvent { id: string; incidentId: string; at: string; by: string; type: string; text: string; data?: Record<string, unknown> }
@@ -112,7 +115,7 @@ export const SOLUTION_HINT: Record<SolutionKind, string> = {
   termination: 'End the booking early and work out the refund',
 };
 export const SOLUTION_STATUS_LABEL: Record<SolutionStatus, string> = {
-  planned: 'Planned', in_progress: 'In progress', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled',
+  planned: 'Pending', in_progress: 'In progress', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled',
 };
 export const STATUS_LABEL: Record<BdStatus, string> = {
   open: 'Open', resolved: 'Resolved', closed: 'Closed', disputed: 'Disputed', cancelled: 'Cancelled',
@@ -131,6 +134,26 @@ export const REPAIR_RESULT_LABEL: Record<NonNullable<BdSolution['repairResult']>
   repaired: 'Successfully repaired', partial: 'Partially repaired', unsuccessful: 'Repair unsuccessful', unsafe: 'Vehicle unsafe to operate',
   inspection_needed: 'Further inspection needed', needs_tow_or_replacement: 'Needs towing or replacement',
 };
+
+/** Incident lifecycle shown to staff: OPEN → IN PROGRESS → RESOLVED (closed = resolved and money settled) */
+export type IncidentPhase = 'open' | 'in_progress' | 'resolved' | 'closed' | 'disputed' | 'cancelled';
+export const PHASE_LABEL: Record<IncidentPhase, string> = {
+  open: 'Open', in_progress: 'In progress', resolved: 'Resolved', closed: 'Resolved · closed', disputed: 'Disputed', cancelled: 'Cancelled',
+};
+export function phaseOf(i: BdIncident, solutions: BdSolution[]): IncidentPhase {
+  if (i.status !== 'open') return i.status;
+  return solutions.some((s) => s.incidentId === i.id && s.status !== 'cancelled') ? 'in_progress' : 'open';
+}
+export const READY_OUTCOMES = ['Repaired', 'Inspected — no fault found', 'Part replaced', 'Garage repair completed', 'Other'];
+
+/** Server-side "Mark vehicle as ready" (public.breakdown_mark_vehicle_ready) — returns the vehicle's new status */
+export async function markReadyOnServer(x: { incidentId: string; outcome: string; safe: boolean; comments?: string; approvedAt?: string; by: string }): Promise<string> {
+  const { data, error } = await supabase.rpc('breakdown_mark_vehicle_ready', {
+    p_incident_id: x.incidentId, p_outcome: x.outcome, p_safe: x.safe, p_comments: x.comments ?? null, p_approved_at: x.approvedAt ?? null, p_by: x.by,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
 
 /* ── Mapping (camelCase ⇄ snake_case) ─────────────────────────────────────── */
 

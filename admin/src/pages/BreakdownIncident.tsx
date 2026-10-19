@@ -8,7 +8,9 @@ import Header from '../components/layout/Header';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useBreakdownStore, forIncident } from '../store/useBreakdownStore';
-import { BdIncident, BdCategory, CATEGORY_LABEL, SOLUTION_LABEL, STATUS_LABEL, UNSAFE_CATEGORIES, BdDocument } from '../lib/breakdowns';
+import { BdIncident, BdCategory, CATEGORY_LABEL, SOLUTION_LABEL, STATUS_LABEL, UNSAFE_CATEGORIES, BdDocument, PHASE_LABEL, phaseOf } from '../lib/breakdowns';
+import VehicleReadiness from '../components/breakdowns/VehicleReadiness';
+import VehicleBreakdownHistory from '../components/breakdowns/VehicleBreakdownHistory';
 import { ledgerFor } from '../lib/breakdownLedger';
 import { legsOf } from '../lib/exchange';
 import { uploadBookingFile } from '../lib/bookingRecord';
@@ -51,10 +53,11 @@ export default function BreakdownIncident() {
   return (
     <div>
       <Header title={`Breakdown ${i.ref}`} subtitle={`${b?.customerName ?? '—'} · ${vehicle ? `${vehicle.brand} ${vehicle.model} (${vehicle.vehicleNumber})` : '—'}`} />
-      <div className="p-4 md:p-6 space-y-4 max-w-6xl">
+      <div className="p-4 md:p-6 space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => navigate(-1)} className="btn-secondary !py-1.5 text-sm inline-flex items-center gap-1"><ArrowLeft size={14} /> Back</button>
-          <Pill k={i.status}>{STATUS_LABEL[i.status]}</Pill>
+          <Pill k={phaseOf(i, store.solutions)}>{PHASE_LABEL[phaseOf(i, store.solutions)]}</Pill>
+          {(i.holdVehicleId && !i.holdClearedAt) ? <Pill k="maintenance">Vehicle under maintenance</Pill> : i.holdClearedAt ? <Pill k="ready">Vehicle ready</Pill> : null}
           <Pill k={i.urgency}>{i.urgency === 'emergency' ? 'Emergency' : `${i.urgency} urgency`}</Pill>
           <Pill k={l.settled ? 'settled' : 'outstanding'}>{l.cost ? `${rs(l.cost)} · ${l.settled ? 'settled' : 'outstanding'}` : 'No costs yet'}</Pill>
           <span className="flex-1" />
@@ -77,7 +80,7 @@ export default function BreakdownIncident() {
         {tab === 'diagnosis' && <Diagnosis i={i} by={by} readOnly={readOnly} />}
         {tab === 'solutions' && (
           <div className="space-y-4">
-            {!readOnly && <AddSolution incidentId={i.id} by={by} />}
+            {!readOnly && <AddSolution incidentId={i.id} by={by} hasSolutions={sols.length > 0} />}
             {sols.length ? sols.map((s) => <SolutionPanel key={s.id} s={s} incident={i} by={by} />) : <p className="text-sm text-navy-400">No solutions yet — pick one above.</p>}
           </div>
         )}
@@ -121,6 +124,8 @@ function Overview({ i, by, readOnly, onGo }: { i: BdIncident; by: string; readOn
   const sols = forIncident(store.solutions, i.id);
   void by; void readOnly;
   return (
+    <div className="space-y-4">
+    <VehicleReadiness i={i} />
     <div className="grid gap-4 md:grid-cols-2">
       <Section title="Booking" icon={ClipboardList}>
         <KV k="Customer" v={b ? `${b.customerName} · ${b.customerPhone}` : '—'} />
@@ -151,6 +156,8 @@ function Overview({ i, by, readOnly, onGo }: { i: BdIncident; by: string; readOn
         <KV k="Customer owes" v={rs(Math.max(0, l.outstanding.customer))} warn={l.outstanding.customer > 0.5} />
         <KV k="Refunds" v={`${rs(l.refundsPaid)} paid${l.refundPending ? ` · ${rs(l.refundPending)} pending` : ''}`} />
       </Section>
+    </div>
+    {i.vehicleId && <Section title="Earlier breakdowns of this vehicle" icon={History}><VehicleBreakdownHistory vehicleId={i.vehicleId} exceptId={i.id} compact /></Section>}
     </div>
   );
 }
@@ -216,14 +223,24 @@ function Diagnosis({ i, by, readOnly }: { i: BdIncident; by: string; readOnly: b
 }
 
 /* ── Solutions picker ─────────────────────────────────────────────────────── */
-function AddSolution({ incidentId, by }: { incidentId: string; by: string }) {
+function AddSolution({ incidentId, by, hasSolutions }: { incidentId: string; by: string; hasSolutions: boolean }) {
   const add = useBreakdownStore((s) => s.addSolution);
+  const [open, setOpen] = useState(false);
+  // Once a solution is running only it is shown; the picker opens again on demand
+  if (hasSolutions && !open) {
+    return (
+      <div className="flex justify-end">
+        <button type="button" onClick={() => setOpen(true)} className="btn-secondary !py-1.5 text-sm inline-flex items-center gap-1.5"><Plus size={14} /> Add another solution</button>
+      </div>
+    );
+  }
   return (
-    <Section title="Add a solution" icon={Plus}>
+    <Section title={hasSolutions ? 'Add another solution' : 'Add a solution'} icon={Plus}
+             action={hasSolutions ? <button type="button" className="text-xs font-semibold text-navy-500 hover:text-navy-800" onClick={() => setOpen(false)}>Cancel</button> : undefined}>
       <p className="text-[11px] text-navy-400">Several can run together or one after another (e.g. towing, then a replacement). Earlier attempts and their costs are kept.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
         {SOLUTION_CHOICES.map(({ kind, label, hint, Icon }) => (
-          <button key={kind} type="button" onClick={() => { const r = add(incidentId, kind, by); if (r.error) toast.error('Not added', r.error); }}
+          <button key={kind} type="button" onClick={() => { const r = add(incidentId, kind, by); if (r.error) toast.error('Not added', r.error); else setOpen(false); }}
                   className="text-left rounded-xl border border-navy-100 p-3 hover:border-navy-400 hover:bg-navy-50/40 transition-colors">
             <p className="font-semibold text-sm text-navy-800 flex items-center gap-1.5"><Icon size={14} /> {label}</p>
             <p className="text-[11px] text-navy-400 mt-0.5">{hint}</p>
@@ -370,9 +387,11 @@ function Resolution({ i, by, isAdmin }: { i: BdIncident; by: string; isAdmin: bo
   const run = (fn: () => string | null | void) => { setErr(''); const e = fn(); if (e) setErr(e); };
   return (
     <div className="space-y-4">
+      <VehicleReadiness i={i} />
       <Section title="Final resolution" icon={CheckCircle2}>
         <p className="text-[11px] text-navy-400">Resolving says the customer's situation is sorted. Closing needs every cost, payment and refund settled — the two are separate.</p>
-        <KV k="Incident status" v={STATUS_LABEL[i.status]} />
+        <KV k="Incident status" v={PHASE_LABEL[phaseOf(i, store.solutions)]} />
+        <KV k="Vehicle" v={i.holdVehicleId && !i.holdClearedAt ? 'Under maintenance — mark it ready separately' : i.holdClearedAt ? 'Ready' : '—'} warn={!!i.holdVehicleId && !i.holdClearedAt} />
         <KV k="Financial status" v={l.settled ? 'Settled' : 'Outstanding'} warn={!l.settled} />
         {!l.settled && <ul className="text-xs text-navy-500 list-disc pl-4">{l.blockers.map((x) => <li key={x}>{x}</li>)}</ul>}
         {(i.status === 'open' || i.status === 'disputed') && (

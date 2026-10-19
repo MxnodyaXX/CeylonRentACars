@@ -375,5 +375,41 @@ ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`
 await db.exec(sql('security/rollback/06_rollback_breakdowns.sql'));
 ok((await db.query(`select to_regclass('public.breakdown_incidents') t`)).rows[0].t === null, 'rollback removes the breakdown tables');
 
+console.log('\n07 — maintenance holds');
+await db.exec(sql('security/06_breakdowns.sql'));
+await db.exec(sql('security/07_breakdown_holds.sql'));
+await db.exec(sql('security/07_breakdown_holds.sql'));   // safe to re-run
+const vStatus = async (id) => (await db.query(`select status from vehicles where id = '${id}'`)).rows[0].status;
+await db.exec(`update vehicles set status = 'Reserved' where id = 'vA'`);
+const holdInc = (id) => `insert into breakdown_incidents (id, ref, booking_id, vehicle_id, owner_id, category, description, created_by, hold_vehicle_id, hold_placed_at)
+  values ('${id}', 'BD-${id}', 'bA', 'vA', 'oA', 'overheating', 'Overheated', 'Admin', 'vA', now())`;
+ok((await as('admin', () => tryQ(holdInc('h1')))) === null, 'reporting a breakdown places a hold');
+ok(await vStatus('vA') === 'Maintenance', 'the vehicle is under maintenance straight away');
+await as('admin', () => db.exec(`update vehicles set status = 'Available' where id = 'vA'`));
+ok(await vStatus('vA') === 'Maintenance', 'while held, any status change is kept at Maintenance');
+ok(/duplicate|unique/i.test((await as('admin', () => tryQ(holdInc('h2')))) ?? ''), 'only one active hold per vehicle');
+ok(/Mark vehicle as ready/.test((await as('admin', () => tryQ(`update breakdown_incidents set hold_cleared_at = now() where id = 'h1'`))) ?? ''), 'a hold cannot be cleared by a plain update');
+const ready = (who, safe = true, outcome = 'Radiator replaced, road-tested 20 km') => as(who, () => tryQ(`select breakdown_mark_vehicle_ready('h1', $1, $2, 'Garage invoice attached', null, 'Admin')`, [outcome, safe]));
+ok(/Only an admin/.test((await ready('A')) ?? ''), 'owners cannot return a vehicle to service');
+ok(/safe for rental/.test((await ready('admin', false)) ?? ''), 'needs the safety confirmation');
+ok(/outcome/.test((await ready('admin', true, '  ')) ?? ''), 'needs the repair / inspection outcome');
+ok(!!(await as('anon', () => tryQ(`select breakdown_mark_vehicle_ready('h1', 'x', true)`))), 'website visitors cannot call it');
+ok(await vStatus('vA') === 'Maintenance', 'still under maintenance after the refused attempts');
+ok((await ready('admin')) === null, 'admin confirms the vehicle ready');
+const cleared = (await db.query(`select hold_cleared_at, hold_cleared_by, ready_outcome, ready_safe_confirmed from breakdown_incidents where id = 'h1'`)).rows[0];
+ok(cleared.hold_cleared_at && cleared.ready_safe_confirmed === true && cleared.ready_outcome.startsWith('Radiator'), 'records the outcome, the safety confirmation and when');
+ok(await vStatus('vA') === 'Reserved', 'availability comes back from its bookings (booking bA is confirmed → Reserved)');
+ok((await db.query(`select count(*) n from breakdown_events where incident_id = 'h1' and type = 'ready'`)).rows[0].n == 1, 'writes the timeline entry in the same step');
+ok(/no active maintenance hold/.test((await ready('admin')) ?? ''), 'cannot be confirmed twice');
+ok(/re-opened/.test((await as('admin', () => tryQ(`update breakdown_incidents set hold_cleared_at = null where id = 'h1'`))) ?? ''), 'a cleared hold cannot be re-opened');
+ok((await as('admin', () => tryQ(holdInc('h3')))) === null && await vStatus('vA') === 'Maintenance', 'a repeat breakdown is a new incident with a new hold');
+ok((await db.query(`select count(*) n from breakdown_incidents where vehicle_id = 'vA'`)).rows[0].n == 2, 'both incidents stay in the vehicle history');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 07');
+await db.exec(sql('security/rollback/07_rollback_breakdown_holds.sql'));
+await db.exec(`update vehicles set status = 'Available' where id = 'vA'`);
+ok(await vStatus('vA') === 'Available', 'rollback removes the rules (status can be changed by hand again)');
+await db.exec(sql('security/rollback/06_rollback_breakdowns.sql'));
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

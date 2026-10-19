@@ -7,6 +7,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { useBreakdownStore } from '../../store/useBreakdownStore';
 import { BdIncident, CATEGORY_LABEL, BdCategory, UNSAFE_CATEGORIES } from '../../lib/breakdowns';
 import { uploadBookingFile, FUEL_LEVELS } from '../../lib/bookingRecord';
+import { vehicleHistory } from '../../lib/breakdownLedger';
 import { toast } from '../../store/useToast';
 import { Chips, ErrorLine, Field, Grid, KV, fromLocalInput, nowLocal, rs } from './bdui';
 
@@ -34,6 +35,8 @@ export default function ReportBreakdownModal({ bookingId, onClose, onCreated }: 
   const by = useAuthStore((s) => s.currentUser?.name) ?? 'Staff';
   const report = useBreakdownStore((s) => s.report);
   const addDocument = useBreakdownStore((s) => s.addDocument);
+  const incidents = useBreakdownStore((s) => s.incidents);
+  const activeHold = useBreakdownStore((s) => s.activeHold);
   const [f, setF] = useState<Form>(() => {
     try { const saved = localStorage.getItem(draftKey(bookingId ?? '')); if (saved) return { ...blank(bookingId), ...JSON.parse(saved) }; } catch { /* private mode */ }
     return blank(bookingId);
@@ -131,6 +134,17 @@ export default function ReportBreakdownModal({ bookingId, onClose, onCreated }: 
             <KV k="Paid" v={`${rs(b.paidAmount + (b.advanceAmount ?? 0))} · ${(b.payments ?? []).length} payment(s)`} />
           </div>
         )}
+        {b && step > 0 && (() => {
+          const h = vehicleHistory(b.vehicleId, incidents);
+          const hold = activeHold(b.vehicleId);
+          return (
+            <div className={`rounded-xl px-3 py-2 text-xs ${h.repeat ? 'bg-amber-50 border border-amber-200 text-amber-900' : 'bg-navy-50/60 text-navy-600'}`}>
+              <p>{hold ? `${vehicle?.vehicleNumber} is already under maintenance (hold from ${hold.ref}) — this breakdown will be linked to it.` : `Reporting puts ${vehicle?.vehicleNumber ?? 'the vehicle'} under maintenance: no new bookings until an admin confirms it is safe.`}</p>
+              {h.previous.length > 0 && <p className="mt-1">Earlier breakdowns: {h.previous.slice(-3).reverse().map((x) => `${x.ref} (${CATEGORY_LABEL[x.category]}, ${new Date(x.occurredAt ?? x.reportedAt).toLocaleDateString('en-GB')})`).join(' · ')}{h.previous.length > 3 ? ` + ${h.previous.length - 3} more` : ''}</p>}
+              {h.repeat && <p className="mt-1 font-semibold flex items-center gap-1"><AlertTriangle size={12} /> Repeated breakdowns ({h.reason}) — plan a full inspection.</p>}
+            </div>
+          );
+        })()}
 
         {step === 1 && (
           <div className="space-y-3">

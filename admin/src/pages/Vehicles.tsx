@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { supabaseEnabled } from '../lib/supabase';
@@ -9,6 +9,8 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import CropModal from '../components/ui/CropModal';
 import VehicleImageFields, { ImageSlot, SLOT_ASPECT } from '../components/ui/VehicleImageFields';
+import VehicleBreakdownHistory from '../components/breakdowns/VehicleBreakdownHistory';
+import { useBreakdownStore } from '../store/useBreakdownStore';
 import VehicleReviews from '../components/ui/VehicleReviews';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
@@ -41,6 +43,9 @@ const empty = (): Omit<Vehicle, 'id' | 'createdAt' | 'revenue' | 'rentCount'> =>
 });
 
 export default function Vehicles() {
+  const [viewTab, setViewTab] = useState<'details' | 'breakdowns'>('details');
+  const breakdowns = useBreakdownStore();
+  useEffect(() => { if (!breakdowns.ready) breakdowns.load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const { vehicles, owners, bookings, expenses, addVehicle, updateVehicle, deleteVehicle } = useStore();
   const { currentUser, can, isAdmin } = useAuthStore();
 
@@ -105,6 +110,7 @@ export default function Vehicles() {
     if (!allowView) return;
     setSelected(v);
     setGalleryIndex(0);
+    setViewTab('details');
     setModal('view');
   };
 
@@ -204,6 +210,11 @@ export default function Vehicles() {
   };
 
   const handleSave = async () => {
+    const hold = modal === 'edit' && selected ? breakdowns.activeHold(selected.id) : undefined;
+    if (hold && form.status !== 'Maintenance') {
+      toast.error('Vehicle under maintenance', `Breakdown ${hold.ref} is holding it — use "Mark vehicle as ready" on that breakdown.`);
+      return;
+    }
     setUploading(true);
     try {
       let vehicleId: string;
@@ -608,7 +619,11 @@ export default function Vehicles() {
           </Field>
           <Field label="Status">
             <Select value={form.status} onChange={(v) => set('status', v as VehicleStatus)}
+              disabled={!!(modal === 'edit' && selected && breakdowns.activeHold(selected.id))}
               options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))} />
+            {modal === 'edit' && selected && breakdowns.activeHold(selected.id) && (
+              <p className="text-[11px] text-red-600 mt-1">Under maintenance (breakdown {breakdowns.activeHold(selected.id)!.ref}) — returns to service only through “Mark vehicle as ready” on that breakdown.</p>
+            )}
           </Field>
           <Field label="Color">
             <input className="input" value={form.color ?? ''} onChange={(e) => set('color', e.target.value)} placeholder="Silver" />
@@ -699,6 +714,16 @@ export default function Vehicles() {
           const owner = owners.find((o) => o.id === selected.ownerId);
           return (
             <div className="space-y-4">
+              {isAdmin() && (
+                <div className="flex gap-1 bg-navy-50 rounded-xl p-1 text-sm font-semibold">
+                  {([['details', 'Details'], ['breakdowns', `Breakdown history (${breakdowns.incidents.filter((x) => x.vehicleId === selected.id).length})`]] as const).map(([k, label]) => (
+                    <button key={k} type="button" onClick={() => setViewTab(k)} className={`flex-1 rounded-lg py-1.5 ${viewTab === k ? 'bg-white text-navy-900 shadow-sm' : 'text-navy-500'}`}>{label}</button>
+                  ))}
+                </div>
+              )}
+              {viewTab === 'breakdowns' && isAdmin() ? (
+                <VehicleBreakdownHistory vehicleId={selected.id} onOpen={() => setModal(null)} />
+              ) : (<>
               {(() => {
                 // Real vehicle photos first; fall back to the hero and admin images
                 const imgs = selected.photoUrls && selected.photoUrls.length > 0
@@ -821,6 +846,7 @@ export default function Vehicles() {
                 )}
                 <button onClick={() => setModal(null)} className="btn-primary flex-1">Close</button>
               </div>
+              </>)}
             </div>
           );
         })()}

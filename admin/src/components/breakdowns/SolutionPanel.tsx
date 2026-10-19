@@ -98,6 +98,7 @@ export default function SolutionPanel({ s, incident, by }: { s: BdSolution; inci
           {!closed && <button type="button" className="text-xs font-semibold text-navy-400 hover:text-red-600" onClick={() => { const r = prompt('Why is this solution cancelled? (Its records are kept.)'); if (r) status('cancelled', { result: r }); }}>Cancel solution</button>}
         </div>
         {s.status === 'failed' && <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle size={13} /> This attempt failed — its records and costs are kept. Add another solution above (e.g. towing or replacement).</p>}
+        {s.status === 'completed' && <p className="text-[11px] text-navy-400">Completing a solution does not put the broken vehicle back in service — that needs <b>Mark vehicle as ready</b> on the Overview.</p>}
       </div>
     </div>
   );
@@ -361,7 +362,6 @@ function TowingGarage({ s, draft, incident, by, act }: { s: BdSolution; draft: D
   const store = useBreakdownStore();
   const { vehicles } = useStore();
   const { text, number, dt } = draft;
-  const [back, setBack] = useState(true);
   const vehicle = vehicles.find((x) => x.id === incident.vehicleId);
   return (
     <>
@@ -377,9 +377,7 @@ function TowingGarage({ s, draft, incident, by, act }: { s: BdSolution; draft: D
         </Grid>
         <p className="text-[11px] text-navy-400">Add the towing charge as an expense (with its receipt), and collection / handover photos in Documents.</p>
       </Section>
-      <Section title="Garage" icon={Hammer} action={vehicle && vehicle.status !== 'Maintenance' && (
-        <button type="button" className="text-xs font-semibold text-navy-600" onClick={() => store.setVehicleInRepair(incident.id, by)}>Mark {vehicle.vehicleNumber} in maintenance</button>
-      )}>
+      <Section title="Garage" icon={Hammer}>
         <Grid cols={4}>
           <Field label="Garage name"><input className="input" {...text('garageName')} /></Field>
           <Field label="Garage contact"><input className="input" type="tel" {...text('garageContact')} /></Field>
@@ -399,12 +397,10 @@ function TowingGarage({ s, draft, incident, by, act }: { s: BdSolution; draft: D
             : <button type="button" className="btn-secondary !py-2 text-sm" onClick={() => { if (confirm(`Approve the garage quotation of ${rs(draft.v.quoteAmount)}?`)) act(() => { if (draft.dirty) store.updateSolution(s.id, draft.d, by); return store.approveQuote(s.id, by); }); }}>Approve quotation</button>}
         </div>
         <div className="flex flex-wrap items-center gap-3 border-t border-navy-50 pt-3">
-          {s.roadworthyAt ? <span className="text-sm text-emerald-700">Roadworthy — confirmed by {s.roadworthyBy}, {when(s.roadworthyAt)}</span> : (
-            <>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={back} onChange={(e) => setBack(e.target.checked)} /> Put the vehicle back in service</label>
-              <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { if (confirm('The garage confirms the vehicle is safe and roadworthy?')) act(() => store.confirmRoadworthy(s.id, by, back)); }}>Confirm roadworthy</button>
-            </>
+          {s.roadworthyAt ? <span className="text-sm text-emerald-700">Garage confirmed roadworthy — {s.roadworthyBy}, {when(s.roadworthyAt)}</span> : (
+            <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { if (confirm('The garage confirms the vehicle is repaired and roadworthy?')) act(() => store.confirmRoadworthy(s.id, by)); }}>Garage confirms roadworthy</button>
           )}
+          <span className="text-[11px] text-navy-400">{vehicle?.vehicleNumber ?? 'The vehicle'} stays under maintenance until an admin uses <b>Mark vehicle as ready</b> (Overview).</span>
         </div>
         <p className="text-[11px] text-navy-400">While the car is at the garage you can add a replacement, partner vehicle or alternative transport as another solution.</p>
       </Section>

@@ -413,8 +413,8 @@ describe('breakdowns — resolving & closing', () => {
     bd().updateSolution(s.id, { quoteAmount: 25000 }, 'A')
     expect(bd().approveQuote(s.id, 'A')).toBeNull()
     expect(bd().setSolutionStatus(s.id, 'completed', 'A')).toMatch(/roadworthy/)
-    bd().confirmRoadworthy(s.id, 'A', true)
-    expect(main().vehicles.find((v) => v.id === 'vA')!.status).toBe('Ongoing')
+    bd().confirmRoadworthy(s.id, 'A')
+    expect(main().vehicles.find((v) => v.id === 'vA')!.status).toBe('Maintenance')   // roadworthy ≠ ready
     bd().setSolutionStatus(s.id, 'completed', 'A')
     exp(i.id, 25000, { solutionId: s.id, category: 'garage', description: 'Garage invoice' })
     expect(bd().close(i.id, 'A')).toMatch(/Resolve the incident first/)
@@ -443,5 +443,114 @@ describe('breakdowns — resolving & closing', () => {
     bd().updateSolution(r.id, { arriveAt: iso('2026-07-03T10:00:00') }, 'A')
     expect(dashboard(bd()).underRepair).toBe(1)
     expect(a.id).toBeTruthy()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Maintenance holds — UNDER_MAINTENANCE until an admin confirms the vehicle ready
+// ─────────────────────────────────────────────────────────────────────────────
+import { financeStatus, vehicleHistory } from '../../src/lib/breakdownLedger'
+import { phaseOf } from '../../src/lib/breakdowns'
+
+const vStatus = (id: string) => main().vehicles.find((v) => v.id === id)!.status
+const readyX = (o = {}) => ({ outcome: 'Radiator replaced — road-tested', safe: true, by: 'Admin', isAdmin: true, ...o })
+
+describe('breakdowns — maintenance hold', () => {
+  it('reporting puts the vehicle under maintenance and blocks new bookings (its own booking continues)', () => {
+    const b = world(); const i = report(b)
+    expect(i.holdVehicleId).toBe('vA')
+    expect(vStatus('vA')).toBe('Maintenance')
+    expect(main().isVehicleAvailable('vA', '2026-08-01', '2026-08-03')).toBe(false)
+    expect(main().isVehicleAvailable('vA', '2026-07-01', '2026-07-07', b)).toBe(true)
+    expect(main().bookings.find((x) => x.id === b)!.status).toBe('Ongoing')
+    expect(bd().events.some((e) => e.incidentId === i.id && e.type === 'hold')).toBe(true)
+  })
+
+  it('completing a repair, a garage repair or resolving does not make the vehicle ready', () => {
+    const b = world(); const i = report(b)
+    const r = bd().addSolution(i.id, 'onsite_repair', 'A').solution!
+    bd().setSolutionStatus(r.id, 'completed', 'A', { repairResult: 'repaired', clearanceAt: iso('2026-07-03T12:00:00'), clearanceBy: 'Tech', customerConfirmedAt: iso('2026-07-03T12:05:00'), customerConfirmedBy: 'C' })
+    expect(vStatus('vA')).toBe('Maintenance')
+    const t = bd().addSolution(i.id, 'towing_garage', 'A').solution!
+    bd().confirmRoadworthy(t.id, 'A')
+    expect(vStatus('vA')).toBe('Maintenance')
+    bd().setSolutionStatus(t.id, 'completed', 'A')
+    expect(bd().resolve(i.id, 'Fixed', 'A')).toBeNull()
+    expect(vStatus('vA')).toBe('Maintenance')
+  })
+
+  it('an exchange keeps the broken car under maintenance even if "Available" was chosen', () => {
+    const b = world(); report(b)
+    main().exchangeVehicle(b, { at: iso('2026-07-04T09:00:00'), by: 'A', toVehicleId: 'vB', fromDays: 3, reason: 'Breakdown',
+      returned: { odometer: 10500, fuel: '1/2' }, delivered: { odometer: 100, fuel: 'Full' }, oldCarTo: 'Available' })
+    expect(vStatus('vA')).toBe('Maintenance')
+    expect(vStatus('vB')).toBe('Ongoing')
+  })
+
+  it('a rental cannot start on a held car; cancelling keeps it under maintenance', () => {
+    const b = world({ status: 'Confirmed' }); report(b)
+    main().startBooking(b)
+    expect(main().bookings.find((x) => x.id === b)!.status).toBe('Confirmed')
+    main().recordHandover(b, 'pickup', { at: iso('2026-07-01T09:00:00'), by: 'A', odometer: 10000, fuel: 'Full', items: {} })
+    expect(main().bookings.find((x) => x.id === b)!.status).toBe('Confirmed')
+    main().cancelBooking(b, { reason: 'Vehicle broke down', by: 'A' })
+    expect(vStatus('vA')).toBe('Maintenance')
+  })
+
+  it('Mark vehicle as ready: admin only, needs the outcome and the safety confirmation', async () => {
+    const b = world(); const i = report(b)
+    expect(await bd().markVehicleReady(i.id, readyX({ isAdmin: false }))).toMatch(/Only an admin/)
+    expect(await bd().markVehicleReady(i.id, readyX({ safe: false }))).toMatch(/safe for rental/)
+    expect(await bd().markVehicleReady(i.id, readyX({ outcome: ' ' }))).toMatch(/outcome/)
+    expect(await bd().markVehicleReady(i.id, readyX({ approvedAt: new Date(Date.now() + 864e5).toISOString() }))).toMatch(/future/)
+    expect(vStatus('vA')).toBe('Maintenance')
+    expect(await bd().markVehicleReady(i.id, readyX({ comments: 'Garage invoice in documents' }))).toBeNull()
+    const inc = bd().incidents.find((x) => x.id === i.id)!
+    expect(inc).toMatchObject({ holdClearedBy: 'Admin', readySafeConfirmed: true, readyOutcome: 'Radiator replaced — road-tested', readyComments: 'Garage invoice in documents' })
+    expect(vStatus('vA')).toBe('Ongoing')
+    expect(bd().events.some((e) => e.incidentId === i.id && e.type === 'ready')).toBe(true)
+    expect(await bd().markVehicleReady(i.id, readyX())).toMatch(/no active maintenance hold/)
+  })
+
+  it('ready with no bookings on it → Available (e.g. after an exchange)', async () => {
+    const b = world(); const i = report(b)
+    main().exchangeVehicle(b, { at: iso('2026-07-04T09:00:00'), by: 'A', toVehicleId: 'vB', fromDays: 3, reason: 'Breakdown',
+      returned: { odometer: 10500, fuel: '1/2' }, delivered: { odometer: 100, fuel: 'Full' }, oldCarTo: 'Maintenance' })
+    expect(await bd().markVehicleReady(i.id, readyX())).toBeNull()
+    expect(vStatus('vA')).toBe('Available')
+    expect(main().isVehicleAvailable('vA', '2026-08-01', '2026-08-03')).toBe(true)
+  })
+
+  it('a second breakdown while held links to the same hold; after ready a new breakdown places a new hold', async () => {
+    const b = world(); const first = report(b)
+    const second = report(b, { category: 'tyre', description: 'Flat tyre while waiting' })
+    expect(second.holdVehicleId).toBeUndefined()
+    expect(bd().activeHold('vA')!.id).toBe(first.id)
+    expect(await bd().markVehicleReady(second.id, readyX())).toMatch(/no active maintenance hold/)
+    expect(await bd().markVehicleReady(first.id, readyX())).toBeNull()
+    const third = report(b, { category: 'battery', description: 'Battery dead' })
+    expect(third.holdVehicleId).toBe('vA')
+    expect(vStatus('vA')).toBe('Maintenance')
+    expect(bd().incidents.filter((x) => x.vehicleId === 'vA')).toHaveLength(3)
+    expect(bd().incidents.find((x) => x.id === first.id)!.holdClearedAt).toBeTruthy()
+    expect(vehicleHistory('vA', bd().incidents).repeat).toBe(true)
+    expect(main().notifications.some((n) => n.title.includes('Repeated breakdowns'))).toBe(true)
+    expect(bd().events.some((e) => e.incidentId === third.id && /earlier breakdown/.test(e.text))).toBe(true)
+  })
+})
+
+describe('breakdowns — status concepts', () => {
+  it('incident: open → in progress; money: pending → partial → settled', () => {
+    const b = world(); const i = report(b)
+    expect(phaseOf(bd().incidents[0], bd().solutions)).toBe('open')
+    bd().addSolution(i.id, 'alt_transport', 'A')
+    expect(phaseOf(bd().incidents[0], bd().solutions)).toBe('in_progress')
+    exp(i.id, 6000, { category: 'alt_transport', description: 'Taxi' })
+    bd().decideResponsibility(i.id, [{ party: 'company', mode: 'percent', value: 100 }], 'Goodwill', 'A')
+    expect(financeStatus(L(i.id))).toBe('pending')
+    bd().postPayment({ incidentId: i.id, expenseId: bd().expenses[0].id, kind: 'vendor_payment', payer: 'company', payee: 'Taxi', amount: 2000, key: 'f1', by: 'A' })
+    expect(financeStatus(L(i.id))).toBe('partial')
+    bd().postPayment({ incidentId: i.id, expenseId: bd().expenses[0].id, kind: 'vendor_payment', payer: 'company', payee: 'Taxi', amount: 4000, key: 'f2', by: 'A' })
+    expect(financeStatus(L(i.id))).toBe('settled')
   })
 })

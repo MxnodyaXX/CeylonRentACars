@@ -290,7 +290,7 @@ describe('exchangeVehicle — availability and checks', () => {
     const free = st().isVehicleAvailable
     expect(free('vB', '2026-07-02', '2026-07-03', undefined, '09:00', '18:00')).toBe(true)    // before the exchange
     expect(free('vB', '2026-07-06', '2026-07-06', undefined, '09:00', '18:00')).toBe(false)   // after it
-    expect(free('vA', '2026-07-06', '2026-07-06', undefined, '09:00', '18:00')).toBe(true)    // (in maintenance, but not booked)
+    expect(free('vA', '2026-07-06', '2026-07-06', undefined, '09:00', '18:00')).toBe(false)   // under maintenance: no new bookings
     expect(id).toBeTruthy()
   })
 

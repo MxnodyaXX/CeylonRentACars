@@ -4,8 +4,9 @@ import { supabaseEnabled } from '../lib/supabase';
 import {
   BdAllocation, BdData, BdDocument, BdEvent, BdExpense, BdIncident, BdPayment, BdSolution, ExpenseCategory, Party, PaymentKind,
   SolutionKind, SolutionStatus, TableKey, bdId, insertRow, loadBreakdowns, newRef, updateRow, CATEGORY_LABEL, SOLUTION_LABEL, PARTY_LABEL,
+  markReadyOnServer,
 } from '../lib/breakdowns';
-import { fmt, ledgerFor, resolveShares, sharesProblem, terminationProposal } from '../lib/breakdownLedger';
+import { fmt, ledgerFor, resolveShares, sharesProblem, terminationProposal, vehicleHistory } from '../lib/breakdownLedger';
 import { legsOf } from '../lib/exchange';
 import { useStore } from './useStore';
 import { toast } from './useToast';
@@ -58,8 +59,11 @@ interface BdState extends BdData {
   chargeCustomerShare: (incidentId: string, by: string, key: string) => string | null;
   offsetOwnerShare: (incidentId: string, amount: number, by: string, key: string) => string | null;
   approveQuote: (solutionId: string, by: string) => string | null;
-  confirmRoadworthy: (solutionId: string, by: string, returnToService: boolean) => string | null;
-  setVehicleInRepair: (incidentId: string, by: string) => void;
+  confirmRoadworthy: (solutionId: string, by: string) => string | null;
+  /** The active maintenance hold on a vehicle (the incident that placed it), if any */
+  activeHold: (vehicleId?: string) => BdIncident | undefined;
+  /** Explicit return to service: outcome + safety confirmation; checked again by the database */
+  markVehicleReady: (incidentId: string, x: { outcome: string; safe: boolean; comments?: string; approvedAt?: string; by: string; isAdmin: boolean }) => Promise<string | null>;
   linkLatestExchange: (solutionId: string, by: string) => string | null;
   applyPriceDifference: (solutionId: string, amount: number, by: string) => string | null;
   applyOwnerShareAdjustment: (solutionId: string, amount: number, by: string) => string | null;
@@ -141,6 +145,9 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       if (!x.description.trim()) return { error: 'Describe the problem.' };
       if (x.mileage !== undefined && !(x.mileage >= 0)) return { error: 'Mileage cannot be negative.' };
       const vehicle = useStore.getState().vehicles.find((v) => v.id === b.vehicleId);
+      // one maintenance hold per vehicle: a second breakdown while it is held is linked to that hold
+      const existingHold = get().activeHold(b.vehicleId);
+      const history = vehicleHistory(b.vehicleId, get().incidents);
       const i: BdIncident = {
         id: bdId(), ref: newRef(), bookingId: b.id, vehicleId: b.vehicleId, ownerId: vehicle?.ownerId,
         reportedAt: nowIso(), occurredAt: x.occurredAt, location: x.location?.trim() || undefined, lat: x.lat, lng: x.lng,
@@ -148,10 +155,25 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
         category: x.category, description: x.description.trim(), driveable: x.driveable, passengersSafe: x.passengersSafe,
         urgency: x.urgency, causeStatus: 'pending', status: 'open', notes: x.notes?.trim() || undefined,
         createdBy: x.by, createdAt: nowIso(), updatedAt: nowIso(),
+        ...(existingHold || !b.vehicleId ? {} : { holdVehicleId: b.vehicleId, holdPlacedAt: nowIso() }),
       };
       set((s) => ({ incidents: [...s.incidents, i] }));
       save('incidents', 'insert', i);
       event(i.id, x.by, 'created', `Breakdown reported — ${CATEGORY_LABEL[i.category]}${i.location ? ` at ${i.location}` : ''} (${i.urgency} urgency)`);
+      if (i.holdVehicleId) {
+        // the database does this too (same transaction as the insert); keep this screen in step
+        if (vehicle && vehicle.status !== 'Maintenance') useStore.getState().updateVehicle(vehicle.id, { status: 'Maintenance' });
+        event(i.id, x.by, 'hold', `${vehicle?.vehicleNumber ?? 'Vehicle'} placed under maintenance — no new bookings until an admin confirms it is safe`);
+      } else if (existingHold) {
+        event(i.id, x.by, 'hold', `${vehicle?.vehicleNumber ?? 'Vehicle'} is already under maintenance (hold from ${existingHold.ref}) — it returns to service from there`);
+      }
+      if (history.previous.length) {
+        const after = vehicleHistory(b.vehicleId, [...get().incidents]);
+        event(i.id, x.by, 'note', `This vehicle had ${history.previous.length} earlier breakdown${history.previous.length === 1 ? '' : 's'} (last: ${history.previous[history.previous.length - 1].ref})${after.repeat ? ` — repeated breakdowns (${after.reason}): full inspection recommended` : ''}`);
+        if (after.repeat) {
+          useStore.getState().addNotification({ type: 'General', title: `⚠ Repeated breakdowns · ${vehicle?.vehicleNumber ?? 'vehicle'}`, message: `${after.reason} — schedule a full inspection before renting it again.`, relatedId: b.id });
+        }
+      }
       useStore.getState().addNotification({
         type: 'General', title: `${i.urgency === 'emergency' ? '🚨 ' : ''}Breakdown reported · ${i.ref}`,
         message: `${b.customerName} · ${vehicle ? `${vehicle.brand} ${vehicle.model} (${vehicle.vehicleNumber})` : 'vehicle'} — ${CATEGORY_LABEL[i.category]}${i.location ? ` at ${i.location}` : ''}`,
@@ -386,27 +408,47 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       return null;
     },
 
-    confirmRoadworthy: (solutionId, by, returnToService) => {
+    // The garage's statement — the vehicle stays under maintenance until "Mark vehicle as ready"
+    confirmRoadworthy: (solutionId, by) => {
       const s = solutionOf(solutionId);
       if (!s) return 'Solution not found.';
-      const i = incidentOf(s.incidentId);
       patchSolution(solutionId, { roadworthyBy: by, roadworthyAt: nowIso() });
-      event(s.incidentId, by, 'approval', 'Vehicle confirmed roadworthy after repair', { solutionId });
-      if (returnToService && i?.vehicleId) {
-        const st = useStore.getState();
-        const onTrip = st.bookings.some((b) => b.vehicleId === i.vehicleId && b.status === 'Ongoing');
-        const reserved = st.bookings.some((b) => b.vehicleId === i.vehicleId && b.status === 'Confirmed');
-        st.updateVehicle(i.vehicleId, { status: onTrip ? 'Ongoing' : reserved ? 'Reserved' : 'Available' });
-        event(s.incidentId, by, 'update', 'Vehicle returned to service');
-      }
+      event(s.incidentId, by, 'approval', 'Garage confirmed the vehicle roadworthy — waiting for admin confirmation to return it to service', { solutionId });
       return null;
     },
 
-    setVehicleInRepair: (incidentId, by) => {
+    activeHold: (vehicleId) => (vehicleId ? get().incidents.find((x) => x.holdVehicleId === vehicleId && !x.holdClearedAt) : undefined),
+
+    markVehicleReady: async (incidentId, x) => {
       const i = incidentOf(incidentId);
-      if (!i?.vehicleId) return;
-      useStore.getState().updateVehicle(i.vehicleId, { status: 'Maintenance' });
-      event(incidentId, by, 'update', 'Vehicle marked as in maintenance (not bookable)');
+      if (!i) return 'Breakdown not found.';
+      if (!x.isAdmin) return 'Only an admin can return a vehicle to service.';
+      if (!i.holdVehicleId || i.holdClearedAt) return 'This breakdown has no active maintenance hold.';
+      if (!x.outcome.trim()) return 'Record the repair or inspection outcome.';
+      if (!x.safe) return 'Confirm the vehicle is safe for rental.';
+      if (x.approvedAt && new Date(x.approvedAt).getTime() > Date.now() + 5 * 60e3) return 'The approval time cannot be in the future.';
+      const st = useStore.getState();
+      const vid = i.holdVehicleId;
+      let status: string;
+      if (supabaseEnabled) {
+        try { status = await markReadyOnServer({ incidentId, outcome: x.outcome.trim(), safe: x.safe, comments: x.comments, approvedAt: x.approvedAt, by: x.by }); }
+        catch (e) { return (e as Error).message; }
+      } else {
+        status = st.bookings.some((b) => b.vehicleId === vid && b.status === 'Ongoing') ? 'Ongoing'
+          : st.bookings.some((b) => b.vehicleId === vid && b.status === 'Confirmed') ? 'Reserved' : 'Available';
+      }
+      const patch: Partial<BdIncident> = {
+        holdClearedAt: nowIso(), holdClearedBy: x.by, readyOutcome: x.outcome.trim(), readySafeConfirmed: true,
+        readyComments: x.comments?.trim() || undefined, readyApprovedAt: x.approvedAt ?? nowIso(), updatedAt: nowIso(),
+      };
+      set((s) => ({ incidents: s.incidents.map((v) => (v.id === incidentId ? { ...v, ...patch } : v)) }));
+      // the database already set the status (and keeps it in step); update this screen without writing again
+      useStore.setState((s) => ({ vehicles: s.vehicles.map((v) => (v.id === vid ? { ...v, status: status as typeof v.status } : v)) }));
+      // timeline (with Supabase the server already saved this entry — shown here without writing it twice)
+      const e: BdEvent = { id: bdId(), incidentId, at: nowIso(), by: x.by, type: 'ready', text: `Vehicle confirmed safe and returned to service (${status}) — ${x.outcome.trim()}` };
+      set((s) => ({ events: [...s.events, e] }));
+      notify(incidentId, 'Vehicle ready', `${st.vehicles.find((v) => v.id === vid)?.vehicleNumber ?? 'Vehicle'} back in service (${status})`);
+      return null;
     },
 
     linkLatestExchange: (solutionId, by) => {

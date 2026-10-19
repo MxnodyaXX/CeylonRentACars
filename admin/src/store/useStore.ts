@@ -29,6 +29,15 @@ import cab1234Img from '../data/CAB-1234.png';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
+
+/**
+ * A vehicle under maintenance (e.g. a breakdown hold) stays there: bookings starting, ending or being
+ * cancelled never move it back. Only an explicit admin action does (Breakdown → Mark vehicle as ready,
+ * or Vehicles → status when there is no breakdown hold).
+ */
+const keepMaintenance = (vehicleId: string, next: Vehicle['status']): Vehicle['status'] =>
+  useStore.getState().vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance' ? 'Maintenance' : next;
+const underMaintenance = (vehicleId: string) => useStore.getState().vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance';
 // One toast per distinct error, not one per row (e.g. "mark all read" on 40 notifications)
 let lastDbError = { msg: '', at: 0 };
 export function reportDbError(err: unknown, what = 'Failed to save changes to the database.') {
@@ -179,7 +188,7 @@ export const useStore = create<AppState>()(
 
         const newBooking: Booking = { ...b, id, referralFee, createdAt: now() };
         const vehicleUpdates = {
-          status: 'Reserved' as const,
+          status: keepMaintenance(b.vehicleId, 'Reserved'),
           revenue: (vehicle?.revenue ?? 0) + b.totalAmount,
           rentCount: (vehicle?.rentCount ?? 0) + 1,
         };
@@ -278,6 +287,10 @@ export const useStore = create<AppState>()(
       startBooking: (id) => {
         const booking = get().bookings.find((b) => b.id === id);
         if (!booking) return;
+        if (underMaintenance(booking.vehicleId)) {
+          toast.error('Vehicle under maintenance', 'It is not cleared for rental — swap the vehicle or confirm it ready from its breakdown first.');
+          return;
+        }
         set((s) => ({
           bookings: s.bookings.map((b) => b.id === id ? { ...b, status: 'Ongoing' as const } : b),
           vehicles: s.vehicles.map((v) => v.id === booking.vehicleId ? { ...v, status: 'Ongoing' as const } : v),
@@ -292,13 +305,14 @@ export const useStore = create<AppState>()(
       completeBooking: (id) => {
         const booking = get().bookings.find((b) => b.id === id);
         if (!booking) return;
+        const afterComplete = keepMaintenance(booking.vehicleId, 'Available');
         set((s) => ({
           bookings: s.bookings.map((b) => b.id === id ? { ...b, status: 'Completed' as const } : b),
-          vehicles: s.vehicles.map((v) => v.id === booking.vehicleId ? { ...v, status: 'Available' as const } : v),
+          vehicles: s.vehicles.map((v) => v.id === booking.vehicleId ? { ...v, status: afterComplete } : v),
         }));
         if (supabaseEnabled) {
           sync(() => db.updateBooking(id, { status: 'Completed' }));
-          sync(() => db.updateVehicle(booking.vehicleId, { status: 'Available' }));
+          sync(() => db.updateVehicle(booking.vehicleId, { status: afterComplete }));
         }
         toast.success('Rental completed', `${booking.customerName}'s booking is closed and the vehicle is available.`);
       },
@@ -363,9 +377,10 @@ export const useStore = create<AppState>()(
           status: 'Cancelled',
           ...(why ? { notes, activity: [...(booking?.activity ?? []), { at: new Date().toISOString(), by: why.by, type: 'Cancelled' as const, text: `${why.reason}${why.details ? ` — ${why.details}` : ''}` }] } : {}),
         };
+        const afterCancel = booking ? keepMaintenance(booking.vehicleId, 'Available') : 'Available';
         set((s) => {
           const vehicles = booking
-            ? s.vehicles.map((v) => (v.id === booking.vehicleId ? { ...v, status: 'Available' as const } : v))
+            ? s.vehicles.map((v) => (v.id === booking.vehicleId ? { ...v, status: afterCancel } : v))
             : s.vehicles;
           return {
             bookings: s.bookings.map((b) => (b.id === id ? { ...b, ...updates } : b)),
@@ -374,7 +389,7 @@ export const useStore = create<AppState>()(
         });
         if (supabaseEnabled && booking) {
           sync(() => db.updateBooking(id, updates));
-          sync(() => db.updateVehicle(booking.vehicleId, { status: 'Available' }));
+          sync(() => db.updateVehicle(booking.vehicleId, { status: afterCancel }));
         }
         toast.warning('Booking cancelled', booking ? `${booking.customerName}'s booking was cancelled${why ? ` — ${why.reason.toLowerCase()}` : ''}.` : 'The booking was cancelled.');
       },
@@ -534,8 +549,8 @@ export const useStore = create<AppState>()(
         const vehicleUpdates: Partial<Vehicle> = isCancelled ? {} : {
           revenue: (vehicle?.revenue ?? 0) + data.totalAmount,
           rentCount: (vehicle?.rentCount ?? 0) + 1,
-          ...(data.status === 'Ongoing'    ? { status: 'Ongoing'   as const } :
-              data.status === 'Confirmed'  ? { status: 'Reserved'  as const } : {}),
+          ...(data.status === 'Ongoing'    ? { status: keepMaintenance(data.vehicleId, 'Ongoing') } :
+              data.status === 'Confirmed'  ? { status: keepMaintenance(data.vehicleId, 'Reserved') } : {}),
         };
 
         // ── 6. Vehicle owner earnings ─────────────────────────────────────
@@ -986,7 +1001,7 @@ export const useStore = create<AppState>()(
 
         // vehicles: revenue follows each car's share; old car to maintenance (or free), new car on the trip
         const fromUpdates: Partial<Vehicle> = {
-          revenue: Math.max(0, from.revenue - curBefore.revenue + p.fromRevenue), status: x.oldCarTo,
+          revenue: Math.max(0, from.revenue - curBefore.revenue + p.fromRevenue), status: from.status === 'Maintenance' ? 'Maintenance' : x.oldCarTo,
           ...(x.returned.odometer > (from.mileage ?? 0) ? { mileage: x.returned.odometer } : {}),
         };
         const toUpdates: Partial<Vehicle> = {
@@ -1033,6 +1048,10 @@ export const useStore = create<AppState>()(
         const b = st.bookings.find((x) => x.id === id);
         if (!b) return;
         const vehicle = st.vehicles.find((v) => v.id === b.vehicleId);
+        if (kind === 'pickup' && vehicle?.status === 'Maintenance') {
+          toast.error('Vehicle under maintenance', 'It is not cleared for rental — swap the vehicle or confirm it ready from its breakdown first.');
+          return;
+        }
         const status = kind === 'pickup' ? 'Ongoing' as const : 'Completed' as const;
         const handover: VehicleHandover = {
           id: uid(), bookingId: id, vehicleId: b.vehicleId, type: kind === 'pickup' ? 'delivery' : 'return',
@@ -1044,7 +1063,7 @@ export const useStore = create<AppState>()(
         const text = kind === 'pickup'
           ? `Vehicle handed over — ${list.odometer.toLocaleString()} km, fuel ${list.fuel}`
           : `Vehicle returned — ${list.odometer.toLocaleString()} km${pickupKm ? ` (${(list.odometer - pickupKm).toLocaleString()} km driven)` : ''}, fuel ${list.fuel}`;
-        const vehicleUpdates: Partial<Vehicle> = { status: kind === 'pickup' ? 'Ongoing' : 'Available', ...(list.odometer > (vehicle?.mileage ?? 0) ? { mileage: list.odometer } : {}) };
+        const vehicleUpdates: Partial<Vehicle> = { status: kind === 'pickup' ? 'Ongoing' : keepMaintenance(b.vehicleId, 'Available'), ...(list.odometer > (vehicle?.mileage ?? 0) ? { mileage: list.odometer } : {}) };
         set((x) => ({
           handovers: [...x.handovers, handover],
           vehicles: x.vehicles.map((v) => (v.id === b.vehicleId ? { ...v, ...vehicleUpdates } : v)),
@@ -1117,7 +1136,11 @@ export const useStore = create<AppState>()(
 
       // ── Helpers ───────────────────────────────────────────────────────────
       isVehicleAvailable: (vehicleId, startDate, endDate, excludeBookingId, startTime, endTime) => {
-        const { bookings } = get();
+        const { bookings, vehicles } = get();
+        if (vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance') {
+          const own = excludeBookingId ? bookings.find((b) => b.id === excludeBookingId) : undefined;
+          if (own?.vehicleId !== vehicleId) return false;
+        }
         // Compare full date-times so a same-day return + re-hire doesn't clash
         // (e.g. returned 08:00, handed to the next hire from 12:00 the same day).
         const candStart = bookingStartMs({ startDate, startTime });

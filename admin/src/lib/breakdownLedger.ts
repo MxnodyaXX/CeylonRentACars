@@ -140,7 +140,7 @@ export function terminationProposal(b: Booking, terminateAtIso: string, deductio
 
 /* ── Dashboard ─────────────────────────────────────────────────────────────── */
 
-export type FinanceFilter = 'all' | 'settled' | 'outstanding' | 'no_cost';
+export type FinanceFilter = 'all' | 'settled' | 'partial' | 'pending' | 'no_cost';
 
 export function incidentStage(i: BdIncident, sols: BdSolution[]) {
   const live = sols.filter((s) => s.incidentId === i.id && s.status !== 'cancelled' && s.status !== 'failed');
@@ -167,6 +167,7 @@ export function dashboard(d: BdData) {
     underRepair: count((i) => st(i).underRepair),
     awaitingSettlement: d.incidents.filter((i) => i.status === 'resolved' && !ledgers.get(i.id)!.settled).length,
     resolved: d.incidents.filter((i) => i.status === 'resolved' || i.status === 'closed').length,
+    vehiclesOnHold: new Set(d.incidents.filter((i) => i.holdVehicleId && !i.holdClearedAt).map((i) => i.holdVehicleId)).size,
     cost: d.incidents.filter((i) => i.status !== 'cancelled').reduce((s, i) => s + ledgers.get(i.id)!.cost, 0),
     ownerOutstanding: d.incidents.reduce((s, i) => s + Math.max(0, ledgers.get(i.id)!.outstanding.owner), 0),
     customerOutstanding: d.incidents.reduce((s, i) => s + Math.max(0, ledgers.get(i.id)!.outstanding.customer), 0),
@@ -174,4 +175,21 @@ export function dashboard(d: BdData) {
   };
 }
 
-export const financeStatus = (l: Ledger): Exclude<FinanceFilter, 'all'> => (l.cost === 0 && l.refundPending === 0 && l.refundsPaid === 0 ? 'no_cost' : l.settled ? 'settled' : 'outstanding');
+/** Money for one incident: PENDING (nothing paid yet) / PARTIAL / SETTLED — or no costs at all */
+export const financeStatus = (l: Ledger): Exclude<FinanceFilter, 'all'> => {
+  if (l.cost === 0 && l.refundPending === 0 && l.refundsPaid === 0) return 'no_cost';
+  if (l.settled) return 'settled';
+  const anyPaid = l.vendorPaid > 0 || l.refundsPaid > 0 || (['owner', 'customer', 'insurance', 'company'] as Party[]).some((p) => l.contributed[p] > 0);
+  return anyPaid ? 'partial' : 'pending';
+};
+export const FINANCE_LABEL: Record<Exclude<FinanceFilter, 'all'>, string> = { pending: 'Pending', partial: 'Partly paid', settled: 'Settled', no_cost: 'No costs' };
+
+/** Earlier breakdowns of the same vehicle and whether they form a pattern that needs a full inspection */
+export function vehicleHistory(vehicleId: string | undefined, incidents: BdIncident[], beforeIso?: string) {
+  if (!vehicleId) return { previous: [] as BdIncident[], repeat: false, reason: '' };
+  const all = incidents.filter((x) => x.vehicleId === vehicleId).sort((a, c) => (a.occurredAt ?? a.reportedAt).localeCompare(c.occurredAt ?? c.reportedAt));
+  const previous = beforeIso ? all.filter((x) => (x.occurredAt ?? x.reportedAt) < beforeIso) : all;
+  const recent = all.filter((x) => Date.now() - new Date(x.occurredAt ?? x.reportedAt).getTime() < 180 * 864e5);
+  const repeat = all.length >= 3 || recent.length >= 2;
+  return { previous, repeat, reason: repeat ? (recent.length >= 2 ? `${recent.length} breakdowns in the last 6 months` : `${all.length} breakdowns in total`) : '' };
+}
