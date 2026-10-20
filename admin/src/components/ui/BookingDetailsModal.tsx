@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
-  FileText, History, Loader2, MessageCircle, Pencil, Phone, PlayCircle, Plus, Printer, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
+  FileText, History, Loader2, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
 } from 'lucide-react';
 import Modal from './Modal';
 import VehicleImage from './VehicleImage';
@@ -18,12 +18,13 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { printInvoice } from '../../lib/printInvoice';
 import {
-  CHECK_ITEMS, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, rs, uploadBookingFile, newId,
+  CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, rs, uploadBookingFile, newId,
 } from '../../lib/bookingRecord';
 import { durationLabel, UNIT, RentalType } from '../../lib/rentalPeriod';
 import { bookingBill, bookingDue } from '../../lib/credit';
 import { buildBookingWhatsAppMsg, openWhatsApp } from '../../lib/whatsapp';
 import { printBookingConfirmation } from '../../lib/printReceipt';
+import { sendSms } from '../../lib/sms';
 import { DEFAULT_POLICIES, printRentalAgreement } from '../../lib/printAgreement';
 import { feedbackMessage, linkFor } from '../../pages/Feedback';
 import type {
@@ -267,6 +268,22 @@ function Overview({ b, by, price, extra }: {
   };
   const f = (k: keyof typeof form) => ({ value: (form[k] as string) ?? '', onChange: (e: React.ChangeEvent<HTMLInputElement>) => setForm((x) => ({ ...x, [k]: e.target.value })) });
 
+  // ask the customer for whatever is still missing
+  const toAsk = b.status === 'Cancelled' || b.status === 'Completed' ? [] : customerDetailsToAsk(b);
+  const [smsSending, setSmsSending] = useState(false);
+  const askByWhatsApp = () => {
+    openWhatsApp(b.customerPhone, customerDetailsMessage(b, toAsk, 'whatsapp'));
+    logBookingActivity(b.id, { by, type: 'Message', text: `WhatsApp: asked the customer for ${toAsk.join(', ')}` });
+  };
+  const askBySms = async () => {
+    setSmsSending(true);
+    const ok = await sendSms(b.customerPhone, customerDetailsMessage(b, toAsk, 'sms'), { category: 'customerDetailsRequest', role: 'customer', relatedId: b.id, transactional: true });
+    setSmsSending(false);
+    if (!ok) return toast.error('SMS not sent', 'Check the phone number, or whether SMS sending is paused in Settings.');
+    logBookingActivity(b.id, { by, type: 'Message', text: `SMS: asked the customer for ${toAsk.join(', ')}` });
+    toast.success('SMS sent', `Asked ${b.customerName} for their details`);
+  };
+
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <Card title="Rental" icon={ClipboardList}>
@@ -353,6 +370,18 @@ function Overview({ b, by, price, extra }: {
             <KV k="Address" v={ci.address} />
             <KV k="Emergency" v={[ci.emergencyName, ci.emergencyPhone].filter(Boolean).join(' · ') || undefined} />
             {!ci.licenceNumber && !b.driverId && <p className="text-[11px] text-amber-700 mt-1">Self drive — add the driving licence before handing over the vehicle.</p>}
+            {toAsk.length > 0 && (
+              <div className="mt-3 rounded-xl bg-navy-50 p-2.5">
+                <p className="text-[11px] font-semibold text-navy-600">Ask {b.customerName.split(' ')[0]} to send</p>
+                <p className="text-[11px] text-navy-500 mt-0.5">{toAsk.join(' · ')}</p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <button type="button" onClick={askByWhatsApp} className={`${smallBtn} bg-emerald-600 text-white hover:bg-emerald-700`}><MessageCircle size={11} /> WhatsApp</button>
+                  <button type="button" onClick={askBySms} disabled={smsSending} className={`${smallBtn} bg-white text-navy-700 border border-navy-200 hover:bg-navy-100 disabled:opacity-60`}>
+                    {smsSending ? <Loader2 size={11} className="animate-spin" /> : <MessageSquare size={11} />} SMS
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </Card>

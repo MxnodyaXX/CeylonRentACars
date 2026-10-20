@@ -213,3 +213,43 @@ export function missingInfo(b: Booking): MissingItem[] {
   }
   return out;
 }
+
+/** Customer details still missing, worded for the customer (used to ask them by WhatsApp / SMS) */
+export function customerDetailsToAsk(b: Booking): string[] {
+  const ci = b.customerInfo ?? {};
+  const docs = b.documents ?? [];
+  const selfDrive = !b.driverId;
+  const out: string[] = [];
+  if (!b.customerNIC && !ci.passportNumber) out.push('NIC or passport number');
+  if (!docs.some((d) => d.kind === 'NIC / Passport')) out.push('a photo of your NIC / passport');
+  if (selfDrive) {
+    if (!ci.licenceNumber || !ci.licenceExpiry) out.push('driving licence number and expiry date');
+    if (!docs.some((d) => d.kind === 'Driving licence')) out.push('a photo of your driving licence (both sides)');
+    if (ci.licenceType === 'Foreign' && !ci.idp) out.push('your International Driving Permit');
+  }
+  if (!ci.address) out.push('home address');
+  if (!ci.emergencyName || !ci.emergencyPhone) out.push('an emergency contact (name and phone)');
+  return out;
+}
+
+/** The request message; WhatsApp can carry photos, an SMS reply can't, so it asks for those on WhatsApp */
+export function customerDetailsMessage(b: Booking, items: string[], via: 'whatsapp' | 'sms'): string {
+  const ref = bookingNo(b);
+  if (via === 'whatsapp') {
+    return [
+      `Hello ${b.customerName},`,
+      '',
+      `Thank you for booking with Ceylon Rent A Cars (${ref}, ${b.startDate}). To prepare your rental agreement, please reply with:`,
+      '',
+      ...items.map((i) => `• ${i}`),
+      '',
+      'Thank you! — Ceylon Rent A Cars, 071 733 3313',
+    ].join('\n');
+  }
+  const photos = items.some((i) => i.startsWith('a photo'));
+  const text = items.filter((i) => !i.startsWith('a photo'));
+  return `Dear ${b.customerName}, for your Ceylon Rent A Cars booking ${ref}`
+    + (text.length ? ` please reply with: ${text.join('; ')}.` : ' we need copies of your documents.')
+    + (photos ? ' Please WhatsApp photos of your NIC/passport and licence to 071 733 3313.' : '')
+    + ' Thank you.';
+}

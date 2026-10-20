@@ -7,6 +7,8 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { CHECK_ITEMS, FUEL_LEVELS, depositHeld, priceBreakdown, rs, uploadBookingFile } from '../../lib/bookingRecord';
 import { earlierKm } from '../../lib/exchange';
+import { rentalDays } from '../../lib/availability';
+import { breakdownHooks } from '../../store/useStore';
 import { printInvoice } from '../../lib/printInvoice';
 import type { Booking, ChargeKind, HandoverChecklist } from '../../types';
 
@@ -22,7 +24,7 @@ const localNow = () => { const d = new Date(); return `${d.getFullYear()}-${pad(
  * signature. Saving starts (pickup) or completes (return) the rental.
  */
 export default function HandoverModal({ booking: b, kind, onClose, onDone }: { booking: Booking; kind: 'pickup' | 'return'; onClose: () => void; onDone?: () => void }) {
-  const { vehicles, recordHandover, addCharge, recordPayment, settleDeposit, updateVehicle } = useStore();
+  const { vehicles, recordHandover, addCharge, recordPayment, settleDeposit, updateVehicle, editBooking } = useStore();
   const by = useAuthStore((s) => s.currentUser?.name) ?? 'Staff';
   const vehicle = vehicles.find((v) => v.id === b.vehicleId);
   const pickup = b.checklists?.pickup;
@@ -67,8 +69,22 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const rate = Math.max(0, Number(kmRate) || 0);
   const kmCharge = isReturn && chargeKm && !kmAlreadyCharged ? Math.round(extraKm * rate) : 0;
   const extrasTotal = extras.reduce((s, x) => s + Math.max(0, Number(x.amount) || 0), 0);
-  const newBill = price.bill + kmCharge + extrasTotal;
+  // Returned early / late (daily rentals): the days actually used, from the scheduled start to the return time
+  const daily = isReturn && (b.rentalType ?? 'Daily') === 'Daily' && b.totalDays > 0;
+  const usedDays = daily ? rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay) : b.totalDays;
+  const dayRate = b.totalDays ? Math.round(b.totalAmount / b.totalDays) : 0;
+  const exchangedDays = (b.exchanges ?? []).reduce((s, e) => s + e.fromDays, 0);
+  const early = daily && usedDays < b.totalDays && usedDays >= Math.max(1, exchangedDays);
+  const late = daily && usedDays > b.totalDays;
+  const [chargeUsedOnly, setChargeUsedOnly] = useState(true);
+  const [chargeLate, setChargeLate] = useState(true);
+  const usedValue = early ? Math.round((b.totalAmount * usedDays) / b.totalDays) : b.totalAmount;
+  const earlyCut = early && chargeUsedOnly ? b.totalAmount - usedValue : 0;
+  const lateCharge = late && chargeLate ? (usedDays - b.totalDays) * dayRate : 0;
+  const newBill = price.bill - earlyCut + kmCharge + extrasTotal + lateCharge;
   const dueNow = Math.max(0, newBill - price.paid);
+  const refundDue = Math.max(0, price.paid - newBill);
+  const [refundNow, setRefundNow] = useState(true);
   const collectAmt = collect === null ? dueNow : Math.max(0, Number(collect) || 0);
   const remaining = Math.max(0, newBill - price.paid - collectAmt);
   const keep = Math.min(held, Math.max(0, Number(depKeep) || 0));
@@ -99,6 +115,21 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
     };
     if (isReturn && settleDep && keep > 0 && !depNote.trim()) return setError('Say why part of the deposit is kept.');
     if (isReturn && extras.some((x) => (Number(x.amount) || 0) > 0 && x.kind === 'Other' && !x.note.trim())) return setError('Describe each "Other" charge.');
+    if (isReturn) {
+      // nothing is changed when the rental can't be completed (e.g. a breakdown replacement is still out)
+      const blocked = breakdownHooks.activeSwapNote?.(b.id);
+      if (blocked) return setError(blocked);
+      // returned early and only the days used are charged: shorten the booking first (audited; owner payouts follow)
+      if (earlyCut > 0) {
+        const back = new Date(at);
+        editBooking(b.id, {
+          endDate: at.slice(0, 10), endTime: at.slice(11, 16), totalDays: usedDays, totalAmount: usedValue,
+        }, {
+          by, changes: [`Returned early on ${back.toLocaleDateString('en-GB')}: ${usedDays} day${usedDays === 1 ? '' : 's'} used of ${b.totalDays}`, `Price Rs ${b.totalAmount.toLocaleString('en-LK')} → Rs ${usedValue.toLocaleString('en-LK')}`],
+          reason: 'Charged for the days used',
+        });
+      }
+    }
     recordHandover(b.id, kind, list, location.trim() || undefined);
     if (isReturn) {
       // only if the rental really completed (e.g. not blocked by a breakdown replacement still out)
@@ -111,12 +142,14 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
         });
       }
       if (saveRate && vehicle && rate !== (vehicle.extraKmRate ?? 50)) updateVehicle(vehicle.id, { extraKmRate: rate });
+      if (lateCharge > 0) addCharge(b.id, { kind: 'Late return', amount: lateCharge, date: today(), note: `${usedDays - b.totalDays} extra day${usedDays - b.totalDays === 1 ? '' : 's'} × Rs ${dayRate.toLocaleString('en-LK')} (booked until ${b.endDate})`, by });
       if (kmCharge > 0) addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${extraKm.toLocaleString()} km × Rs ${rate.toLocaleString()}`, by });
       extras.forEach((x) => {
         const amount = Math.max(0, Number(x.amount) || 0);
         if (amount > 0) addCharge(b.id, { kind: x.kind, amount, date: today(), note: x.note.trim() || undefined, by });
       });
       if (collectAmt > 0) recordPayment(b.id, { kind: 'Payment', amount: collectAmt, method, receiptNo: receiptNo.trim() || undefined, note: 'Collected at return', by });
+      if (refundDue > 0 && refundNow) recordPayment(b.id, { kind: 'Refund', amount: refundDue, method, receiptNo: receiptNo.trim() || undefined, note: 'Overpayment refunded at return', by });
       if (settleDep && held > 0) settleDeposit(b.id, { returned: held - keep, deduction: keep, method, notes: depNote.trim() || undefined }, by);
       if (invoice) {
         const fresh = useStore.getState().bookings.find((x) => x.id === b.id);
@@ -170,12 +203,36 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
           <section className="rounded-2xl border border-navy-100 p-3 space-y-3">
             <p className="label !mb-0 flex items-center gap-1.5"><Receipt size={14} /> Payment &amp; settlement</p>
 
+            {/* returned early / late */}
+            {(early || late) && (
+              <div className={`rounded-xl p-2.5 space-y-1.5 ${early ? 'bg-sky-50 text-sky-900' : 'bg-amber-50 text-amber-900'}`}>
+                <p className="text-sm font-semibold">
+                  {early ? `Returned ${b.totalDays - usedDays} day${b.totalDays - usedDays === 1 ? '' : 's'} early — ${usedDays} of ${b.totalDays} days used`
+                         : `Returned ${usedDays - b.totalDays} day${usedDays - b.totalDays === 1 ? '' : 's'} late — ${usedDays} days used, ${b.totalDays} booked`}
+                </p>
+                {early ? (
+                  <div className="flex flex-col gap-1 text-sm">
+                    <label className="flex items-center gap-2"><input type="radio" checked={chargeUsedOnly} onChange={() => setChargeUsedOnly(true)} />
+                      Charge the days used: {usedDays} × {rs(dayRate)} = <b>{rs(usedValue)}</b></label>
+                    <label className="flex items-center gap-2"><input type="radio" checked={!chargeUsedOnly} onChange={() => setChargeUsedOnly(false)} />
+                      Keep the full booking price ({rs(b.totalAmount)})</label>
+                  </div>
+                ) : (
+                  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={chargeLate} onChange={(e) => setChargeLate(e.target.checked)} />
+                    Charge the extra days: {usedDays - b.totalDays} × {rs(dayRate)} = <b>{rs((usedDays - b.totalDays) * dayRate)}</b></label>
+                )}
+                <p className="text-[11px] opacity-80">From the booked start ({b.startDate}{b.startTime ? ` ${b.startTime}` : ''}) to the return time above{b.waiveExtraDay ? ' — partial days waived for this booking' : ''}.{early && chargeUsedOnly ? ' The booking is shortened and the change is kept in its history; owner payouts follow.' : ''}</p>
+              </div>
+            )}
+
             {/* rent so far */}
             <div className="text-sm">
               {price.lines.map((l, i) => (
                 <div key={i} className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">{l.label}</span><span className={l.amount < 0 ? 'text-red-600' : 'text-navy-800'}>{l.amount < 0 ? `− ${rs(-l.amount)}` : rs(l.amount)}</span></div>
               ))}
-              <div className="flex justify-between gap-3 py-0.5 border-t border-navy-50 mt-1"><span className="text-navy-500">Bill so far</span><b>{rs(price.bill)}</b></div>
+              {earlyCut > 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Returned early — {b.totalDays - usedDays} unused day{b.totalDays - usedDays === 1 ? '' : 's'} not charged</span><span className="text-red-600">− {rs(earlyCut)}</span></div>}
+              {lateCharge > 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Late return — {usedDays - b.totalDays} extra day{usedDays - b.totalDays === 1 ? '' : 's'}</span><span className="text-navy-800">{rs(lateCharge)}</span></div>}
+              <div className="flex justify-between gap-3 py-0.5 border-t border-navy-50 mt-1"><span className="text-navy-500">Bill</span><b>{rs(price.bill - earlyCut + lateCharge)}</b></div>
               <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-500">Already paid</span><span className="text-emerald-700">{rs(price.paid)}</span></div>
             </div>
 
@@ -252,6 +309,12 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                   <input className="input !py-1.5 mt-1 text-navy-900" value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} />
                 </label>
               </div>
+              {refundDue > 0 && (
+                <label className="flex items-center justify-between gap-2 text-sm text-sky-200">
+                  <span className="flex items-center gap-2"><input type="checkbox" checked={refundNow} onChange={(e) => setRefundNow(e.target.checked)} /> Refund the overpayment now</span>
+                  <b>{rs(refundDue)}</b>
+                </label>
+              )}
               <div className="flex justify-between text-sm pt-1 border-t border-white/15">
                 <span className="opacity-70">Still owed after this</span>
                 <b className={remaining > 0 ? 'text-amber-300' : 'text-emerald-300'}>{remaining > 0 ? rs(remaining) : 'Paid in full'}</b>
