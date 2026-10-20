@@ -100,7 +100,7 @@ export default function Breakdowns() {
             <select className="input" value={finance} onChange={(e) => setFinance(e.target.value as FinanceFilter)} aria-label="Money">
               <option value="all">Any money status</option><option value="pending">Pending</option><option value="partial">Partly paid</option><option value="settled">Settled</option><option value="no_cost">No costs</option>
             </select>
-            <Select value={vehicleId} onChange={setVehicleId} placeholder="Any vehicle" nullable options={vehicles.map((v) => ({ value: v.id, label: `${v.brand} ${v.model}`, sub: v.vehicleNumber }))} />
+            <Select searchable searchPlaceholder="Search model or number…" value={vehicleId} onChange={setVehicleId} placeholder="Any vehicle" nullable options={vehicles.map((v) => ({ value: v.id, label: `${v.brand} ${v.model}`, sub: v.vehicleNumber }))} />
             <Select value={ownerId} onChange={setOwnerId} placeholder="Any owner" nullable options={owners.map((o) => ({ value: o.id, label: o.name }))} />
             <input className="input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From" />
             <input className="input" type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To" />

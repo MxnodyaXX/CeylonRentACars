@@ -719,7 +719,7 @@ export default function Bookings() {
           <SlidersHorizontal size={13} /> Filter:
         </span>
         <div className="w-full sm:w-60">
-          <Select value={vehicleFilter} onChange={setVehicleFilter} placeholder="All vehicles" nullable className="[&>button]:!py-1.5 [&>button]:text-xs"
+          <Select searchable searchPlaceholder="Search model or number…" value={vehicleFilter} onChange={setVehicleFilter} placeholder="All vehicles" nullable className="[&>button]:!py-1.5 [&>button]:text-xs"
             options={bookableVehicles
               .map((v) => ({ v, n: visibleBookings.filter((b) => b.vehicleId === v.id).length }))
               .filter((x) => x.n > 0)
@@ -1067,7 +1067,7 @@ export default function Bookings() {
           {/* Vehicle select */}
           <div>
             <p className="label">Select Vehicle *</p>
-            <Select
+            <Select searchable searchPlaceholder="Search model or number…"
               value={form.vehicleId}
               onChange={(val) => { set('vehicleId', val); setStartWarn(''); setEndWarn(''); }}
               placeholder="Choose a vehicle"

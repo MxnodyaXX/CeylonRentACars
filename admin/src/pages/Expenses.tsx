@@ -117,7 +117,7 @@ export default function Expenses() {
       {/* Filters + Add */}
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <Select
+          <Select searchable searchPlaceholder="Search model or number…"
             className="w-40 sm:w-48"
             value={vehicleFilter}
             onChange={setVehicleFilter}
@@ -193,7 +193,7 @@ export default function Expenses() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="sm:col-span-2">
             <p className="label">Vehicle *</p>
-            <Select value={form.vehicleId} onChange={(v) => set('vehicleId', v)} placeholder="Select vehicle" nullable
+            <Select searchable searchPlaceholder="Search model or number…" value={form.vehicleId} onChange={(v) => set('vehicleId', v)} placeholder="Select vehicle" nullable
               options={scopedVehicles.map((v) => ({ value: v.id, label: `${v.brand} ${v.model} — ${v.vehicleNumber}` }))} />
           </div>
           <div>

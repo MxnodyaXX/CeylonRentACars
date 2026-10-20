@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, Check } from 'lucide-react';
+import { ChevronDown, Check, Search } from 'lucide-react';
 import clsx from 'clsx';
 
 export interface SelectOption {
@@ -19,6 +19,18 @@ interface SelectProps {
   disabled?: boolean;
   className?: string;
   error?: boolean;
+  /** a search box at the top of the list (matches the label, sub line and group) */
+  searchable?: boolean;
+  searchPlaceholder?: string;
+}
+
+/** loose match: case, spaces and dashes ignored, so "cbu0745" finds "CBU-0745"; every word must match */
+const squash = (t: string) => t.toLowerCase().replace(/[\s\-·—_.()]+/g, '');
+export function optionMatches(o: SelectOption, query: string): boolean {
+  const hay = `${o.label} ${o.sub ?? ''} ${o.group ?? ''}`;
+  const lower = hay.toLowerCase(), flat = squash(hay);
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    .every((w) => lower.includes(w) || flat.includes(squash(w)));
 }
 
 export default function Select({
@@ -30,14 +42,19 @@ export default function Select({
   disabled = false,
   className,
   error,
+  searchable = false,
+  searchPlaceholder = 'Search…',
 }: SelectProps) {
   const [open, setOpen]         = useState(false);
   const [focusedIdx, setFocused] = useState(-1);
+  const [query, setQuery]       = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef      = useRef<HTMLDivElement>(null);
+  const searchRef    = useRef<HTMLInputElement>(null);
 
   const strValue = String(value ?? '');
   const selected  = options.find((o) => String(o.value) === strValue);
+  const shown = searchable && query.trim() ? options.filter((o) => optionMatches(o, query)) : options;
 
   // Close on outside click
   useEffect(() => {
@@ -50,6 +67,12 @@ export default function Select({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Opening puts the cursor in the search box; closing forgets the search
+  useEffect(() => {
+    if (open && searchable) searchRef.current?.focus();
+    if (!open) setQuery('');
+  }, [open, searchable]);
 
   // Scroll focused option into view
   useEffect(() => {
@@ -76,7 +99,7 @@ export default function Select({
       if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) {
         e.preventDefault();
         setOpen(true);
-        setFocused(options.findIndex((o) => String(o.value) === strValue));
+        setFocused(shown.findIndex((o) => String(o.value) === strValue));
       }
       return;
     }
@@ -87,7 +110,7 @@ export default function Select({
         break;
       case 'ArrowDown':
         e.preventDefault();
-        setFocused((i) => Math.min(i + 1, options.length - 1));
+        setFocused((i) => Math.min(i + 1, shown.length - 1));
         break;
       case 'ArrowUp':
         e.preventDefault();
@@ -95,7 +118,8 @@ export default function Select({
         break;
       case 'Enter':
         e.preventDefault();
-        if (focusedIdx >= 0 && focusedIdx < options.length) pick(options[focusedIdx]);
+        if (focusedIdx >= 0 && focusedIdx < shown.length) pick(shown[focusedIdx]);
+        else if (searchable && shown.length === 1) pick(shown[0]); // typed until one is left → Enter picks it
         break;
     }
   };
@@ -104,7 +128,7 @@ export default function Select({
   const renderOptions = () => {
     const items: React.ReactNode[] = [];
     let lastGroup: string | undefined = undefined;
-    options.forEach((opt, idx) => {
+    shown.forEach((opt, idx) => {
       if (opt.group !== undefined && opt.group !== lastGroup) {
         lastGroup = opt.group;
         items.push(
@@ -142,6 +166,7 @@ export default function Select({
         </div>,
       );
     });
+    if (!shown.length && query.trim()) items.push(<p key="__none__" className="px-3.5 py-3 text-sm text-navy-400">No match for “{query.trim()}”</p>);
     return items;
   };
 
@@ -174,8 +199,23 @@ export default function Select({
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute z-50 top-full mt-1.5 left-0 right-0 bg-white rounded-xl border border-navy-100 shadow-[0_8px_32px_rgba(17,17,20,0.12),0_2px_8px_rgba(17,17,20,0.06)] overflow-hidden">
-          {nullable && (
+        <div className="absolute z-50 top-full mt-1.5 left-0 right-0 min-w-[240px] bg-white rounded-xl border border-navy-100 shadow-[0_8px_32px_rgba(17,17,20,0.12),0_2px_8px_rgba(17,17,20,0.06)] overflow-hidden">
+          {searchable && (
+            <div className="p-2 border-b border-navy-50">
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-navy-300 pointer-events-none" />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => { setQuery(e.target.value); setFocused(-1); }}
+                  onKeyDown={handleKeyDown}
+                  placeholder={searchPlaceholder}
+                  className="w-full rounded-lg border border-navy-100 bg-navy-50/50 pl-8 pr-2.5 py-1.5 text-sm text-navy-800 outline-none focus:border-navy-300 focus:bg-white"
+                />
+              </div>
+            </div>
+          )}
+          {nullable && !query.trim() && (
             <div
               onClick={clear}
               className={clsx(
@@ -186,7 +226,7 @@ export default function Select({
               {placeholder}
             </div>
           )}
-          <div ref={listRef} className="max-h-52 overflow-y-auto">
+          <div ref={listRef} className="max-h-60 overflow-y-auto">
             {renderOptions()}
           </div>
         </div>

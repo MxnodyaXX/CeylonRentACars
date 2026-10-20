@@ -40,7 +40,7 @@ export default function SwapVehicleModal({ booking: b, onClose, onDone }: { book
         <p className="text-sm text-navy-500">Current: <b className="text-navy-800">{current ? `${current.brand} ${current.model} (${current.vehicleNumber})` : '—'}</b> · {b.startDate} → {b.endDate}</p>
         <div>
           <p className="label">New vehicle (free for these dates)</p>
-          <Select value={vehicleId} onChange={setVehicleId} placeholder={free.length ? 'Choose a vehicle…' : 'No other vehicle is free for these dates'}
+          <Select searchable searchPlaceholder="Search model or number…" value={vehicleId} onChange={setVehicleId} placeholder={free.length ? 'Choose a vehicle…' : 'No other vehicle is free for these dates'}
             options={free.map((v) => ({ value: v.id, label: `${v.brand} ${v.model}`, sub: `${v.vehicleNumber} · Rs ${v.dailyRent.toLocaleString()}/day` }))} />
         </div>
         <div>

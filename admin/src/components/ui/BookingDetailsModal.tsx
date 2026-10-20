@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  AlertTriangle, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
+  AlertTriangle, ArrowLeft, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
   FileText, History, Loader2, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
 } from 'lucide-react';
 import Modal from './Modal';
@@ -90,18 +90,20 @@ function StoredImage({ path, className = '' }: { path: string; className?: strin
    Booking details
    ===================================================================== */
 
-export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCancel }: {
+export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCancel, page = false }: {
   bookingId: string;
   onClose: () => void;
   onEdit: (b: Booking) => void;
   onCancel: (b: Booking) => void;
+  /** shown as a full page (its own tab) instead of a pop-up */
+  page?: boolean;
 }) {
   const store = useStore();
   const { bookings, vehicles, owners, drivers, customers, commissions, handovers } = store;
   const { currentUser, isAdmin } = useAuthStore();
   const by = currentUser?.name ?? 'Staff';
   const b = bookings.find((x) => x.id === bookingId);
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(page ? 'payments' : 'overview');
   const [dialog, setDialog] = useState<null | 'pickup' | 'return' | 'extend' | 'swap' | 'exchange'>(null);
 
   if (!b) return null;
@@ -120,118 +122,169 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   };
   const copyNo = () => navigator.clipboard?.writeText(no).then(() => toast.success('Copied', no)).catch(() => undefined);
 
-  return (
+  const openInTab = (
+    <a href={`/bookings/${b.id}`} target="_blank" rel="noreferrer" title="Open in a new tab"
+       className="w-8 h-8 rounded-lg flex items-center justify-center text-navy-400 hover:bg-navy-50 hover:text-navy-700 transition-colors">
+      <ExternalLink size={15} />
+    </a>
+  );
+
+  /* ── pieces shared by the pop-up and the full page ── */
+  const contact = (
+    <div className="flex gap-1.5">
+      <a href={`tel:${b.customerPhone}`} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Phone size={12} /> {b.customerPhone}</a>
+      <button type="button" onClick={() => sendWhatsApp(buildBookingWhatsAppMsg(b, vehicle), 'booking details')} className={`${smallBtn} bg-emerald-500 text-white hover:bg-emerald-600`}><MessageCircle size={12} /> WhatsApp</button>
+    </div>
+  );
+  const badges = (
     <>
-      <Modal open onClose={onClose} title="Booking details" width="max-w-4xl">
-        <div className="space-y-4 -mt-1">
-          {/* ── Header ── */}
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={copyNo} className="font-mono text-sm font-bold text-navy-800 hover:text-navy-600 inline-flex items-center gap-1" title="Copy booking number">
-                  {no} <Copy size={12} className="text-navy-300" />
-                </button>
-                <StatusPill status={b.status} />
-                {b.rentalType && b.rentalType !== 'Daily' && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">{b.rentalType}</span>}
-                {b.insertedByAdmin && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Owner entry</span>}
-              </div>
-              <p className="text-xl font-bold text-navy-900 mt-1">{b.customerName}</p>
-              <p className="text-xs text-navy-400">Created {fmtDateTime(b.createdAt)} · {b.referral || 'Direct'}</p>
-            </div>
-            <div className="flex gap-1.5">
-              <a href={`tel:${b.customerPhone}`} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Phone size={12} /> {b.customerPhone}</a>
-              <button type="button" onClick={() => sendWhatsApp(buildBookingWhatsAppMsg(b, vehicle), 'booking details')} className={`${smallBtn} bg-emerald-500 text-white hover:bg-emerald-600`}><MessageCircle size={12} /> WhatsApp</button>
-            </div>
-          </div>
+      <button type="button" onClick={copyNo} className="font-mono text-sm font-bold text-navy-800 hover:text-navy-600 inline-flex items-center gap-1" title="Copy booking number">
+        {no} <Copy size={12} className="text-navy-300" />
+      </button>
+      <StatusPill status={b.status} />
+      {b.rentalType && b.rentalType !== 'Daily' && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">{b.rentalType}</span>}
+      {b.insertedByAdmin && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Owner entry</span>}
+    </>
+  );
+  const created = `Created ${fmtDateTime(b.createdAt)} · ${b.referral || 'Direct'}`;
 
-          {customer?.doNotRent && (
-            <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 flex gap-2">
-              <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
-              <span><b>Do not rent:</b> this customer is flagged{customer.doNotRentReason ? ` — ${customer.doNotRentReason}` : ''}.</span>
-            </p>
-          )}
-          {(() => {
-            const miss = missingInfo(b);
-            if (!miss.length) return null;
-            const critical = miss.some((i) => i.critical);
-            return (
-              <div className={`rounded-xl border px-3 py-2.5 ${critical ? 'border-red-200 bg-red-50/70' : 'border-amber-200 bg-amber-50/70'}`}>
-                <p className={`text-xs font-bold flex items-center gap-1.5 mb-1.5 ${critical ? 'text-red-700' : 'text-amber-800'}`}>
-                  <AlertTriangle size={13} /> To complete ({miss.length}){critical && b.status === 'Confirmed' ? ' — needed before handing over the vehicle' : ''}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {miss.map((i) => (
-                    <button key={i.label} type="button" onClick={() => (i.tab === 'edit' ? (isAdmin() ? onEdit(b) : setTab('overview')) : setTab(i.tab))}
-                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${i.critical ? 'bg-white text-red-700 ring-1 ring-inset ring-red-200 hover:bg-red-100' : 'bg-white text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-100'}`}>
-                      {i.label} →
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-          {others.length > 0 && (
-            <p className="text-xs text-navy-500 bg-navy-50/70 rounded-xl px-3 py-2">
-              Returning customer · {others.length} other booking{others.length === 1 ? '' : 's'} · Rs {others.filter((x) => x.status !== 'Cancelled').reduce((s, x) => s + bookingBill(x), 0).toLocaleString()} billed
-              {othersDue > 0 && <span className="text-red-600 font-semibold"> · Rs {othersDue.toLocaleString()} still due on other bookings</span>}
-            </p>
-          )}
-
-          {/* ── Tabs ── */}
-          <div className="flex gap-1 overflow-x-auto no-scrollbar border-b border-navy-100 -mx-1 px-1">
-            {TABS.map(({ id, label, icon: I }) => (
-              <button key={id} type="button" onClick={() => setTab(id)}
-                      className={`flex items-center gap-1.5 px-3 py-2 text-sm font-semibold border-b-2 -mb-px whitespace-nowrap transition-colors ${tab === id ? 'border-navy-800 text-navy-900' : 'border-transparent text-navy-400 hover:text-navy-700'}`}>
-                <I size={14} /> {label}
+  const miss = missingInfo(b);
+  const critical = miss.some((i) => i.critical);
+  const alerts = (
+    <>
+      {customer?.doNotRent && (
+        <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 flex gap-2">
+          <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+          <span><b>Do not rent:</b> this customer is flagged{customer.doNotRentReason ? ` — ${customer.doNotRentReason}` : ''}.</span>
+        </p>
+      )}
+      {miss.length > 0 && (
+        <div className={`rounded-xl border px-3 ${page ? 'py-2 flex flex-wrap items-center gap-1.5' : 'py-2.5'} ${critical ? 'border-red-200 bg-red-50/70' : 'border-amber-200 bg-amber-50/70'}`}>
+          <p className={`text-xs font-bold flex items-center gap-1.5 ${page ? 'mr-1' : 'mb-1.5'} ${critical ? 'text-red-700' : 'text-amber-800'}`}>
+            <AlertTriangle size={13} /> To complete ({miss.length}){critical && b.status === 'Confirmed' ? ' — needed before handing over the vehicle' : ''}
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {miss.map((i) => (
+              <button key={i.label} type="button" onClick={() => (i.tab === 'edit' ? (isAdmin() ? onEdit(b) : setTab('overview')) : (page && i.tab === 'overview') ? undefined : setTab(i.tab))}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${i.critical ? 'bg-white text-red-700 ring-1 ring-inset ring-red-200 hover:bg-red-100' : 'bg-white text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-100'}`}>
+                {i.label} →
               </button>
             ))}
           </div>
-
-          <div className="min-h-[320px]">
-            {tab === 'overview' && <Overview b={b} vehicleName={vehicle ? `${vehicle.brand} ${vehicle.model}` : '—'} by={by} price={price}
-              extra={{ vehicle, owner, driver }} />}
-            {tab === 'payments' && <Payments b={b} by={by} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
-            {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} />}
-            {tab === 'documents' && <Documents b={b} by={by} canDelete={isAdmin()} onPrintAgreement={() => {
-              printRentalAgreement(b, vehicle, by);
-              store.logBookingActivity(b.id, { by, type: 'Agreement', text: 'Rental agreement printed' }, { agreement: { ...(b.agreement ?? {}), printedAt: new Date().toISOString() } });
-            }} />}
-            {tab === 'breakdowns' && <BookingBreakdownsTab b={b} canReport={isAdmin() && (b.status === 'Ongoing' || b.status === 'Confirmed')} />}
-            {tab === 'history' && <HistoryTab b={b} by={by} legacy={handovers.filter((h) => h.bookingId === b.id)} />}
-          </div>
-
-          {/* ── Actions (change with the status) ── */}
-          <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-3 bg-white/95 backdrop-blur border-t border-navy-100 flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => printBookingConfirmation(b, vehicle, driver)} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Printer size={13} /> Receipt</button>
-            <button type="button" onClick={() => { setTab('documents'); }} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><FileSignature size={13} /> Agreement</button>
-            <button type="button" onClick={() => setTab('payments')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CreditCard size={13} /> Record payment</button>
-            {isAdmin() && <button type="button" onClick={() => onEdit(b)} className={`${smallBtn} bg-amber-100 text-amber-800 hover:bg-amber-200`}><Pencil size={13} /> Edit</button>}
-            <span className="flex-1" />
-            {b.status === 'Confirmed' && (
-              <button type="button" onClick={() => setDialog('swap')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><ArrowLeftRight size={13} /> Swap vehicle</button>
-            )}
-            {b.status === 'Ongoing' && (
-              <button type="button" onClick={() => setDialog('exchange')} className={`${smallBtn} bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200`}><ArrowLeftRight size={13} /> Exchange vehicle</button>
-            )}
-            {b.status === 'Ongoing' && (
-              <button type="button" onClick={() => setDialog('extend')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CalendarPlus size={13} /> Extend</button>
-            )}
-            {b.status === 'Confirmed' && (
-              <>
-                <button type="button" onClick={() => onCancel(b)} className={`${smallBtn} text-red-600 hover:bg-red-50 border border-red-200`}><XCircle size={13} /> Cancel</button>
-                <button type="button" onClick={() => setDialog('pickup')} className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><PlayCircle size={15} /> Start rental</button>
-              </>
-            )}
-            {b.status === 'Ongoing' && (
-              <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button>
-            )}
-            {b.status === 'Completed' && (
-              <button type="button" onClick={() => sendWhatsApp(feedbackMessage(b.customerName.trim().split(' ')[0], vehicle ? `${vehicle.brand} ${vehicle.model}` : 'your vehicle', b.startDate, b.endDate, linkFor(b.vehicleId, b.customerName)), 'review request')}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><Star size={15} /> Ask for a review</button>
-            )}
-          </div>
         </div>
-      </Modal>
+      )}
+      {others.length > 0 && (
+        <p className="text-xs text-navy-500 bg-navy-50/70 rounded-xl px-3 py-2">
+          Returning customer · {others.length} other booking{others.length === 1 ? '' : 's'} · Rs {others.filter((x) => x.status !== 'Cancelled').reduce((s, x) => s + bookingBill(x), 0).toLocaleString()} billed
+          {othersDue > 0 && <span className="text-red-600 font-semibold"> · Rs {othersDue.toLocaleString()} still due on other bookings</span>}
+        </p>
+      )}
+    </>
+  );
+
+  // on the full page the overview stays on screen, so it isn't a tab there
+  const tabs = page ? TABS.filter((x) => x.id !== 'overview') : TABS;
+  const tabBar = (
+    <div className={`flex gap-1 overflow-x-auto no-scrollbar border-b border-navy-100 ${page ? 'px-2' : '-mx-1 px-1'}`}>
+      {tabs.map(({ id, label, icon: I }) => (
+        <button key={id} type="button" onClick={() => setTab(id)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-semibold border-b-2 -mb-px whitespace-nowrap transition-colors ${tab === id ? 'border-navy-800 text-navy-900' : 'border-transparent text-navy-400 hover:text-navy-700'}`}>
+          <I size={14} /> {label}
+        </button>
+      ))}
+    </div>
+  );
+  const overview = <Overview b={b} vehicleName={vehicle ? `${vehicle.brand} ${vehicle.model}` : '—'} by={by} price={price} extra={{ vehicle, owner, driver }} narrow={page} />;
+  const tabContent = (
+    <>
+      {tab === 'overview' && overview}
+      {tab === 'payments' && <Payments b={b} by={by} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
+      {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} />}
+      {tab === 'documents' && <Documents b={b} by={by} canDelete={isAdmin()} onPrintAgreement={() => {
+        printRentalAgreement(b, vehicle, by);
+        store.logBookingActivity(b.id, { by, type: 'Agreement', text: 'Rental agreement printed' }, { agreement: { ...(b.agreement ?? {}), printedAt: new Date().toISOString() } });
+      }} />}
+      {tab === 'breakdowns' && <BookingBreakdownsTab b={b} canReport={isAdmin() && (b.status === 'Ongoing' || b.status === 'Confirmed')} />}
+      {tab === 'history' && <HistoryTab b={b} by={by} legacy={handovers.filter((h) => h.bookingId === b.id)} />}
+    </>
+  );
+
+  /* ── Actions (change with the status) ── */
+  const actionButtons = (
+    <>
+      <button type="button" onClick={() => printBookingConfirmation(b, vehicle, driver)} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Printer size={13} /> Receipt</button>
+      <button type="button" onClick={() => { setTab('documents'); }} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><FileSignature size={13} /> Agreement</button>
+      <button type="button" onClick={() => setTab('payments')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CreditCard size={13} /> Record payment</button>
+      {isAdmin() && <button type="button" onClick={() => onEdit(b)} className={`${smallBtn} bg-amber-100 text-amber-800 hover:bg-amber-200`}><Pencil size={13} /> Edit</button>}
+      <span className="flex-1" />
+      {b.status === 'Confirmed' && (
+        <button type="button" onClick={() => setDialog('swap')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><ArrowLeftRight size={13} /> Swap vehicle</button>
+      )}
+      {b.status === 'Ongoing' && (
+        <button type="button" onClick={() => setDialog('exchange')} className={`${smallBtn} bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200`}><ArrowLeftRight size={13} /> Exchange vehicle</button>
+      )}
+      {b.status === 'Ongoing' && (
+        <button type="button" onClick={() => setDialog('extend')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CalendarPlus size={13} /> Extend</button>
+      )}
+      {b.status === 'Confirmed' && (
+        <>
+          <button type="button" onClick={() => onCancel(b)} className={`${smallBtn} text-red-600 hover:bg-red-50 border border-red-200`}><XCircle size={13} /> Cancel</button>
+          <button type="button" onClick={() => setDialog('pickup')} className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><PlayCircle size={15} /> Start rental</button>
+        </>
+      )}
+      {b.status === 'Ongoing' && (
+        <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button>
+      )}
+      {b.status === 'Completed' && (
+        <button type="button" onClick={() => sendWhatsApp(feedbackMessage(b.customerName.trim().split(' ')[0], vehicle ? `${vehicle.brand} ${vehicle.model}` : 'your vehicle', b.startDate, b.endDate, linkFor(b.vehicleId, b.customerName)), 'review request')}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><Star size={15} /> Ask for a review</button>
+      )}
+    </>
+  );
+
+  const body = page ? (
+    /* ── Full page (own browser tab): one screen like an ERP record — summary pinned left, work tabs right, actions at the bottom ── */
+    <div className="flex flex-col gap-3 lg:h-[calc(100vh-3rem)]">
+      <div className="rounded-2xl border border-navy-100 bg-white px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <button type="button" onClick={onClose} title="All bookings" className="w-8 h-8 -ml-1 rounded-lg flex items-center justify-center text-navy-500 hover:bg-navy-50 hover:text-navy-800"><ArrowLeft size={16} /></button>
+        <div className="flex flex-wrap items-center gap-2 min-w-0">{badges}</div>
+        <p className="text-lg font-bold text-navy-900 truncate">{b.customerName}</p>
+        <p className="text-xs text-navy-400 hidden xl:block">{created}</p>
+        <span className="flex-1" />
+        {contact}
+      </div>
+      {alerts}
+      <div className="flex-1 min-h-0 grid grid-cols-1 gap-3 lg:grid-cols-[360px_minmax(0,1fr)] min-[1700px]:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="min-h-0 lg:overflow-y-auto lg:pr-1">{overview}</div>
+        <section className="min-h-0 flex flex-col rounded-2xl border border-navy-100 bg-white">
+          {tabBar}
+          <div className="flex-1 min-h-0 lg:overflow-y-auto p-3">{tabContent}</div>
+        </section>
+      </div>
+      <div className="rounded-2xl border border-navy-100 bg-white px-4 py-2.5 flex flex-wrap items-center gap-2">{actionButtons}</div>
+    </div>
+  ) : (
+    <Modal open onClose={onClose} title="Booking details" width="max-w-4xl" headerActions={openInTab}>
+      <div className="space-y-4 -mt-1">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">{badges}</div>
+            <p className="text-xl font-bold text-navy-900 mt-1">{b.customerName}</p>
+            <p className="text-xs text-navy-400">{created}</p>
+          </div>
+          {contact}
+        </div>
+        {alerts}
+        {tabBar}
+        <div className="min-h-[320px]">{tabContent}</div>
+        <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-3 bg-white/95 backdrop-blur border-t border-navy-100 flex flex-wrap items-center gap-2">{actionButtons}</div>
+      </div>
+    </Modal>
+  );
+
+  return (
+    <>
+      {body}
 
       {(dialog === 'pickup' || dialog === 'return') && <HandoverModal booking={b} kind={dialog} onClose={() => setDialog(null)} />}
       {dialog === 'extend' && <ExtendRentalModal booking={b} onClose={() => setDialog(null)} />}
@@ -245,9 +298,11 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
    Overview
    ===================================================================== */
 
-function Overview({ b, by, price, extra }: {
+function Overview({ b, by, price, extra, narrow }: {
   b: Booking; vehicleName: string; by: string; price: ReturnType<typeof priceBreakdown>;
   extra: { vehicle?: import('../../types').Vehicle; owner?: import('../../types').Owner; driver?: import('../../types').Driver };
+  /** full page: one column, two only on very wide screens */
+  narrow?: boolean;
 }) {
   const { logBookingActivity, vehicles: allVehicles } = useStore();
   const { vehicle, owner, driver } = extra;
@@ -285,7 +340,7 @@ function Overview({ b, by, price, extra }: {
   };
 
   return (
-    <div className="grid gap-3 md:grid-cols-2">
+    <div className={`grid gap-3 ${narrow ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-1 min-[1700px]:grid-cols-2' : 'md:grid-cols-2'}`}>
       <Card title="Rental" icon={ClipboardList}>
         <div className="flex items-center gap-3 mb-2">
           <div className="w-16 h-11 rounded-lg overflow-hidden bg-navy-50 flex-shrink-0">

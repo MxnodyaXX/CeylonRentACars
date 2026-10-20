@@ -312,7 +312,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="sm:col-span-2">
                     <Field label="Vehicle" required>
-                      <Select value={form.vehicleId} onChange={(v) => set('vehicleId', v)} placeholder="Select vehicle…" nullable
+                      <Select searchable searchPlaceholder="Search model or number…" value={form.vehicleId} onChange={(v) => set('vehicleId', v)} placeholder="Select vehicle…" nullable
                         options={selectableVehicles.map((v) => ({ value: v.id, label: `${v.vehicleNumber} — ${v.brand} ${v.model}`, sub: `Rs ${v.dailyRent.toLocaleString()}/day` }))} />
                     </Field>
                   </div>

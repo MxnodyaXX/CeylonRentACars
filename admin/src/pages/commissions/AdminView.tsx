@@ -597,7 +597,7 @@ export default function AdminView() {
               options={owners.map((o) => ({ value: o.id, label: o.name }))} />
           </div>
           <div className="w-52">
-            <Select value={fVehicle} onChange={setFVehicle} placeholder="All vehicles"
+            <Select searchable searchPlaceholder="Search model or number…" value={fVehicle} onChange={setFVehicle} placeholder="All vehicles"
               options={vehiclesInUse.map((v) => ({ value: v.id, label: `${v.brand} ${v.model}`, sub: v.vehicleNumber }))} />
           </div>
           <div className="w-40">

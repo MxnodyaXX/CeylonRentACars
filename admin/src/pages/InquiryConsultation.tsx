@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Select from '../components/ui/Select';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Users, MapPin, Target, ShieldCheck, Car, Send, Sparkles, StickyNote, Flag, ArrowRight,
@@ -750,13 +751,9 @@ export default function InquiryConsultation() {
                   {manualFits.map((r) => cardFor(r, 'Added by staff', true))}
 
                   <div className="flex gap-2 pt-1">
-                    <select className="input !py-2 flex-1 text-sm" value={addId} onChange={(e) => setAddId(e.target.value)}>
-                      <option value="">+ Add a vehicle manually…</option>
-                      {addable.map((x) => {
-                        const t = costOf(x);
-                        return <option key={x.id} value={x.id}>{x.brand} {x.model} · {x.seats ?? '—'} seats · {rs(t.total)}{x.hillSuitable === false ? ' · not for hills' : ''}</option>;
-                      })}
-                    </select>
+                    <Select searchable searchPlaceholder="Search model or number…" className="flex-1 [&>button]:!py-2 [&>button]:text-sm" value={addId} onChange={setAddId}
+                      placeholder="+ Add a vehicle manually…"
+                      options={addable.map((x) => ({ value: x.id, label: `${x.brand} ${x.model}`, sub: `${x.vehicleNumber} · ${x.seats ?? '—'} seats · ${rs(costOf(x).total)}${x.hillSuitable === false ? ' · not for hills' : ''}` }))} />
                     <button type="button" disabled={!addId} onClick={() => addManual(addId)} className="btn-secondary !py-2 text-xs disabled:opacity-40">Add</button>
                   </div>
 

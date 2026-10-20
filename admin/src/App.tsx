@@ -11,6 +11,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Vehicles from './pages/Vehicles';
 import Bookings from './pages/Bookings';
+import BookingPage from './pages/BookingPage';
 import Inquiries from './pages/Inquiries';
 import InquiryPage from './pages/InquiryPage';
 import InquiryConsultation from './pages/InquiryConsultation';
@@ -118,6 +119,7 @@ export default function App() {
           <Route path="/"              element={<Dashboard />}     />
           <Route path="/vehicles"      element={<Vehicles />}      />
           <Route path="/bookings"      element={<Bookings />}      />
+          <Route path="/bookings/:id"  element={<BookingPage />}   />
           <Route path="/commissions"   element={<Commissions />}   />
           <Route path="/notifications" element={<Notifications />} />
           {/* Permission-gated pages — redirect to home if not allowed */}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import Select from '../ui/Select';
 import { Link } from 'react-router-dom';
 import { ArrowLeftRight, CheckCircle2, Database, RotateCcw, ShieldAlert, Undo2 } from 'lucide-react';
 import { useBreakdownStore } from '../../store/useBreakdownStore';
@@ -88,10 +89,9 @@ function SwapOut({ s, incident, by, blocked, beforeStart }: { s: BdSolution; inc
       {fleet ? (
         <div className="grid grid-cols-1 sm:grid-cols-[1fr_220px] gap-3">
           <Field label="Replacement vehicle *">
-            <select className="input" value={f.car} onChange={(e) => set('car', e.target.value)}>
-              <option value="">{free.length ? 'Choose a free car…' : 'No car is free until the end of the trip'}</option>
-              {free.map((v) => <option key={v.id} value={v.id}>{v.brand} {v.model} ({v.vehicleNumber}) · {rs(v.dailyRent)}/day · {owners.find((o) => o.id === v.ownerId)?.name ?? '—'}</option>)}
-            </select>
+            <Select searchable searchPlaceholder="Search model or number…" value={f.car} onChange={(v) => set('car', v)}
+              placeholder={free.length ? 'Choose a free car…' : 'No car is free until the end of the trip'}
+              options={free.map((v) => ({ value: v.id, label: `${v.brand} ${v.model} (${v.vehicleNumber})`, sub: `${rs(v.dailyRent)}/day · ${owners.find((o) => o.id === v.ownerId)?.name ?? '—'}` }))} />
           </Field>
           <Field label="Agreed daily rate (Rs)" hint={chosen ? `Listed ${rs(chosen.dailyRent)} — change it if the owner agreed another amount` : 'Pick the car first'}>
             <input className="input" type="number" min="0" value={f.rate} placeholder={chosen ? String(chosen.dailyRent) : ''} onChange={(e) => set('rate', e.target.value)} />

@@ -169,7 +169,7 @@ export default function ExchangeVehicleModal({ booking: b, onClose }: { booking:
             <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5"><ArrowRight size={14} /> Replacement</p>
             <div>
               <p className="label">Vehicle * <span className="normal-case font-normal text-navy-400">(free until {b.endDate})</span></p>
-              <Select value={toId} onChange={pickTo} placeholder={free.length ? 'Choose a vehicle…' : 'No vehicle is free for the rest of this trip'}
+              <Select searchable searchPlaceholder="Search model or number…" value={toId} onChange={pickTo} placeholder={free.length ? 'Choose a vehicle…' : 'No vehicle is free for the rest of this trip'}
                       options={free.map((v) => ({ value: v.id, label: `${v.brand} ${v.model} · ${v.vehicleNumber}`, sub: `Rs ${v.dailyRent.toLocaleString()} / day · ${ownerName(v.id)}` }))} />
             </div>
             <div>

@@ -187,7 +187,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
         <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="sm:col-span-2">
             <Field label="Vehicle">
-              <Select value={f.vehicleId} onChange={(v) => set('vehicleId', v)}
+              <Select searchable searchPlaceholder="Search model or number…" value={f.vehicleId} onChange={(v) => set('vehicleId', v)}
                 options={vehicles.map((v) => ({ value: v.id, label: `${v.vehicleNumber} — ${v.brand} ${v.model}`, sub: `Rs ${v.dailyRent.toLocaleString()}/day` }))} />
             </Field>
           </div>

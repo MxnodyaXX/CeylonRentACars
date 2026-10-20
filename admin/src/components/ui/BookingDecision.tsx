@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import Select from './Select';
 import { Repeat, CheckCircle2, Send, CalendarCheck, Pencil, AlertTriangle, History, Wallet, Globe, User } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { rs, prettyDate } from '../../lib/inquiryReview';
@@ -93,11 +94,10 @@ export default function BookingDecision({
           )}
           {!booked && (
             <div className="mt-3 grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-2">
-              <select className="input !py-2 text-sm" value={changeTo} onChange={(e) => setChangeTo(e.target.value)}>
-                <option value="">{chosen ? 'Customer changed to…' : 'Customer chose…'}</option>
-                {vehicles.filter((v) => v.id !== chosen?.id).sort((x, y) => `${x.brand}${x.model}`.localeCompare(`${y.brand}${y.model}`))
-                  .map((v) => <option key={v.id} value={v.id}>{v.brand} {v.model} · {v.seats ?? '—'} seats · {rs(tripCost(v, days, c.distanceKm).total)}</option>)}
-              </select>
+              <Select searchable searchPlaceholder="Search model or number…" className="[&>button]:!py-2 [&>button]:text-sm" value={changeTo} onChange={setChangeTo}
+                placeholder={chosen ? 'Customer changed to…' : 'Customer chose…'}
+                options={vehicles.filter((v) => v.id !== chosen?.id).sort((x, y) => `${x.brand}${x.model}`.localeCompare(`${y.brand}${y.model}`))
+                  .map((v) => ({ value: v.id, label: `${v.brand} ${v.model}`, sub: `${v.vehicleNumber} · ${v.seats ?? '—'} seats · ${rs(tripCost(v, days, c.distanceKm).total)}` }))} />
               <input className="input !py-2 text-sm" value={changeNote} onChange={(e) => setChangeNote(e.target.value)} placeholder="Why? e.g. wants a cheaper car" />
               <button type="button" disabled={!changeTo} onClick={() => { onChangeVehicle(changeTo, changeNote.trim()); setChangeTo(''); setChangeNote(''); }}
                       className="btn-secondary !py-2 text-xs disabled:opacity-40">Save change</button>
