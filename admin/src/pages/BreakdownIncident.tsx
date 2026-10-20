@@ -8,9 +8,10 @@ import Header from '../components/layout/Header';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useBreakdownStore, forIncident } from '../store/useBreakdownStore';
-import { BdIncident, BdCategory, CATEGORY_LABEL, SOLUTION_LABEL, STATUS_LABEL, UNSAFE_CATEGORIES, BdDocument, PHASE_LABEL, phaseOf } from '../lib/breakdowns';
+import { leftoverSolutions, BdIncident, BdCategory, BdSolution, CATEGORY_LABEL, SOLUTION_LABEL, SOLUTION_STATUS_LABEL, SolutionKind, STATUS_LABEL, UNSAFE_CATEGORIES, BdDocument, PHASE_LABEL, phaseOf } from '../lib/breakdowns';
 import VehicleReadiness from '../components/breakdowns/VehicleReadiness';
 import VehicleBreakdownHistory from '../components/breakdowns/VehicleBreakdownHistory';
+import IncidentTimeline from '../components/breakdowns/IncidentTimeline';
 import { ledgerFor } from '../lib/breakdownLedger';
 import { legsOf } from '../lib/exchange';
 import { uploadBookingFile } from '../lib/bookingRecord';
@@ -37,6 +38,7 @@ export default function BreakdownIncident() {
   const by = useAuthStore((s) => s.currentUser?.name) ?? 'Staff';
   const isAdmin = useAuthStore((s) => s.isAdmin)();
   const [tab, setTab] = useState<Tab>('overview');
+  const [focusSolution, setFocusSolution] = useState<string | undefined>();
   useEffect(() => { if (!store.ready) store.load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const i = store.incidents.find((x) => x.id === id);
@@ -76,13 +78,10 @@ export default function BreakdownIncident() {
         </nav>
 
         {tab === 'overview' && <Overview i={i} by={by} readOnly={readOnly} onGo={setTab} />}
-        {tab === 'timeline' && <Timeline i={i} by={by} />}
+        {tab === 'timeline' && <IncidentTimeline i={i} by={by} onOpenSolution={(sid) => { setFocusSolution(sid); setTab('solutions'); }} />}
         {tab === 'diagnosis' && <Diagnosis i={i} by={by} readOnly={readOnly} />}
         {tab === 'solutions' && (
-          <div className="space-y-4">
-            {!readOnly && <AddSolution incidentId={i.id} by={by} hasSolutions={sols.length > 0} />}
-            {sols.length ? sols.map((s) => <SolutionPanel key={s.id} s={s} incident={i} by={by} />) : <p className="text-sm text-navy-400">No solutions yet — pick one above.</p>}
-          </div>
+          <SolutionsTab key={focusSolution ?? 'latest'} i={i} sols={sols} by={by} readOnly={readOnly} focusId={focusSolution} />
         )}
         {tab === 'providers' && <Providers i={i} />}
         {tab === 'vehicles' && <Vehicles i={i} />}
@@ -162,30 +161,6 @@ function Overview({ i, by, readOnly, onGo }: { i: BdIncident; by: string; readOn
   );
 }
 
-/* ── Timeline ─────────────────────────────────────────────────────────────── */
-function Timeline({ i, by }: { i: BdIncident; by: string }) {
-  const store = useBreakdownStore();
-  const [text, setText] = useState('');
-  const list = forIncident(store.events, i.id).sort((a, c) => c.at.localeCompare(a.at));
-  return (
-    <Section title="Activity timeline" icon={History}>
-      <div className="flex gap-2">
-        <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note (call with the customer, update from the garage…)" />
-        <button type="button" className="btn-primary !py-1.5 text-sm" onClick={() => { store.note(i.id, by, text); setText(''); }}>Add</button>
-      </div>
-      <ol className="relative border-l border-navy-100 ml-2 space-y-3">
-        {list.map((e) => (
-          <li key={e.id} className="ml-4">
-            <span className="absolute -left-1.5 mt-1.5 w-3 h-3 rounded-full bg-navy-300 border-2 border-white" />
-            <p className="text-sm text-navy-800">{e.text}</p>
-            <p className="text-[11px] text-navy-400">{when(e.at)} · {e.by} · {e.type}</p>
-          </li>
-        ))}
-      </ol>
-    </Section>
-  );
-}
-
 /* ── Diagnosis ────────────────────────────────────────────────────────────── */
 function Diagnosis({ i, by, readOnly }: { i: BdIncident; by: string; readOnly: boolean }) {
   const store = useBreakdownStore();
@@ -222,32 +197,111 @@ function Diagnosis({ i, by, readOnly }: { i: BdIncident; by: string; readOnly: b
   );
 }
 
-/* ── Solutions picker ─────────────────────────────────────────────────────── */
-function AddSolution({ incidentId, by, hasSolutions }: { incidentId: string; by: string; hasSolutions: boolean }) {
+/* ── Solutions ────────────────────────────────────────────────────────────── */
+// No solution yet → the full picker. Otherwise one tab per solution (only the chosen one is shown)
+// and a compact "Add another solution" menu.
+function SolutionsTab({ i, sols, by, readOnly, focusId }: { i: BdIncident; sols: BdSolution[]; by: string; readOnly: boolean; focusId?: string }) {
   const add = useBreakdownStore((s) => s.addSolution);
-  const [open, setOpen] = useState(false);
-  // Once a solution is running only it is shown; the picker opens again on demand
-  if (hasSolutions && !open) {
+  const setStatus = useBreakdownStore((s) => s.setSolutionStatus);
+  const expenses = useBreakdownStore((s) => s.expenses);
+  const documents = useBreakdownStore((s) => s.documents);
+  const dupes = readOnly ? [] : leftoverSolutions(sols, forIncident(expenses, i.id), forIncident(documents, i.id));
+  const tidy = () => {
+    const names = dupes.map((d) => SOLUTION_LABEL[d.kind]).join(', ');
+    if (!confirm(`Remove ${dupes.length} unused solution${dupes.length === 1 ? '' : 's'} (${names})? Nothing was entered in ${dupes.length === 1 ? 'it' : 'them'}. ${dupes.length === 1 ? 'It stays' : 'They stay'} on record under "Show cancelled".`)) return;
+    dupes.forEach((d) => setStatus(d.id, 'cancelled', by, { result: 'Not used — picked by mistake' }));
+    toast.success('Unused solutions removed', `${dupes.length} removed from the list`);
+  };
+  const [showCancelled, setShowCancelled] = useState(() => sols.find((s) => s.id === focusId)?.status === 'cancelled');
+  const cancelledCount = sols.filter((s) => s.status === 'cancelled').length;
+  // Cancelled attempts stay on record but are hidden unless asked for
+  const shown = sols.filter((s) => showCancelled || s.status !== 'cancelled');
+  const latest = shown[shown.length - 1];
+  const [activeId, setActiveId] = useState<string | undefined>(focusId ?? latest?.id);
+  const [menu, setMenu] = useState(false);
+  const active = shown.find((s) => s.id === activeId) ?? latest;
+  // "Towing & garage repair #2" when the same kind was tried more than once
+  const nth = (s: BdSolution) => {
+    const same = sols.filter((x) => x.kind === s.kind);
+    return same.length > 1 ? ` #${same.indexOf(s) + 1}` : '';
+  };
+  const pick = (kind: SolutionKind) => {
+    const r = add(i.id, kind, by);
+    if (r.error) { toast.error('Not added', r.error); return; }
+    setMenu(false);
+    if (r.existing) toast.info(`${SOLUTION_LABEL[kind]} is already open`, 'Showing it — finish or cancel it before starting another.');
+    if (r.solution) { setActiveId(r.solution.id); if (r.solution.status === 'cancelled') setShowCancelled(true); }
+  };
+
+  if (!shown.length) {
+    if (readOnly) return <p className="text-sm text-navy-400">No solutions were used.</p>;
     return (
-      <div className="flex justify-end">
-        <button type="button" onClick={() => setOpen(true)} className="btn-secondary !py-1.5 text-sm inline-flex items-center gap-1.5"><Plus size={14} /> Add another solution</button>
-      </div>
+      <Section title="Add a solution" icon={Plus}
+               action={cancelledCount ? <button type="button" className="text-xs font-semibold text-navy-500 hover:text-navy-800" onClick={() => setShowCancelled(true)}>Show cancelled ({cancelledCount})</button> : undefined}>
+        <p className="text-[11px] text-navy-400">Several can run together or one after another (e.g. towing, then a replacement). Earlier attempts and their costs are kept.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {SOLUTION_CHOICES.map(({ kind, label, hint, Icon }) => (
+            <button key={kind} type="button" onClick={() => pick(kind)}
+                    className="text-left rounded-xl border border-navy-100 p-3 hover:border-navy-400 hover:bg-navy-50/40 transition-colors">
+              <p className="font-semibold text-sm text-navy-800 flex items-center gap-1.5"><Icon size={14} /> {label}</p>
+              <p className="text-[11px] text-navy-400 mt-0.5">{hint}</p>
+            </button>
+          ))}
+        </div>
+      </Section>
     );
   }
+
   return (
-    <Section title={hasSolutions ? 'Add another solution' : 'Add a solution'} icon={Plus}
-             action={hasSolutions ? <button type="button" className="text-xs font-semibold text-navy-500 hover:text-navy-800" onClick={() => setOpen(false)}>Cancel</button> : undefined}>
-      <p className="text-[11px] text-navy-400">Several can run together or one after another (e.g. towing, then a replacement). Earlier attempts and their costs are kept.</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-        {SOLUTION_CHOICES.map(({ kind, label, hint, Icon }) => (
-          <button key={kind} type="button" onClick={() => { const r = add(incidentId, kind, by); if (r.error) toast.error('Not added', r.error); else setOpen(false); }}
-                  className="text-left rounded-xl border border-navy-100 p-3 hover:border-navy-400 hover:bg-navy-50/40 transition-colors">
-            <p className="font-semibold text-sm text-navy-800 flex items-center gap-1.5"><Icon size={14} /> {label}</p>
-            <p className="text-[11px] text-navy-400 mt-0.5">{hint}</p>
+    <div className="space-y-4">
+      {dupes.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 flex flex-wrap items-center gap-2">
+          <AlertTriangle size={15} className="flex-shrink-0" />
+          <span className="flex-1 min-w-[200px]">
+            {dupes.map((d) => SOLUTION_LABEL[d.kind]).join(', ')} {dupes.length === 1 ? 'was' : 'were'} picked but never used — nothing was entered.
+            Remove {dupes.length === 1 ? 'it' : 'them'} so only the solution{sols.length - dupes.length === 1 ? '' : 's'} actually used {sols.length - dupes.length === 1 ? 'is' : 'are'} shown.
+          </span>
+          <button type="button" onClick={tidy} className="btn-secondary !py-1 text-xs">Remove {dupes.length} unused</button>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {shown.map((s) => {
+          const Icon = SOLUTION_CHOICES.find((c) => c.kind === s.kind)?.Icon ?? Wrench;
+          const on = s.id === active?.id;
+          return (
+            <button key={s.id} type="button" onClick={() => setActiveId(s.id)} aria-pressed={on}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold border ${on ? 'bg-navy-800 text-white border-navy-800' : 'bg-white text-navy-700 border-navy-100 hover:border-navy-300'}`}>
+              <Icon size={14} /> {SOLUTION_LABEL[s.kind]}{nth(s)}
+              <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 ${on ? 'bg-white/15' : 'bg-navy-50 text-navy-500'}`}>{SOLUTION_STATUS_LABEL[s.status]}</span>
+            </button>
+          );
+        })}
+        {cancelledCount > 0 && (
+          <button type="button" onClick={() => setShowCancelled((v) => !v)} className="text-xs font-semibold text-navy-500 hover:text-navy-800 px-1">
+            {showCancelled ? 'Hide cancelled' : `Show cancelled (${cancelledCount})`}
           </button>
-        ))}
+        )}
+        <span className="flex-1" />
+        {!readOnly && (
+          <div className="relative">
+            <button type="button" onClick={() => setMenu((m) => !m)} aria-expanded={menu}
+                    className="btn-secondary !py-1.5 text-sm inline-flex items-center gap-1.5"><Plus size={14} /> Add another solution</button>
+            {menu && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setMenu(false)} />
+                <div role="menu" className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1 z-30 w-64 rounded-xl border border-navy-100 bg-white shadow-lg p-1">
+                  {SOLUTION_CHOICES.map(({ kind, label, Icon }) => (
+                    <button key={kind} type="button" role="menuitem" onClick={() => pick(kind)}
+                            className="w-full text-left rounded-lg px-3 py-2 text-sm text-navy-800 hover:bg-navy-50 flex items-center gap-2"><Icon size={14} className="text-navy-400" /> {label}</button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
-    </Section>
+      {active && <SolutionPanel key={active.id} s={active} incident={i} by={by} />}
+    </div>
   );
 }
 

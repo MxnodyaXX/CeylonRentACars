@@ -3,6 +3,7 @@ import { sendSms, smsTemplates } from './sms';
 
 const lsKey = (vehicleId: string) => `EMRAC_ins_reminder_${vehicleId}`;
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const relatedIdFor = (vehicleId: string) => `ins-missing:${vehicleId}`;
 
 /** Returns true only when all four insurance fields are filled in. */
 export function isInsuranceComplete(v: Pick<Vehicle, 'insurance'>): boolean {
@@ -15,10 +16,9 @@ export function isInsuranceComplete(v: Pick<Vehicle, 'insurance'>): boolean {
   );
 }
 
-/** Call this after the user saves a vehicle with complete insurance so the
- *  weekly SMS gate is reset and no further reminders fire. */
+/** Kept for callers that save a vehicle: removes the old per-browser gate (no longer used). */
 export function clearInsuranceReminder(vehicleId: string): void {
-  localStorage.removeItem(lsKey(vehicleId));
+  try { localStorage.removeItem(lsKey(vehicleId)); } catch { /* storage blocked */ }
 }
 
 interface ReminderParams {
@@ -26,66 +26,39 @@ interface ReminderParams {
   owners: Owner[];
   notifications: Notification[];
   addNotification: (n: Omit<Notification, 'id' | 'createdAt' | 'read'>) => void;
+  /** false = in-app alert only, no SMS (local development, automated tests) */
+  sendTexts: boolean;
 }
 
 /**
- * Run once per session (after data loads).
+ * Weekly reminder for vehicles whose insurance details are incomplete: an in-app alert to the owner
+ * and an SMS (opt-in, quiet hours respected).
  *
- * For every vehicle whose insurance is incomplete:
- *  - fires an in-app InsuranceExpiry notification (deduplicated against existing unread)
- *  - sends an SMS to the vehicle owner (respects opt-in & quiet hours)
- *  - records the send time in localStorage; will not re-fire for 7 days
- *
- * When insurance becomes complete the localStorage key is cleared automatically,
- * so reminders stop without any manual intervention.
- *
- * WhatsApp delivery: if the configured `send-sms` Edge Function routes to a
- * gateway that supports WhatsApp (e.g. Twilio), the same `sendSms` call works
- * for WhatsApp as well — no code change needed on this side.
+ * The "once a week" gate is the alert itself, which lives in the database: if this vehicle got a
+ * reminder in the last 7 days — read or not, from any browser or any admin — nothing is sent. (It used
+ * to be per browser, so every new browser, port or login sent the owner another SMS.)
  */
-export function runInsuranceReminders({
-  vehicles,
-  owners,
-  notifications,
-  addNotification,
-}: ReminderParams): void {
-  // Skip SMS (but still create in-app notifications) when running under Playwright.
-  const isPlaywright = navigator.userAgent.includes('Playwright') ||
-    (window as unknown as Record<string, unknown>).__playwright != null;
-
+export function runInsuranceReminders({ vehicles, owners, notifications, addNotification, sendTexts }: ReminderParams): void {
   const now = Date.now();
-
   for (const v of vehicles) {
-    if (isInsuranceComplete(v)) {
-      // Insurance is now complete — clear the gate so no stale reminders fire
-      clearInsuranceReminder(v.id);
-      continue;
-    }
+    clearInsuranceReminder(v.id);
+    if (isInsuranceComplete(v)) continue;
 
-    // Weekly rate-limit: don't spam the owner more than once per 7 days
-    const lastSent = Number(localStorage.getItem(lsKey(v.id)) ?? 0);
-    if (now - lastSent < ONE_WEEK_MS) continue;
+    const relatedId = relatedIdFor(v.id);
+    const recent = notifications.some((n) => n.type === 'InsuranceExpiry' && n.relatedId === relatedId
+      && now - new Date(n.createdAt).getTime() < ONE_WEEK_MS);
+    if (recent) continue;
 
-    // In-app notification — skip if there is already an unread alert for this vehicle
-    const relatedId = `ins-missing:${v.id}`;
-    const alreadyPending = notifications.some(
-      (n) => n.type === 'InsuranceExpiry' && n.relatedId === relatedId && !n.read,
-    );
-    if (!alreadyPending) {
-      addNotification({
-        type: 'InsuranceExpiry',
-        title: `Insurance incomplete — ${v.brand} ${v.model} (${v.vehicleNumber})`,
-        message: `Insurance information is missing for ${v.vehicleNumber}. Please update the provider, policy number, expiry date, and premium in the Vehicles page.`,
-        relatedId,
-        ownerId: v.ownerId || undefined,
-      });
-    }
+    addNotification({
+      type: 'InsuranceExpiry',
+      title: `Insurance incomplete — ${v.brand} ${v.model} (${v.vehicleNumber})`,
+      message: `Insurance information is missing for ${v.vehicleNumber}. Please update the provider, policy number, expiry date, and premium in the Vehicles page.`,
+      relatedId,
+      ownerId: v.ownerId || undefined,
+    });
 
-    // SMS to the vehicle's owner (fire-and-forget — never throws).
-    // Skipped when running under Playwright so automated test runs don't
-    // send real messages every time freshSession() clears localStorage.
     const owner = owners.find((o) => o.id === v.ownerId);
-    if (owner?.phone && !isPlaywright) {
+    if (sendTexts && owner?.phone) {
       sendSms(
         owner.phone,
         smsTemplates.ownerInsuranceMissing(owner.name, `${v.brand} ${v.model}`, v.vehicleNumber),
@@ -98,8 +71,5 @@ export function runInsuranceReminders({
         },
       );
     }
-
-    // Stamp the send time — next reminder fires in 7 days
-    localStorage.setItem(lsKey(v.id), String(now));
   }
 }

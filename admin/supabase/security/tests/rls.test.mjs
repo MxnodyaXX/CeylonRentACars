@@ -411,5 +411,73 @@ await db.exec(`update vehicles set status = 'Available' where id = 'vA'`);
 ok(await vStatus('vA') === 'Available', 'rollback removes the rules (status can be changed by hand again)');
 await db.exec(sql('security/rollback/06_rollback_breakdowns.sql'));
 
+console.log('\n08 — breakdown vehicle swaps');
+await db.exec(sql('security/06_breakdowns.sql'));
+await db.exec(sql('security/07_breakdown_holds.sql'));
+await db.exec(sql('security/08_breakdown_swaps.sql'));
+await db.exec(sql('security/08_breakdown_swaps.sql'));   // safe to re-run
+await as('admin', () => db.exec(`
+  ${incident('iS', 'bA', 'vA', 'oA')};
+  insert into breakdown_solutions (id, incident_id, kind, created_by) values ('sR', 'iS', 'replacement', 'Admin'), ('sP', 'iS', 'partner_vehicle', 'Admin');`));
+const swap = (id, booking, repl, extra = '') => `insert into breakdown_vehicle_swaps (id, incident_id, solution_id, booking_id, original_vehicle_id, source, replacement_vehicle_id, out_at, out_by, replacement_rate${extra ? ', partner_name' : ''})
+  values ('${id}', 'iS', 'sR', '${booking}', 'vA', '${repl ? 'fleet' : 'partner'}', ${repl ? `'${repl}'` : 'null'}, now(), 'Admin', 7000${extra ? `, '${extra}'` : ''})`;
+const busyB = () => as('anon', () => count("select count(*) n from vehicle_busy_dates where vehicle_id = 'vB'"));
+const busyAll = () => as('anon', () => count('select count(*) n from vehicle_busy_dates'));
+const baseB = await busyB(), baseAll = await busyAll();
+ok((await as('admin', () => tryQ(swap('w1', 'bA', 'vB')))) === null, 'admin records a replacement handed over (fleet car)');
+ok(await busyB() === baseB + 1, 'the replacement shows as busy on the website while it is out');
+ok(/duplicate|unique/i.test((await as('admin', () => tryQ(swap('w2', 'bA', null, 'Partner Co')))) ?? ''), 'only one active swap per booking');
+ok(/duplicate|unique/i.test((await as('admin', () => tryQ(swap('w3', 'bB', 'vB')))) ?? ''), 'a fleet car can be out on only one swap');
+ok(!!(await as('admin', () => tryQ(`insert into breakdown_vehicle_swaps (id, incident_id, solution_id, booking_id, source, out_at, out_by) values ('w4', 'iS', 'sR', 'bB', 'fleet', now(), 'Admin')`))), 'a fleet swap needs the replacement car');
+ok((await as('A', () => ids('select id from breakdown_vehicle_swaps'))).join() === 'w1', "the original car's owner can see it");
+ok((await as('B', () => ids('select id from breakdown_vehicle_swaps'))).join() === 'w1', "the replacement car's owner can see it");
+ok(!!(await as('B', () => tryQ(swap('w5', 'bB', 'vA')))), 'owners cannot record swaps');
+ok((await as('B', () => db.query(`update breakdown_vehicle_swaps set days = 99 where id = 'w1' returning id`))).rows.length === 0, 'owners cannot change swaps');
+ok(!!(await as('anon', () => tryQ('select * from breakdown_vehicle_swaps'))), 'website visitors have no access to swap records');
+ok(!!(await as('admin', () => tryQ(`update breakdown_vehicle_swaps set status = 'closed' where id = 'w1'`))), 'closing needs the outcome and return time');
+ok((await as('admin', () => tryQ(`update breakdown_vehicle_swaps set status = 'closed', outcome = 'swapped_back', back_at = now(), back_by = 'Admin', days = 3, replacement_payout = 21000, original_deduction = 18000 where id = 'w1'`))) === null, 'admin records the swap back');
+ok(await busyB() === baseB, 'after the swap back the replacement is free again on the website');
+ok(/re-opened/.test((await as('admin', () => tryQ(`update breakdown_vehicle_swaps set status = 'active' where id = 'w1'`))) ?? ''), 'a finished swap cannot be re-opened');
+ok(/cannot be changed/.test((await as('admin', () => tryQ(`update breakdown_vehicle_swaps set replacement_vehicle_id = 'vA' where id = 'w1'`))) ?? ''), 'its cars cannot be changed afterwards');
+ok(!!(await as('admin', () => tryQ(`delete from breakdown_vehicle_swaps where id = 'w1'`))), 'swap history cannot be deleted');
+ok((await as('admin', () => tryQ(swap('w6', 'bA', null, 'Lanka Partner Rentals')))) === null, 'a partner car can be recorded next (no fleet car needed)');
+ok(await busyAll() === baseAll, "a partner car doesn't touch our calendar");
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 08');
+await db.exec(sql('security/rollback/08_rollback_breakdown_swaps.sql'));
+ok((await db.query(`select to_regclass('public.breakdown_vehicle_swaps') t`)).rows[0].t === null
+   && (await busyAll()) === baseAll, 'rollback removes the table and restores the calendar view');
+await db.exec(sql('security/rollback/07_rollback_breakdown_holds.sql'));
+await db.exec(sql('security/rollback/06_rollback_breakdowns.sql'));
+
+console.log('\n09 — payout notes');
+for (const f of ['06_breakdowns.sql', '07_breakdown_holds.sql', '08_breakdown_swaps.sql']) await db.exec(sql('security/' + f));
+await as('admin', () => db.exec(`
+  ${incident('iN', 'bA', 'vA', 'oA')};
+  insert into breakdown_solutions (id, incident_id, kind, created_by) values ('sN', 'iN', 'replacement', 'Admin');
+  insert into breakdown_vehicle_swaps (id, incident_id, solution_id, booking_id, original_vehicle_id, source, replacement_vehicle_id, out_at, out_by, replacement_rate,
+                                       status, outcome, back_at, back_by, days, replacement_payout, commission_id)
+    values ('wN', 'iN', 'sN', 'bA', 'vA', 'fleet', 'vB', '2026-10-16T14:00:00Z', 'Admin', 5000, 'closed', 'swapped_back', '2026-10-18T16:00:00Z', 'Admin', 2, 10000, 'sw-pay-wN');
+  insert into commissions (id, booking_id, vehicle_id, owner_id, referral, total_income, commission_rate, commission_amount, owner_payout, coordinator_fee, status, created_at)
+    values ('sw-pay-wN', 'bA', 'vB', 'oB', 'Direct', 10000, 0, 0, 10000, 0, 'Pending', '${now}');`));
+await db.exec(sql('security/09_payout_notes.sql'));
+await db.exec(sql('security/09_payout_notes.sql'));   // safe to re-run
+const noteOf = async (id) => (await db.query(`select note from commissions where id = '${id}'`)).rows[0]?.note;
+const n = await noteOf('sw-pay-wN');
+ok(/Breakdown replacement: CBB-2222 replaced CAA-1111 \(BD-iN\).*2 days × Rs 5,000/.test(n ?? ''), 'the existing breakdown payout gets its reason');
+ok((await as('B', () => db.query(`select note from commissions where id = 'sw-pay-wN'`))).rows[0]?.note === n, 'the replacement owner sees the reason on their payout');
+ok((await db.query(`select count(*) n from notifications where owner_id = 'oB' and related_id = 'payout:sw-pay-wN'`)).rows[0].n == 1, 'the owner gets one alert about it (also on re-run)');
+await as('B', () => db.query(`update commissions set note = 'I want more' where id = 'sw-pay-wN'`));
+ok(await noteOf('sw-pay-wN') === n, 'owners cannot change the reason');
+await as('B', () => db.exec(`insert into commissions (id, booking_id, vehicle_id, owner_id, referral, total_income, commission_rate, commission_amount, owner_payout, status, created_at, note)
+  values ('kB2', 'bB', 'vB', 'oB', 'Direct', 1, 0, 0, 1, 'Pending', '${now}', 'self-written')`));
+ok(await noteOf('kB2') === null, '…or write one on a new row');
+await as('admin', () => db.query(`update commissions set note = 'Corrected by admin' where id = 'kB2'`));
+ok(await noteOf('kB2') === 'Corrected by admin', 'admins can');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 09');
+await db.exec(sql('security/rollback/09_rollback_payout_notes.sql'));
+ok((await db.query(`select count(*) n from information_schema.columns where table_name = 'commissions' and column_name = 'note'`)).rows[0].n == 0, 'rollback removes the column');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

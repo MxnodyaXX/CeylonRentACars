@@ -3,12 +3,13 @@ import { persist } from 'zustand/middleware';
 import { supabaseEnabled } from '../lib/supabase';
 import {
   BdAllocation, BdData, BdDocument, BdEvent, BdExpense, BdIncident, BdPayment, BdSolution, ExpenseCategory, Party, PaymentKind,
-  SolutionKind, SolutionStatus, TableKey, bdId, insertRow, loadBreakdowns, newRef, updateRow, CATEGORY_LABEL, SOLUTION_LABEL, PARTY_LABEL,
-  markReadyOnServer,
+  SolutionKind, SolutionStatus, TableKey, bdId, insertRow, loadBreakdowns, newRef, updateRow, CATEGORY_LABEL, SOLUTION_LABEL, SOLUTION_STATUS_LABEL, PARTY_LABEL,
+  markReadyOnServer, BdSwap, loadSwaps, swapDays, describeChanges,
 } from '../lib/breakdowns';
-import { fmt, ledgerFor, resolveShares, sharesProblem, terminationProposal, vehicleHistory } from '../lib/breakdownLedger';
-import { legsOf } from '../lib/exchange';
-import { useStore } from './useStore';
+import { fmt, ledgerFor, resolveShares, sharesProblem, swapMoney, terminationProposal, vehicleHistory } from '../lib/breakdownLedger';
+import { bookingEndMs, rangesOverlap } from '../lib/availability';
+import { legsOf, payoutRowFor } from '../lib/exchange';
+import { useStore, breakdownHooks } from './useStore';
 import { toast } from './useToast';
 
 /*
@@ -41,14 +42,30 @@ export interface PaymentInput {
   method?: string; reference?: string; receiptPath?: string; paidAt?: string; key: string; by: string;
 }
 
+export interface SwapOutInput {
+  at: string; by: string; replacementVehicleId?: string; location?: string;
+  /** The replacement owner's agreed daily rate, when it differs from the listed rent */
+  rate?: number;
+  originalOdometer?: number; originalFuel?: string; replacementOdometer?: number; replacementFuel?: string; notes?: string;
+}
+export interface SwapBackInput {
+  at: string; by: string; outcome: 'swapped_back' | 'customer_kept'; location?: string; days?: number;
+  /** The replacement owner's agreed daily rate (can still be changed when it comes back) */
+  rate?: number;
+  replacementOdometer?: number; replacementFuel?: string; originalOdometer?: number; originalFuel?: string;
+  replacementTo?: 'Available' | 'Maintenance'; notes?: string;
+}
+
 interface BdState extends BdData {
   ready: boolean;
   missing: boolean;            // Supabase tables not created yet
+  swaps: BdSwap[];             // breakdown_vehicle_swaps (08)
+  swapsMissing: boolean;       // 08_breakdown_swaps.sql not run yet
   load: () => Promise<void>;
   report: (x: ReportInput) => { incident?: BdIncident; error?: string };
   updateIncident: (id: string, patch: Partial<BdIncident>, by: string, text?: string) => void;
   note: (incidentId: string, by: string, text: string, type?: string, data?: Record<string, unknown>) => void;
-  addSolution: (incidentId: string, kind: SolutionKind, by: string) => { solution?: BdSolution; error?: string };
+  addSolution: (incidentId: string, kind: SolutionKind, by: string) => { solution?: BdSolution; error?: string; existing?: boolean };
   updateSolution: (id: string, patch: Partial<BdSolution>, by: string, text?: string) => void;
   setSolutionStatus: (id: string, status: SolutionStatus, by: string, extra?: Partial<BdSolution>) => string | null;
   addExpense: (x: ExpenseInput) => string | null;
@@ -62,6 +79,12 @@ interface BdState extends BdData {
   confirmRoadworthy: (solutionId: string, by: string) => string | null;
   /** The active maintenance hold on a vehicle (the incident that placed it), if any */
   activeHold: (vehicleId?: string) => BdIncident | undefined;
+  /** The replacement currently out on a booking (fleet or partner car), if any */
+  activeSwap: (bookingId?: string) => BdSwap | undefined;
+  /** Hand the customer a replacement (fleet car or the partner's car); the booking stays on the original */
+  startSwap: (solutionId: string, x: SwapOutInput) => string | null;
+  /** The replacement comes back: the repaired original goes back to the customer, or the trip ended */
+  closeSwap: (swapId: string, x: SwapBackInput) => string | null;
   /** Explicit return to service: outcome + safety confirmation; checked again by the database */
   markVehicleReady: (incidentId: string, x: { outcome: string; safe: boolean; comments?: string; approvedAt?: string; by: string; isAdmin: boolean }) => Promise<string | null>;
   linkLatestExchange: (solutionId: string, by: string) => string | null;
@@ -121,8 +144,17 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
   const used = (key: string) => get().payments.some((p) => p.idempotencyKey === key);
   const insertPayment = (p: BdPayment) => { set((s) => ({ payments: [...s.payments, p] })); save('payments', 'insert', p); };
 
+  const carName = (id?: string) => {
+    const v = useStore.getState().vehicles.find((x) => x.id === id);
+    return v ? `${v.brand} ${v.model} (${v.vehicleNumber})` : 'the vehicle';
+  };
+  const swapLabel = (w: BdSwap) => w.source === 'fleet' ? carName(w.replacementVehicleId)
+    : [w.partnerVehicle, w.partnerReg].filter(Boolean).join(' ') || `${w.partnerName ?? 'partner'}'s car`;
+
   return {
     ...EMPTY,
+    swaps: [],
+    swapsMissing: false,
     ready: !supabaseEnabled,
     missing: false,
 
@@ -130,8 +162,9 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       if (!supabaseEnabled) { set({ ready: true }); return; }
       try {
         const d = await loadBreakdowns();
-        if (!d) { set({ ...EMPTY, ready: true, missing: true }); return; }
-        set({ ...d, ready: true, missing: false });
+        if (!d) { set({ ...EMPTY, swaps: [], ready: true, missing: true }); return; }
+        const sw = await loadSwaps();
+        set({ ...d, swaps: sw ?? [], swapsMissing: sw === null, ready: true, missing: false });
       } catch (e) {
         console.error('[breakdowns] load failed:', e);
         toast.error('Breakdowns not loaded', (e as Error).message);
@@ -162,7 +195,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       event(i.id, x.by, 'created', `Breakdown reported — ${CATEGORY_LABEL[i.category]}${i.location ? ` at ${i.location}` : ''} (${i.urgency} urgency)`);
       if (i.holdVehicleId) {
         // the database does this too (same transaction as the insert); keep this screen in step
-        if (vehicle && vehicle.status !== 'Maintenance') useStore.getState().updateVehicle(vehicle.id, { status: 'Maintenance' });
+        if (vehicle && vehicle.status !== 'Maintenance') useStore.getState().setVehicleStatus(vehicle.id, 'Maintenance');
         event(i.id, x.by, 'hold', `${vehicle?.vehicleNumber ?? 'Vehicle'} placed under maintenance — no new bookings until an admin confirms it is safe`);
       } else if (existingHold) {
         event(i.id, x.by, 'hold', `${vehicle?.vehicleNumber ?? 'Vehicle'} is already under maintenance (hold from ${existingHold.ref}) — it returns to service from there`);
@@ -198,6 +231,9 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       if (kind === 'termination' && get().solutions.some((s) => s.incidentId === incidentId && s.kind === 'termination' && s.status !== 'cancelled')) {
         return { error: 'This incident already has a termination — open it below.' };
       }
+      // One open solution of each kind: picking it again returns the one already running
+      const open = get().solutions.find((s) => s.incidentId === incidentId && s.kind === kind && (s.status === 'planned' || s.status === 'in_progress'));
+      if (open) return { solution: open, existing: true };
       const s: BdSolution = {
         id: bdId(), incidentId, kind, status: 'planned', createdBy: by, createdAt: nowIso(), updatedAt: nowIso(),
         ...(kind === 'replacement' || kind === 'partner_vehicle' ? { fromVehicleId: i.vehicleId } : {}),
@@ -212,8 +248,15 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
     updateSolution: (id, patch, by, text) => {
       const s = solutionOf(id);
       if (!s) return;
+      // the timeline shows exactly what was entered (field: new value), so a reviewer can check it
+      const changes = describeChanges(s, patch);
       patchSolution(id, patch);
-      if (text) event(s.incidentId, by, 'solution', `${SOLUTION_LABEL[s.kind]}: ${text}`, { solutionId: id });
+      if (changes.length) {
+        const shown = changes.slice(0, 6).map((c) => `${c.label}: ${c.to}`).join('; ');
+        event(s.incidentId, by, 'solution', `${SOLUTION_LABEL[s.kind]} updated — ${shown}${changes.length > 6 ? ` (+${changes.length - 6} more)` : ''}`, { solutionId: id, changes });
+      } else if (text && text !== 'details updated') {
+        event(s.incidentId, by, 'solution', `${SOLUTION_LABEL[s.kind]}: ${text}`, { solutionId: id });
+      }
       if (patch.providerName && patch.providerName !== s.providerName) {
         patchIncident(s.incidentId, { assignedTo: patch.providerName });
         notify(s.incidentId, s.kind === 'onsite_repair' ? 'Technician assigned' : s.kind === 'partner_vehicle' ? 'Partner assigned' : 'Provider assigned', `${patch.providerName}${patch.providerPhone ? ` (${patch.providerPhone})` : ''} — ${SOLUTION_LABEL[s.kind]}`);
@@ -229,7 +272,10 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
         if (s.kind === 'onsite_repair' && (extra.repairResult ?? s.repairResult) === 'repaired' && !((extra.clearanceAt ?? s.clearanceAt) && (extra.customerConfirmedAt ?? s.customerConfirmedAt))) {
           return 'Before the rental continues, record the technician’s safety clearance and the customer’s confirmation.';
         }
-        if (s.kind === 'replacement' && !s.exchangeId) return 'Exchange the vehicle first (Start vehicle exchange).';
+        if (s.kind === 'replacement' && !s.exchangeId && !get().swaps.some((w) => w.solutionId === s.id && w.status === 'closed')) {
+          return 'Hand over the replacement and record its return first.';
+        }
+        if (get().swaps.some((w) => w.solutionId === s.id && w.status === 'active')) return 'The replacement is still out — record its return first.';
         if (s.kind === 'towing_garage' && !s.roadworthyAt && !(extra.roadworthyAt)) return 'Confirm the vehicle is roadworthy before completing the garage repair.';
         if (s.kind === 'termination' && s.recoveryStatus !== 'recovered') return 'The vehicle has not been recovered yet.';
         if (s.kind === 'termination' && s.refundStatus !== 'paid' && s.refundStatus !== 'not_required') return 'Pay (or mark as not required) the refund first.';
@@ -240,7 +286,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
         ...(status === 'completed' || status === 'failed' ? { completedAt: nowIso() } : {}),
       };
       patchSolution(id, patch);
-      event(s.incidentId, by, 'solution', `${SOLUTION_LABEL[s.kind]} — ${status.replace('_', ' ')}${extra.result ? `: ${extra.result}` : ''}`, { solutionId: id });
+      event(s.incidentId, by, 'solution', `${SOLUTION_LABEL[s.kind]} → ${SOLUTION_STATUS_LABEL[status]}${extra.result ? `: ${extra.result}` : ''}`, { solutionId: id });
       if (status === 'completed' && s.kind === 'onsite_repair') notify(s.incidentId, 'Repair completed', extra.result ?? 'On-site repair finished');
       if (status === 'failed') notify(s.incidentId, `${SOLUTION_LABEL[s.kind]} failed`, extra.result ?? 'Another solution is needed');
       return null;
@@ -262,7 +308,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       };
       set((s) => ({ expenses: [...s.expenses, e] }));
       save('expenses', 'insert', e);
-      event(x.incidentId, x.by, 'expense', `Expense: ${e.description} — ${rs(amount)}${e.vendor ? ` (${e.vendor})` : ''}`, { expenseId: e.id });
+      event(x.incidentId, x.by, 'expense', `Expense: ${e.description} — ${rs(amount)}${e.vendor ? ` (${e.vendor})` : ''}`, { expenseId: e.id, ...(e.solutionId ? { solutionId: e.solutionId } : {}) });
       if (x.paidNow && amount > 0) {
         return get().postPayment({
           incidentId: x.incidentId, expenseId: e.id, kind: 'vendor_payment', payer: x.paidNow.payer, payee: e.vendor || 'Provider',
@@ -280,7 +326,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       const patch = { voidedAt: nowIso(), voidedBy: by, voidReason: reason.trim() };
       set((s) => ({ expenses: s.expenses.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
       save('expenses', 'update', { id }, patch);
-      event(e.incidentId, by, 'expense', `Expense removed: ${e.description} (${rs(e.amount)}) — ${reason.trim()}`, { expenseId: id });
+      event(e.incidentId, by, 'expense', `Expense removed: ${e.description} (${rs(e.amount)}) — ${reason.trim()}`, { expenseId: id, ...(e.solutionId ? { solutionId: e.solutionId } : {}) });
       return null;
     },
 
@@ -418,6 +464,139 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
     },
 
     activeHold: (vehicleId) => (vehicleId ? get().incidents.find((x) => x.holdVehicleId === vehicleId && !x.holdClearedAt) : undefined),
+
+    activeSwap: (bookingId) => (bookingId ? get().swaps.find((w) => w.bookingId === bookingId && w.status === 'active') : undefined),
+
+    startSwap: (solutionId, x) => {
+      const sol = solutionOf(solutionId);
+      if (!sol) return 'Solution not found.';
+      if (sol.kind !== 'replacement' && sol.kind !== 'partner_vehicle') return 'Only a replacement or partner vehicle is handed over.';
+      if (sol.exchangeId) return 'This replacement was recorded with Exchange vehicle on the booking.';
+      if (['completed', 'failed', 'cancelled'].includes(sol.status)) return 'This solution is finished.';
+      if (get().swapsMissing) return 'Run 08_breakdown_swaps.sql in Supabase first.';
+      const i = incidentOf(sol.incidentId)!;
+      const st = useStore.getState();
+      const b = st.bookings.find((v) => v.id === i.bookingId);
+      if (!b) return 'Booking not found.';
+      if (b.status !== 'Ongoing') return 'Only a rental in progress can get a replacement.';
+      if (get().activeSwap(b.id)) return 'A replacement is already out on this booking — record its return first.';
+      const at = new Date(x.at);
+      if (Number.isNaN(at.getTime())) return 'Enter the handover time.';
+      if (at.getTime() > Date.now() + 864e5) return 'The handover time is more than a day ahead.';
+      const fleet = sol.kind === 'replacement';
+      let rate: number | undefined;
+      if (fleet) {
+        const car = st.vehicles.find((v) => v.id === x.replacementVehicleId);
+        if (!car) return 'Choose the replacement vehicle.';
+        if (car.id === b.vehicleId) return 'Choose a different vehicle from the broken one.';
+        if (car.status === 'Maintenance') return `${carName(car.id)} is under maintenance.`;
+        if (!st.isVehicleAvailable(car.id, at.toLocaleDateString('en-CA'), b.endDate, undefined, at.toTimeString().slice(0, 5), b.endTime)) {
+          return `${carName(car.id)} is not free until the end of this booking.`;
+        }
+        if (x.rate != null && !(x.rate >= 0)) return 'Enter a valid daily rate.';
+        rate = x.rate ?? car.dailyRent;
+      } else if (!sol.providerName && !sol.partnerVehicle) {
+        return "Enter the partner and the partner's vehicle first.";
+      }
+      const w: BdSwap = {
+        id: bdId(), incidentId: i.id, solutionId, bookingId: b.id, originalVehicleId: b.vehicleId,
+        source: fleet ? 'fleet' : 'partner', status: 'active', outAt: at.toISOString(), outBy: x.by,
+        ...(fleet ? { replacementVehicleId: x.replacementVehicleId, replacementRate: rate } : { partnerName: sol.providerName, partnerVehicle: sol.partnerVehicle, partnerReg: sol.partnerReg }),
+        ...(x.location ? { outLocation: x.location } : {}),
+        ...(x.originalOdometer != null ? { originalOdometer: x.originalOdometer } : {}), ...(x.originalFuel ? { originalFuel: x.originalFuel } : {}),
+        ...(x.replacementOdometer != null ? { replacementOdometerOut: x.replacementOdometer } : {}), ...(x.replacementFuel ? { replacementFuelOut: x.replacementFuel } : {}),
+        ...(x.notes?.trim() ? { outNotes: x.notes.trim() } : {}),
+        createdAt: nowIso(), updatedAt: nowIso(),
+      };
+      set((s) => ({ swaps: [...s.swaps, w] }));
+      save('swaps', 'insert', w);
+      if (fleet) st.setVehicleStatus(x.replacementVehicleId!, 'Ongoing');
+      patchSolution(solutionId, {
+        status: 'in_progress', startedAt: sol.startedAt ?? nowIso(), deliveryAt: w.outAt,
+        ...(fleet ? { toVehicleId: x.replacementVehicleId, fromVehicleId: b.vehicleId } : {}),
+      });
+      const listed = fleet ? st.vehicles.find((v) => v.id === x.replacementVehicleId)?.dailyRent : undefined;
+      const rateNote = fleet && rate !== listed ? ` — agreed Rs ${fmt(rate ?? 0)}/day with the owner (listed Rs ${fmt(listed ?? 0)})` : '';
+      const text = `Replacement handed over: ${swapLabel(w)} for ${carName(b.vehicleId)}${fleet ? rateNote : ` (partner: ${sol.providerName ?? '—'})`}`;
+      event(i.id, x.by, 'swap', text, { swapId: w.id, solutionId });
+      st.logBookingActivity(b.id, { by: x.by, type: 'Swapped', text: `Breakdown ${i.ref}: ${text}` });
+      return null;
+    },
+
+    closeSwap: (swapId, x) => {
+      const w = get().swaps.find((v) => v.id === swapId);
+      if (!w) return 'Swap not found.';
+      if (w.status !== 'active') return 'This replacement has already come back.';
+      const i = incidentOf(w.incidentId)!;
+      const st = useStore.getState();
+      const b = st.bookings.find((v) => v.id === w.bookingId);
+      if (!b) return 'Booking not found.';
+      const at = new Date(x.at);
+      if (Number.isNaN(at.getTime())) return 'Enter the return time.';
+      if (at.getTime() < new Date(w.outAt).getTime()) return 'The return is before the handover.';
+      if (at.getTime() > Date.now() + 864e5) return 'The return time is more than a day ahead.';
+      if (x.outcome === 'swapped_back') {
+        if (b.status !== 'Ongoing') return 'The booking is no longer in progress — use "Trip ended" instead.';
+        const hold = get().activeHold(w.originalVehicleId);
+        if (hold) return `${carName(w.originalVehicleId)} is still under maintenance — use "Mark vehicle as ready" on breakdown ${hold.ref} first.`;
+      }
+      const days = x.days != null && x.days >= 0 ? Math.round(x.days) : swapDays(w.outAt, at.toISOString());
+      const fleet = w.source === 'fleet';
+      if (x.rate != null && !(x.rate >= 0)) return 'Enter a valid daily rate.';
+      const rate = x.rate ?? w.replacementRate ?? 0;
+      const money = fleet ? swapMoney(b, w.originalVehicleId, rate, days) : null;
+      // owner payouts: the original owner's days not served, the replacement owner's own row.
+      // Original payout still open → reversible payout adjustment on the booking. Already paid →
+      // a pending "owed back" line (sw-owed-…) netted off the owner's next payout.
+      const alreadyPaid = payoutRowFor(st.commissions, b, w.originalVehicleId)?.status === 'Paid';
+      const adjustmentId = money && money.originalDeduction > 0 ? `${alreadyPaid ? 'sw-owed' : 'sw-adj'}-${w.id}` : undefined;
+      const commissionId = money ? `sw-pay-${w.id}` : undefined;
+      const reason = `Breakdown ${i.ref}: ${days} day${days === 1 ? '' : 's'} served by ${swapLabel(w)}`;
+      // reasons the owners see on these payout lines (they can't open the other owner's booking)
+      const num = (id?: string) => st.vehicles.find((v) => v.id === id)?.vehicleNumber ?? 'the vehicle';
+      const span = `${dayMonth(w.outAt)} to ${dayMonth(at.toISOString())}`;
+      const plural = `${days} day${days === 1 ? '' : 's'}`;
+      if (adjustmentId && alreadyPaid) {
+        const e = st.addSwapPayout({ id: adjustmentId, bookingId: b.id, vehicleId: w.originalVehicleId!, amount: -money!.originalDeduction,
+          note: `Owes back: breakdown ${i.ref} — ${num(w.originalVehicleId)} was off the road ${plural} (${span}); the payout for this booking was already paid` });
+        if (e) return e;
+      } else if (adjustmentId) {
+        const e = st.adjustOwnerPayout(b.id, { id: adjustmentId, vehicleId: w.originalVehicleId!, amount: money!.originalDeduction, source: i.ref, by: x.by, reason });
+        if (e) return e;
+      }
+      if (commissionId) {
+        const e = st.addSwapPayout({ id: commissionId, bookingId: b.id, vehicleId: w.replacementVehicleId!, amount: money!.replacementPayout,
+          note: `Breakdown replacement: ${num(w.replacementVehicleId)} replaced ${num(w.originalVehicleId)} (${i.ref}) — ${span}, ${plural} × Rs ${fmt(rate)}` });
+        if (e) return e;
+      }
+      const patch: Partial<BdSwap> = {
+        status: 'closed', outcome: x.outcome, backAt: at.toISOString(), backBy: x.by, days,
+        ...(fleet && rate !== w.replacementRate ? { replacementRate: rate } : {}),
+        ...(x.location ? { backLocation: x.location } : {}),
+        ...(x.replacementOdometer != null ? { replacementOdometerIn: x.replacementOdometer } : {}), ...(x.replacementFuel ? { replacementFuelIn: x.replacementFuel } : {}),
+        ...(x.originalOdometer != null ? { originalOdometerBack: x.originalOdometer } : {}), ...(x.originalFuel ? { originalFuelBack: x.originalFuel } : {}),
+        replacementTo: fleet ? (x.replacementTo ?? 'Available') : 'Returned to partner',
+        ...(money ? { replacementPayout: money.replacementPayout, originalDeduction: money.originalDeduction } : {}),
+        ...(commissionId ? { commissionId } : {}), ...(adjustmentId ? { adjustmentId } : {}),
+        ...(x.notes?.trim() ? { backNotes: x.notes.trim() } : {}),
+      };
+      set((s) => ({ swaps: s.swaps.map((v) => (v.id === swapId ? { ...v, ...patch, updatedAt: nowIso() } : v)) }));
+      save('swaps', 'update', { id: swapId }, patch);
+      if (fleet) st.setVehicleStatus(w.replacementVehicleId!, x.replacementTo ?? 'Available');
+      if (x.outcome === 'swapped_back' && w.originalVehicleId) st.setVehicleStatus(w.originalVehicleId, 'Ongoing');
+      const back = x.outcome === 'swapped_back' ? `${carName(w.originalVehicleId)} back with the customer` : 'trip ended in the replacement';
+      const where = fleet ? `${swapLabel(w)} back to the fleet (${x.replacementTo ?? 'Available'})` : `${swapLabel(w)} returned to the partner`;
+      const ownerPart = !money ? '' : alreadyPaid && money.originalDeduction > 0
+        ? `, original owner was already paid — owes back Rs ${fmt(money.originalDeduction)} (taken from their next payout)`
+        : `, original owner's payout −Rs ${fmt(money.originalDeduction)}`;
+      const rateChanged = fleet && rate !== w.replacementRate ? ` (agreed rate changed to Rs ${fmt(rate)}/day, was Rs ${fmt(w.replacementRate ?? 0)})` : '';
+      const text = `${back}; ${where} — ${days} day${days === 1 ? '' : 's'}${money ? `, replacement owner earns Rs ${fmt(money.replacementPayout)}${rateChanged}` : ''}${ownerPart}`;
+      patchSolution(w.solutionId, { status: 'completed', completedAt: nowIso(), collectionAt: at.toISOString(), result: x.outcome === 'swapped_back' ? 'Original vehicle returned to the customer' : 'Trip finished in the replacement' });
+      event(i.id, x.by, 'swap', text, { swapId, solutionId: w.solutionId });
+      st.logBookingActivity(b.id, { by: x.by, type: 'Swapped', text: `Breakdown ${i.ref}: ${text}` });
+      notify(i.id, x.outcome === 'swapped_back' ? 'Original vehicle back with the customer' : 'Replacement returned', text);
+      return null;
+    },
 
     markVehicleReady: async (incidentId, x) => {
       const i = incidentOf(incidentId);
@@ -647,9 +826,31 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
   // With Supabase the records live in the database; offline demo mode keeps them in this browser
   partialize: (s) => (supabaseEnabled ? {} : {
     incidents: s.incidents, events: s.events, solutions: s.solutions, expenses: s.expenses,
-    allocations: s.allocations, payments: s.payments, documents: s.documents,
+    allocations: s.allocations, payments: s.payments, documents: s.documents, swaps: s.swaps,
   }),
 }));
+
+function dayMonth(iso: string) {
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+// Bookings respect breakdown swaps (see breakdownHooks in useStore)
+breakdownHooks.vehicleBusy = (vehicleId, startMs, endMs) => {
+  const { swaps } = useBreakdownStore.getState();
+  const bookings = useStore.getState().bookings;
+  return swaps.some((w) => {
+    if (w.status !== 'active' || w.source !== 'fleet' || w.replacementVehicleId !== vehicleId) return false;
+    const b = bookings.find((x) => x.id === w.bookingId);
+    return !!b && rangesOverlap(startMs, endMs, new Date(w.outAt).getTime(), bookingEndMs(b));
+  });
+};
+breakdownHooks.activeSwapNote = (bookingId) => {
+  const st = useBreakdownStore.getState();
+  const w = st.activeSwap(bookingId);
+  if (!w) return null;
+  const ref = st.incidents.find((i) => i.id === w.incidentId)?.ref ?? 'the breakdown';
+  return `A breakdown replacement is still with the customer — record its return on breakdown ${ref} (swap back or "Trip ended") first.`;
+};
 
 /* ── Selectors ─────────────────────────────────────────────────────────────── */
 export const forIncident = <T extends { incidentId: string }>(list: T[], id: string) => list.filter((x) => x.incidentId === id);

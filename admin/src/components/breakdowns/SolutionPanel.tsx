@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AlertTriangle, ArrowLeftRight, Ban, Car, CheckCircle2, ClipboardCheck, Hammer, PlayCircle, Receipt, RotateCcw, Truck, User, Wrench, XCircle,
 } from 'lucide-react';
@@ -9,7 +9,7 @@ import {
 } from '../../lib/breakdowns';
 import { REFUND_POLICY } from '../../lib/breakdownLedger';
 import { legsOf } from '../../lib/exchange';
-import ExchangeVehicleModal from '../ui/ExchangeVehicleModal';
+import SwapPanel from './SwapPanel';
 import { ExpenseEditor } from './MoneyPanels';
 import { Chips, ErrorLine, Field, Grid, KV, Pill, Section, fromLocalInput, num, rs, toLocalInput, when } from './bdui';
 import { toast } from '../../store/useToast';
@@ -98,7 +98,10 @@ export default function SolutionPanel({ s, incident, by }: { s: BdSolution; inci
           {!closed && <button type="button" className="text-xs font-semibold text-navy-400 hover:text-red-600" onClick={() => { const r = prompt('Why is this solution cancelled? (Its records are kept.)'); if (r) status('cancelled', { result: r }); }}>Cancel solution</button>}
         </div>
         {s.status === 'failed' && <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle size={13} /> This attempt failed — its records and costs are kept. Add another solution above (e.g. towing or replacement).</p>}
-        {s.status === 'completed' && <p className="text-[11px] text-navy-400">Completing a solution does not put the broken vehicle back in service — that needs <b>Mark vehicle as ready</b> on the Overview.</p>}
+        {/* only while this breakdown still holds the car under maintenance */}
+        {s.status === 'completed' && incident.holdVehicleId && !incident.holdClearedAt && (
+          <p className="text-[11px] text-navy-400">Completing a solution does not put the broken vehicle back in service — that needs <b>Mark vehicle as ready</b> (Overview tab, red "Under maintenance" card).</p>
+        )}
       </div>
     </div>
   );
@@ -178,24 +181,12 @@ function Replacement({ s, draft, incident, by, act }: { s: BdSolution; draft: Dr
   const { bookings, vehicles, owners } = useStore();
   const b = bookings.find((x) => x.id === incident.bookingId);
   const { v, text, dt, set } = draft;
-  const [exchanging, setExchanging] = useState(false);
-  const exchangesBefore = useRef(b?.exchanges?.length ?? 0);
   const [adj, setAdj] = useState('');
   const car = (id?: string) => vehicles.find((x) => x.id === id);
   const ownerOf = (id?: string) => owners.find((o) => o.id === car(id)?.ownerId)?.name ?? '—';
   const from = car(s.fromVehicleId ?? incident.vehicleId), to = car(s.toVehicleId);
   const legs = b ? legsOf(b) : [];
   const remaining = legs[legs.length - 1]?.days ?? 0;
-
-  // the exchange screen closed: if it created a new exchange, link it here
-  useEffect(() => {
-    if (exchanging) return;
-    if ((b?.exchanges?.length ?? 0) > exchangesBefore.current && !s.exchangeId) {
-      const e = store.linkLatestExchange(s.id, by);
-      if (e) toast.error('Exchange not linked', e);
-    }
-    exchangesBefore.current = b?.exchanges?.length ?? 0;
-  }, [exchanging, b?.exchanges?.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <>
@@ -217,19 +208,12 @@ function Replacement({ s, draft, incident, by, act }: { s: BdSolution; draft: Dr
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!v.driverChecked} onChange={(e) => set('driverChecked', e.target.checked)} /> Customer / driver is authorised for this vehicle (licence checked)</label>
       </Section>
 
+      {!s.exchangeId ? (
+        <SwapPanel s={s} incident={incident} by={by}
+                   blocked={!v.insuranceChecked || !v.driverChecked ? 'Confirm the insurance and driver checks first.' : undefined}
+                   beforeStart={() => { if (draft.dirty) store.updateSolution(s.id, draft.d, by); }} />
+      ) : (
       <Section title="Replacement vehicle" icon={ArrowLeftRight}>
-        {!s.exchangeId ? (
-          <div className="space-y-2">
-            <p className="text-sm text-navy-600">The exchange screen records the return of {from?.vehicleNumber ?? 'the car'}, the handover of the replacement (only cars free for the rest of the trip are offered) and splits the owners' payouts by days.</p>
-            <button type="button" className="btn-primary !py-1.5 text-sm inline-flex items-center gap-1.5" onClick={() => {
-              if (!v.insuranceChecked || !v.driverChecked) { act(() => 'Confirm the insurance and driver checks first.'); return; }
-              if (b?.status !== 'Ongoing') { act(() => 'Only a rental in progress can have its vehicle exchanged.'); return; }
-              if (draft.dirty) store.updateSolution(s.id, draft.d, by);
-              act(() => null);   // clears an earlier message
-              setExchanging(true);
-            }}><ArrowLeftRight size={14} /> Start vehicle exchange</button>
-          </div>
-        ) : (
           <div className="space-y-2">
             <Grid cols={4}>
               <KV k="From" v={from ? `${from.vehicleNumber} · ${ownerOf(from.id)}` : '—'} />
@@ -237,10 +221,10 @@ function Replacement({ s, draft, incident, by, act }: { s: BdSolution; draft: Dr
               <KV k="New owner" v={ownerOf(to?.id)} />
               <KV k="Daily rent" v={to ? `${rs(to.dailyRent)} (${s.rateScenario === 'same' ? 'same rate' : s.rateScenario === 'higher' ? `${rs(s.rateDifference)}/day more` : `${rs(-(s.rateDifference ?? 0))}/day less`})` : '—'} />
             </Grid>
-            <p className="text-[11px] text-navy-400">Owners are paid for their own days (see the Vehicles section). To give the customer the repaired original car back later, set it to Available and use Exchange vehicle again — that's a temporary replacement.</p>
+            <p className="text-[11px] text-navy-400">Recorded earlier with Exchange vehicle on the booking — owners are paid for their own days there.</p>
           </div>
-        )}
       </Section>
+      )}
 
       <Section title="Delivery & collection" icon={Truck}>
         <Grid cols={4}>
@@ -258,8 +242,6 @@ function Replacement({ s, draft, incident, by, act }: { s: BdSolution; draft: Dr
 
       <PriceChange s={s} incident={incident} by={by} act={act} adj={adj} setAdj={setAdj}
         hint={to && from ? `Difference: ${rs((to.dailyRent - from.dailyRent))}/day × ${remaining} day(s) left ≈ ${rs((to.dailyRent - from.dailyRent) * remaining)}` : undefined} />
-
-      {exchanging && b && <ExchangeVehicleModal booking={b} onClose={() => setExchanging(false)} />}
     </>
   );
 }
@@ -299,7 +281,9 @@ function Partner({ s, draft, incident, by, act }: { s: BdSolution; draft: Draft;
   const [adj, setAdj] = useState('');
   const [ownerAdj, setOwnerAdj] = useState('');
   const original = vehicles.find((x) => x.id === (s.fromVehicleId ?? incident.vehicleId));
-  const days = v.periodStart && v.periodEnd ? Math.max(1, Math.ceil((new Date(v.periodEnd).getTime() - new Date(v.periodStart).getTime()) / 864e5)) : 0;
+  // days the partner car served: the recorded handover (swap) first, else the rental period typed in
+  const swap = store.swaps.find((w) => w.solutionId === s.id);
+  const days = swap?.days ?? (v.periodStart && v.periodEnd ? Math.max(1, Math.ceil((new Date(v.periodEnd).getTime() - new Date(v.periodStart).getTime()) / 864e5)) : 0);
   const perDay = b ? b.totalAmount / Math.max(1, b.totalDays) : 0;
   const suggestedOwner = Math.round(perDay * days);
   const hasPartnerExpense = store.expenses.some((e) => e.solutionId === s.id && e.category === 'partner' && !e.voidedAt);
@@ -324,6 +308,10 @@ function Partner({ s, draft, incident, by, act }: { s: BdSolution; draft: Draft;
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!v.insuranceChecked} onChange={(e) => set('insuranceChecked', e.target.checked)} /> Partner vehicle insured and the customer is allowed to drive it</label>
         <p className="text-[11px] text-navy-400">Add the partner's agreement in Documents. The booking stays on {original?.vehicleNumber ?? 'the original car'} (in repair); this record holds the partner period and costs.</p>
       </Section>
+
+      <SwapPanel s={s} incident={incident} by={by}
+                 blocked={!v.insuranceChecked ? 'Confirm the partner vehicle is insured and the customer may drive it.' : undefined}
+                 beforeStart={() => { if (draft.dirty) store.updateSolution(s.id, draft.d, by); }} />
 
       <Section title="Partner money" icon={Receipt}>
         <Grid cols={4}>

@@ -133,11 +133,11 @@ function makeBookingInput(overrides: Partial<Booking> = {}): Omit<Booking, 'id' 
 // ─────────────────────────────────────────────────────────────────────────────
 import { useBreakdownStore, newKey } from '../../src/store/useBreakdownStore'
 import { ledgerFor, expenseStatus, terminationProposal, dashboard } from '../../src/lib/breakdownLedger'
-import { legsOf } from '../../src/lib/exchange'
+import { legsOf, mainCommission } from '../../src/lib/exchange'
 
 const bd = () => useBreakdownStore.getState()
 const main = () => useStore.getState()
-const BD_EMPTY = { incidents: [], events: [], solutions: [], expenses: [], allocations: [], payments: [], documents: [] }
+const BD_EMPTY = { incidents: [], events: [], solutions: [], expenses: [], allocations: [], payments: [], documents: [], swaps: [], swapsMissing: false }
 const iso = (d: string) => new Date(d).toISOString()
 
 function world(over: Partial<Booking> = {}) {
@@ -552,5 +552,245 @@ describe('breakdowns — status concepts', () => {
     expect(financeStatus(L(i.id))).toBe('partial')
     bd().postPayment({ incidentId: i.id, expenseId: bd().expenses[0].id, kind: 'vendor_payment', payer: 'company', payee: 'Taxi', amount: 4000, key: 'f2', by: 'A' })
     expect(financeStatus(L(i.id))).toBe('settled')
+  })
+})
+
+describe('breakdowns — one open solution per kind', () => {
+  it('picking an open kind again returns it; a new one only after it is finished or cancelled', () => {
+    const b = world(); const i = report(b)
+    const first = bd().addSolution(i.id, 'replacement', 'A')
+    const again = bd().addSolution(i.id, 'replacement', 'A')
+    expect(again.existing).toBe(true)
+    expect(again.solution!.id).toBe(first.solution!.id)
+    expect(bd().solutions.filter((s) => s.incidentId === i.id && s.kind === 'replacement')).toHaveLength(1)
+    bd().setSolutionStatus(first.solution!.id, 'cancelled', 'A', { result: 'Added by mistake' })
+    const next = bd().addSolution(i.id, 'replacement', 'A')
+    expect(next.existing).toBeUndefined()
+    expect(next.solution!.id).not.toBe(first.solution!.id)
+  })
+})
+
+describe('breakdowns — leftover solutions', () => {
+  const sol = (id: string, kind: any, at: string, o: any = {}) => ({ id, incidentId: 'i1', kind, status: 'planned', createdBy: 'A', createdAt: at, updatedAt: at, ...o })
+  it('once a solution is worked on, every untouched one picked before it is a leftover; worked-on ones stay', async () => {
+    const { leftoverSolutions } = await import('../../src/lib/breakdowns')
+    const list = [
+      sol('r1', 'replacement', '2026-10-16T10:00:00Z', { updatedAt: '2026-10-16T11:00:00Z' }),
+      sol('r2', 'replacement', '2026-10-16T10:01:00Z'),
+      sol('r3', 'replacement', '2026-10-16T10:02:00Z', { updatedAt: '2026-10-16T12:00:00Z' }),   // edited → kept
+      sol('r4', 'replacement', '2026-10-16T10:03:00Z'),                                          // has an expense → kept
+      sol('r5', 'replacement', '2026-10-16T10:04:00Z'),                                          // has a document → kept
+      sol('o1', 'onsite_repair', '2026-10-16T10:05:00Z'),
+      sol('o2', 'onsite_repair', '2026-10-16T10:06:00Z'),
+      sol('t1', 'towing_garage', '2026-10-16T10:07:00Z', { status: 'failed' }),
+      sol('t2', 'towing_garage', '2026-10-16T10:08:00Z'),                                        // only open towing → kept
+    ] as any
+    const d = leftoverSolutions(list, [{ solutionId: 'r4' }, { solutionId: 'o1', voidedAt: 'x' }], [{ solutionId: 'r5' }])
+    expect(d.map((s) => s.id).sort()).toEqual(['o1', 'o2', 'r2', 't2'])
+    // one added AFTER the last work (Add another solution) is kept, even before it is filled in
+    const later = [...list, sol('a1', 'alt_transport', '2026-10-16T13:00:00Z')]
+    expect(leftoverSolutions(later, [{ solutionId: 'r4' }], [{ solutionId: 'r5' }]).map((s) => s.id)).not.toContain('a1')
+    // nothing in use yet: only the newest pick of each kind is kept
+    const fresh = [sol('x1', 'replacement', '2026-10-16T10:00:00Z'), sol('x2', 'replacement', '2026-10-16T10:01:00Z'), sol('y1', 'towing_garage', '2026-10-16T10:02:00Z')] as any
+    expect(leftoverSolutions(fresh, [], []).map((s) => s.id)).toEqual(['x1'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Breakdown vehicle swaps — recorded in breakdown_vehicle_swaps, not in booking.exchanges
+// ─────────────────────────────────────────────────────────────────────────────
+import { swapMoney } from '../../src/lib/breakdownLedger'
+
+describe('breakdowns — replacement swap and swap back', () => {
+  const vS = (id: string) => main().vehicles.find((v) => v.id === id)!.status
+  const setup = () => {
+    const b = world(); const i = report(b)
+    const s = bd().addSolution(i.id, 'replacement', 'A').solution!
+    return { b, i, s }
+  }
+
+  it('handing over a replacement keeps the booking on the original car and blocks the replacement', () => {
+    const { b, s } = setup()
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vA' })).toMatch(/different vehicle/)
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', originalOdometer: 10400, replacementOdometer: 500, replacementFuel: 'Full' })).toBeNull()
+    const bk = main().bookings.find((x) => x.id === b)!
+    expect(bk.vehicleId).toBe('vA')
+    expect(bk.exchanges ?? []).toHaveLength(0)
+    expect(bd().swaps).toHaveLength(1)
+    expect(bd().swaps[0]).toMatchObject({ status: 'active', source: 'fleet', replacementVehicleId: 'vB', replacementRate: 15000, originalVehicleId: 'vA' })
+    expect(vS('vB')).toBe('Ongoing')
+    expect(vS('vA')).toBe('Maintenance')
+    expect(main().isVehicleAvailable('vB', '2026-07-05', '2026-07-06')).toBe(false)
+    expect(main().isVehicleAvailable('vB', '2026-07-09', '2026-07-10')).toBe(true)
+    expect(bd().solutions.find((x) => x.id === s.id)!.status).toBe('in_progress')
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T13:00:00'), by: 'A', replacementVehicleId: 'vC' })).toMatch(/already out/)
+  })
+
+  it("while it is out the booking can't be exchanged or finished", () => {
+    const { b, s } = setup()
+    bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB' })
+    expect(main().exchangeVehicle(b, { at: iso('2026-07-04T09:00:00'), by: 'A', toVehicleId: 'vC', fromDays: 3, reason: 'x',
+      returned: { odometer: 1, fuel: 'Full' }, delivered: { odometer: 1, fuel: 'Full' }, oldCarTo: 'Available' })).toMatch(/breakdown replacement/)
+    main().completeBooking(b)
+    expect(main().bookings.find((x) => x.id === b)!.status).toBe('Ongoing')
+  })
+
+  it('swap back only after "Mark vehicle as ready"; owners are paid for their own days', async () => {
+    const { b, i, s } = setup()
+    bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB' })
+    const w = bd().swaps[0]
+    const back = { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back' as const, replacementOdometer: 900, replacementFuel: '1/2', originalOdometer: 10410, originalFuel: 'Full' }
+    expect(bd().closeSwap(w.id, back)).toMatch(/Mark vehicle as ready/)
+    expect(await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })).toBeNull()
+
+    const bk = main().bookings.find((x) => x.id === b)!
+    const m = swapMoney(bk, 'vA', 15000, 2)
+    const mainBefore = main().commissions.find((c) => c.bookingId === b && c.vehicleId === 'vA')!.ownerPayout
+    const oB = main().owners.find((o) => o.id === 'oB')!.totalEarnings
+    expect(bd().closeSwap(w.id, back)).toBeNull()
+
+    const done = bd().swaps[0]
+    expect(done).toMatchObject({ status: 'closed', outcome: 'swapped_back', days: 2, replacementTo: 'Available', replacementPayout: 30000, originalDeduction: m.originalDeduction })
+    expect(m.originalDeduction).toBe(Math.round(m.perDay * 2))
+    // replacement owner: own payout row on the booking
+    const pay = main().commissions.find((c) => c.id === done.commissionId)!
+    expect(pay).toMatchObject({ bookingId: b, vehicleId: 'vB', ownerId: 'oB', ownerPayout: 30000, status: 'Pending' })
+    expect(main().owners.find((o) => o.id === 'oB')!.totalEarnings).toBe(oB + 30000)
+    // original owner: reversible payout adjustment
+    const after = main().bookings.find((x) => x.id === b)!
+    expect(after.payoutAdjustments?.find((a) => a.id === done.adjustmentId)?.amount).toBe(m.originalDeduction)
+    expect(main().commissions.find((c) => c.bookingId === b && c.vehicleId === 'vA')!.ownerPayout).toBe(mainBefore - m.originalDeduction)
+    // cars and records
+    expect(vS('vB')).toBe('Available')
+    expect(vS('vA')).toBe('Ongoing')
+    expect(main().isVehicleAvailable('vB', '2026-07-05', '2026-07-06')).toBe(true)
+    expect(after.exchanges ?? []).toHaveLength(0)
+    expect(bd().solutions.find((x) => x.id === s.id)!.status).toBe('completed')
+    expect(bd().closeSwap(w.id, back)).toMatch(/already come back/)
+    // the booking can be finished now
+    main().completeBooking(b)
+    expect(main().bookings.find((x) => x.id === b)!.status).toBe('Completed')
+  })
+
+  it('trip ended in the replacement: no swap back needed (original still in repair)', () => {
+    const { s } = setup()
+    bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vC' })
+    expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-07T09:00:00'), by: 'A', outcome: 'customer_kept', replacementTo: 'Maintenance' })).toBeNull()
+    expect(bd().swaps[0]).toMatchObject({ outcome: 'customer_kept', days: 4, replacementPayout: 36000 })
+    expect(vS('vC')).toBe('Maintenance')
+    expect(vS('vA')).toBe('Maintenance')
+  })
+
+  it('a partner car goes back to the partner — never into the fleet, no fleet payout', () => {
+    const b = world(); const i = report(b)
+    const s = bd().addSolution(i.id, 'partner_vehicle', 'A').solution!
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A' })).toMatch(/partner/)
+    bd().updateSolution(s.id, { providerName: 'Lanka Partner Rentals', partnerVehicle: 'Toyota Axio', partnerReg: 'CAX-9090' }, 'A')
+    const commissions = main().commissions.length
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A' })).toBeNull()
+    expect(bd().swaps[0]).toMatchObject({ source: 'partner', partnerName: 'Lanka Partner Rentals', partnerVehicle: 'Toyota Axio' })
+    expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-06T12:00:00'), by: 'A', outcome: 'customer_kept' })).toBeNull()
+    expect(bd().swaps[0]).toMatchObject({ status: 'closed', replacementTo: 'Returned to partner', days: 3 })
+    expect(bd().swaps[0].replacementPayout).toBeUndefined()
+    expect(main().commissions).toHaveLength(commissions)
+    expect(main().vehicles.map((v) => v.id).sort()).toEqual(['vA', 'vB', 'vC'])
+  })
+
+  it('swap money: referral fee stays with the original owner leg; deduction never exceeds the payout', () => {
+    const b = world()
+    const bk = { ...main().bookings.find((x) => x.id === b)!, referral: 'Agent X', referralFee: 7000 }
+    const m = swapMoney(bk, 'vA', 9000, 3)
+    expect(m.perDay).toBe(Math.round((84000 - 7000) / 7))
+    expect(m.originalDeduction).toBe(33000)
+    expect(m.replacementPayout).toBe(27000)
+    expect(m.companyNet).toBe(6000)
+    expect(swapMoney(bk, 'vA', 9000, 30).originalDeduction).toBeLessThanOrEqual(77000)
+  })
+})
+
+describe('breakdowns — timeline shows what was entered', () => {
+  it('a solution save is logged field by field (with the old value); an unchanged save logs nothing', () => {
+    const b = world(); const i = report(b)
+    const s = bd().addSolution(i.id, 'partner_vehicle', 'Kasun').solution!
+    bd().updateSolution(s.id, { providerName: 'Lanka Partner Rentals', partnerVehicle: 'Toyota Axio', insuranceChecked: true, agreedAmount: 25000 }, 'Kasun', 'details updated')
+    const e = bd().events.filter((x) => x.incidentId === i.id && x.type === 'solution').pop()!
+    expect(e.by).toBe('Kasun')
+    expect(e.data?.solutionId).toBe(s.id)
+    expect(e.text).toMatch(/^Partner vehicle updated — /)
+    const changes = e.data!.changes as { label: string; from: string; to: string }[]
+    expect(changes).toEqual(expect.arrayContaining([
+      { label: 'Provider', from: '—', to: 'Lanka Partner Rentals' },
+      { label: 'Partner vehicle', from: '—', to: 'Toyota Axio' },
+      { label: 'Insurance checked', from: '—', to: 'yes' },
+      { label: 'Agreed amount (Rs)', from: '—', to: '25,000' },
+    ]))
+    const n = bd().events.length
+    bd().updateSolution(s.id, { partnerVehicle: 'Toyota Axio' }, 'Kasun', 'details updated')
+    expect(bd().events.length).toBe(n)
+    bd().updateSolution(s.id, { partnerVehicle: 'Toyota Premio' }, 'Nimal')
+    expect((bd().events.at(-1)!.data!.changes as { from: string }[])[0].from).toBe('Toyota Axio')
+  })
+})
+
+describe('breakdowns — swap back when the original owner was already paid', () => {
+  it('records the days not served as owed back (pending negative line) instead of blocking', async () => {
+    const b = world(); const i = report(b)
+    const s = bd().addSolution(i.id, 'replacement', 'A').solution!
+    const main0 = main().commissions.find((c) => c.bookingId === b)!
+    useStore.setState((st) => ({ commissions: st.commissions.map((c) => (c.id === main0.id ? { ...c, status: 'Paid' as const } : c)) }))
+    bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB' })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    const pending0 = main().owners.find((o) => o.id === 'oA')!.pendingPayout
+    expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back' })).toBeNull()
+
+    const w = bd().swaps[0]
+    expect(w.status).toBe('closed')
+    expect(w.adjustmentId).toBe(`sw-owed-${w.id}`)
+    const owed = main().commissions.find((c) => c.id === w.adjustmentId)!
+    expect(owed).toMatchObject({ bookingId: b, vehicleId: 'vA', ownerId: 'oA', ownerPayout: -w.originalDeduction!, status: 'Pending' })
+    expect(main().owners.find((o) => o.id === 'oA')!.pendingPayout).toBe(pending0 - w.originalDeduction!)
+    const bk = main().bookings.find((x) => x.id === b)!
+    expect(bk.payoutAdjustments ?? []).toHaveLength(0)
+    // the paid main row is untouched and is still the booking's main commission
+    expect(mainCommission(main().commissions, bk)!.id).toBe(main0.id)
+    expect(main().commissions.find((c) => c.id === main0.id)!.ownerPayout).toBe(main0.ownerPayout)
+    expect(bd().events.at(-1)!.text).toMatch(/owes back/)
+  })
+})
+
+describe('breakdowns — replacement owner agreed a custom daily rate', () => {
+  it('rate agreed at handover is used; it can still be changed when the car comes back', async () => {
+    const b = world(); const i = report(b)
+    const s = bd().addSolution(i.id, 'replacement', 'A').solution!
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', rate: -5 })).toMatch(/valid daily rate/)
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', rate: 11000 })).toBeNull()
+    expect(bd().swaps[0].replacementRate).toBe(11000)                       // listed 15,000
+    expect(bd().events.at(-1)!.text).toMatch(/agreed Rs 11,000\/day.*listed Rs 15,000/)
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', rate: 10000 })).toBeNull()
+    const w = bd().swaps[0]
+    expect(w).toMatchObject({ replacementRate: 10000, replacementPayout: 20000, days: 2 })
+    expect(main().commissions.find((c) => c.id === w.commissionId)!.ownerPayout).toBe(20000)
+    expect(bd().events.at(-1)!.text).toMatch(/agreed rate changed to Rs 10,000\/day, was Rs 11,000/)
+  })
+})
+
+describe('breakdowns — replacement payout reason for the owner', () => {
+  it('the replacement owner gets the payout with a reason and an alert; an owed-back line explains itself too', async () => {
+    const b = world(); const i = report(b)
+    const s = bd().addSolution(i.id, 'replacement', 'A').solution!
+    const main0 = main().commissions.find((c) => c.bookingId === b)!
+    useStore.setState((st) => ({ commissions: st.commissions.map((c) => (c.id === main0.id ? { ...c, status: 'Paid' as const } : c)) }))
+    bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', rate: 5000 })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back' })).toBeNull()
+    const w = bd().swaps[0]
+    const pay = main().commissions.find((c) => c.id === w.commissionId)!
+    expect(pay.note).toContain(`Breakdown replacement: CBB-2222 replaced CBU-0745 (${i.ref})`)
+    expect(pay.note).toContain('03 Jul to 05 Jul, 2 days × Rs 5,000')
+    expect(main().notifications.find((n) => n.relatedId === `payout:${pay.id}`)).toMatchObject({ ownerId: 'oB', title: 'Payout added: Rs 10,000', message: pay.note })
+    const owed = main().commissions.find((c) => c.id === w.adjustmentId)!
+    expect(owed.note).toMatch(/^Owes back: breakdown .* CBU-0745 was off the road 2 days/)
+    expect(main().notifications.find((n) => n.relatedId === `payout:${owed.id}`)?.ownerId).toBe('oA')
   })
 })

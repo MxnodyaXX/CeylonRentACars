@@ -498,6 +498,8 @@ export interface Commission {
   coordinatorFee?: number;
   status: 'Pending' | 'Paid' | 'Credit';
   createdAt: string;
+  /** Why this payout exists, shown to the owner (e.g. a breakdown replacement) — set by admins only */
+  note?: string;
 }
 
 export type ExpenseCategory = 'Service' | 'Repair' | 'Fine' | 'Damage' | 'Tire' | 'Insurance' | 'Fuel' | 'Other';
@@ -574,6 +576,8 @@ export interface AppState {
 
   addVehicle: (v: Omit<Vehicle, 'id' | 'createdAt' | 'revenue' | 'rentCount'>) => string;
   updateVehicle: (id: string, updates: Partial<Vehicle>) => void;
+  /** Status change from another workflow (breakdown swaps) — no toast; a breakdown hold keeps Maintenance */
+  setVehicleStatus: (id: string, status: Vehicle['status']) => void;
   updateWebsiteListing: (id: string, updates: Partial<Vehicle>) => void;
   deleteVehicle: (id: string) => void;
 
@@ -620,6 +624,8 @@ export interface AppState {
   /** Add / reverse a payout adjustment (owner offset) — the commission and owner totals follow */
   adjustOwnerPayout: (bookingId: string, a: Omit<PayoutAdjustment, 'id' | 'at'> & { id?: string }) => string | null;
   reverseOwnerPayoutAdjustment: (bookingId: string, adjustmentId: string, by: string) => string | null;
+  /** A breakdown replacement car's earnings on a booking: its own payout row for its owner (once per id) */
+  addSwapPayout: (x: { id: string; bookingId: string; vehicleId: string; amount: number; note?: string }) => string | null;
   /** Mid-trip vehicle exchange — returns an error message, or null when done */
   exchangeVehicle: (bookingId: string, x: ExchangeInput) => string | null;
   settleCredit: (bookingId: string) => void;

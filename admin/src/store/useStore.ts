@@ -35,6 +35,16 @@ const now = () => new Date().toISOString();
  * cancelled never move it back. Only an explicit admin action does (Breakdown → Mark vehicle as ready,
  * or Vehicles → status when there is no breakdown hold).
  */
+/**
+ * Breakdown vehicle swaps live in the breakdown store (breakdown_vehicle_swaps). It registers these
+ * so bookings respect them: a replacement that is out is busy, and a booking with an active swap
+ * can't be exchanged or finished until the swap is closed.
+ */
+export const breakdownHooks: {
+  vehicleBusy?: (vehicleId: string, startMs: number, endMs: number) => boolean;
+  activeSwapNote?: (bookingId: string) => string | null;
+} = {};
+
 const keepMaintenance = (vehicleId: string, next: Vehicle['status']): Vehicle['status'] =>
   useStore.getState().vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance' ? 'Maintenance' : next;
 const underMaintenance = (vehicleId: string) => useStore.getState().vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance';
@@ -114,6 +124,45 @@ export const useStore = create<AppState>()(
         set((s) => ({ vehicles: s.vehicles.map((v) => (v.id === id ? { ...v, ...updates } : v)) }));
         sync(() => db.updateVehicle(id, updates));
         toast.success('Vehicle updated', 'Changes have been saved.');
+      },
+
+      setVehicleStatus: (id, status) => {
+        const next = keepMaintenance(id, status);
+        if (get().vehicles.find((v) => v.id === id)?.status === next) return;
+        set((s) => ({ vehicles: s.vehicles.map((v) => (v.id === id ? { ...v, status: next } : v)) }));
+        sync(() => db.updateVehicle(id, { status: next }));
+      },
+
+      addSwapPayout: (x) => {
+        const s = get();
+        if (s.commissions.some((c) => c.id === x.id)) return null;   // already recorded
+        const b = s.bookings.find((v) => v.id === x.bookingId);
+        const car = s.vehicles.find((v) => v.id === x.vehicleId);
+        if (!b || !car) return 'Booking or vehicle not found.';
+        if (!Number.isFinite(x.amount)) return 'Invalid amount.';
+        // a negative amount is money the owner owes back (their payout was already paid) — a pending
+        // line that is netted off their next payout
+        const row: Commission = {
+          id: x.id, bookingId: b.id, vehicleId: car.id, ownerId: car.ownerId, referral: 'Direct',
+          totalIncome: Math.max(0, x.amount), commissionRate: 0, commissionAmount: 0, ownerPayout: x.amount, coordinatorFee: 0,
+          status: 'Pending', createdAt: now(), ...(x.note ? { note: x.note } : {}),
+        };
+        const owner = s.owners.find((o) => o.id === car.ownerId);
+        const ownerU: Partial<Owner> | null = owner ? { totalEarnings: owner.totalEarnings + x.amount, pendingPayout: owner.pendingPayout + x.amount } : null;
+        set((st) => ({
+          commissions: [...st.commissions, row],
+          owners: ownerU ? st.owners.map((o) => (o.id === owner!.id ? { ...o, ...ownerU } : o)) : st.owners,
+        }));
+        sync(() => db.insertCommission(row));
+        if (ownerU) sync(() => db.updateOwner(owner!.id, ownerU));
+        // the owner sees why their payouts changed
+        if (owner && x.note) {
+          get().addNotification({
+            type: 'General', relatedId: `payout:${row.id}`, ownerId: owner.id, message: x.note,
+            title: x.amount >= 0 ? `Payout added: Rs ${Math.round(x.amount).toLocaleString('en-LK')}` : `Payout adjustment: −Rs ${Math.round(-x.amount).toLocaleString('en-LK')}`,
+          });
+        }
+        return null;
       },
 
       // Website listing tweaks (Website page) — saved silently, no toast per click.
@@ -305,6 +354,8 @@ export const useStore = create<AppState>()(
       completeBooking: (id) => {
         const booking = get().bookings.find((b) => b.id === id);
         if (!booking) return;
+        const swapNote = breakdownHooks.activeSwapNote?.(id);
+        if (swapNote) { toast.error('Breakdown replacement still out', swapNote); return; }
         const afterComplete = keepMaintenance(booking.vehicleId, 'Available');
         set((s) => ({
           bookings: s.bookings.map((b) => b.id === id ? { ...b, status: 'Completed' as const } : b),
@@ -911,6 +962,8 @@ export const useStore = create<AppState>()(
         const b = s.bookings.find((v) => v.id === bookingId);
         if (!b) return 'Booking not found.';
         if (b.status !== 'Ongoing') return 'Only a rental in progress can have its vehicle exchanged.';
+        const swapNote = breakdownHooks.activeSwapNote?.(bookingId);
+        if (swapNote) return swapNote;
         if (x.toVehicleId === b.vehicleId) return 'Choose a different vehicle.';
         const from = s.vehicles.find((v) => v.id === b.vehicleId);
         const to = s.vehicles.find((v) => v.id === x.toVehicleId);
@@ -1048,6 +1101,8 @@ export const useStore = create<AppState>()(
         const b = st.bookings.find((x) => x.id === id);
         if (!b) return;
         const vehicle = st.vehicles.find((v) => v.id === b.vehicleId);
+        const swapNote = kind === 'return' ? breakdownHooks.activeSwapNote?.(id) : null;
+        if (swapNote) { toast.error('Breakdown replacement still out', swapNote); return; }
         if (kind === 'pickup' && vehicle?.status === 'Maintenance') {
           toast.error('Vehicle under maintenance', 'It is not cleared for rental — swap the vehicle or confirm it ready from its breakdown first.');
           return;
@@ -1145,6 +1200,7 @@ export const useStore = create<AppState>()(
         // (e.g. returned 08:00, handed to the next hire from 12:00 the same day).
         const candStart = bookingStartMs({ startDate, startTime });
         const candEnd   = bookingEndMs({ endDate, endTime });
+        if (breakdownHooks.vehicleBusy?.(vehicleId, candStart, candEnd)) return false;   // out as a breakdown replacement
         return !bookings.some((b) => {
           // Only live bookings (Confirmed/Ongoing) hold the vehicle — Completed
           // and Cancelled bookings release it, so they never block new dates.

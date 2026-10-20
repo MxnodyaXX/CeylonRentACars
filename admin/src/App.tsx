@@ -60,12 +60,13 @@ export default function App() {
     return () => { cleanup?.(); };
   }, [currentUser?.id, currentUser?.mustChangePassword]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Run insurance reminders once per session, immediately after data is loaded.
-  // Uses getState() snapshot to avoid subscribing to rapidly-changing store slices.
+  // Weekly insurance reminders, once per session after data is loaded. Only an admin session sends them
+  // (owner logins would each send their own round), and never an SMS from local development or tests.
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || currentUser?.role !== 'admin') return;
     const { vehicles, owners, notifications, addNotification } = useStore.getState();
-    runInsuranceReminders({ vehicles, owners, notifications, addNotification });
+    const automated = navigator.userAgent.includes('Playwright') || (window as unknown as Record<string, unknown>).__playwright != null;
+    runInsuranceReminders({ vehicles, owners, notifications, addNotification, sendTexts: !import.meta.env.DEV && !automated });
   }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Boot loading screen while the saved session is checked (and a short minimum so it doesn't flash).

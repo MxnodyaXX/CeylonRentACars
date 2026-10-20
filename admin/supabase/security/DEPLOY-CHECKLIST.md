@@ -23,7 +23,7 @@ checked in the browser (`admin` / `admin123`). SMS / WhatsApp functions could be
   ```
   cd admin/supabase/security/tests
   npm install
-  npm test          # expect: 197 passed · 42 passed · 13 passed · 33 passed, 0 failed
+  npm test          # expect: 225 passed · 42 passed · 13 passed · 33 passed, 0 failed
   ```
 - [ ] Pick a quiet time (about 30–45 min). Have the owners' phone numbers ready (step 7).
 
@@ -253,8 +253,41 @@ The database enforces this too: one active hold per vehicle; the status can't be
 `Maintenance` while a hold is active (any page, any tool); the hold can only be cleared through
 `breakdown_mark_vehicle_ready` (admins only).
 
+## Part 6 — breakdown replacements & swap back (after Part 5)
+
+A replacement given because of a breakdown is recorded in its own table, `breakdown_vehicle_swaps`
+(not in the booking's "Exchange vehicle" records). The booking stays on the original car. Flow:
+hand over the replacement (fleet car or partner car) → original repaired → **Mark vehicle as ready** →
+**Return the original vehicle (swap back)**, or **Trip ended** if the customer finishes in the replacement.
+A fleet car goes back to the fleet; a partner car goes back to the partner.
+
+Money (fleet replacement): its owner earns its daily rent × the days it served (own payout row);
+the original owner's payout is reduced for those days at the agreed booking rate (payout adjustment on
+the booking, reversible). The customer's price doesn't change. Partner cars are paid through the
+partner cost as before.
+
+- [ ] SQL Editor → run `08_breakdown_swaps.sql` (after 06 and 07; undo: `rollback/08_rollback_breakdown_swaps.sql`).
+      It also updates the website calendar (`vehicle_busy_dates`) so a replacement that is out shows as busy.
+- [ ] Run `verify.sql` → still 0 FAIL.
+- [ ] Push the admin.
+- [ ] Try it on a test booking that is **Ongoing**: Report breakdown → Solutions → Vehicle replacement →
+      tick both checks → choose a free car → **Hand over replacement** → Overview → **Mark vehicle as ready** →
+      Solutions → **Return the original vehicle** → Confirm. Check Commissions: the replacement's owner has a
+      payout row for those days.
+
 ## Review notes
 
 - **Service key:** only inside Edge Functions (`serviceClient()`); never in `src/` or `admin/src/`. Functions that use it check the caller first (`staffCaller`, admin-only actions, cron secret).
 - **Privilege escalation:** roles live in `app_metadata` (server-only). `staff-users` can't create, edit or delete admins, filters permissions to known `can*` flags, and an owner can't change their own `owner_id`, payouts, commission rates or a vehicle's owner (database triggers).
 - **Missing authorization:** every table has row-level security; visitors only reach the website views and three functions (`submit_booking_request`, `submit_feedback`, `choose_alternative`); all other functions are closed to visitors.
+
+## Part 7 — payout reasons for owners (after Part 6)
+
+A payout row can carry a reason (`commissions.note`) that the owner sees in their Commissions page —
+e.g. "Breakdown replacement: CBU-0649 replaced CBU-0745 (BD-…) — 16 Oct to 18 Oct, 2 days × Rs 5,000".
+Breakdown replacements also show on the Bookings calendar (purple) for admins and for that car's owner.
+
+- [ ] SQL Editor → run `09_payout_notes.sql` (undo: `rollback/09_rollback_payout_notes.sql`).
+      It fills in the reason for breakdown payouts already recorded and sends those owners one alert.
+- [ ] Run `verify.sql` → still 0 FAIL.
+- [ ] Push the admin.

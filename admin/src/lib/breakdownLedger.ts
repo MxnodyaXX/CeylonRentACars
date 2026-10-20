@@ -1,5 +1,6 @@
 import type { Booking } from '../types';
 import { rentalDays } from './availability';
+import { legsOf } from './exchange';
 import type { BdAllocation, BdData, BdExpense, BdIncident, BdPayment, BdSolution, Party } from './breakdowns';
 
 /*
@@ -192,4 +193,17 @@ export function vehicleHistory(vehicleId: string | undefined, incidents: BdIncid
   const recent = all.filter((x) => Date.now() - new Date(x.occurredAt ?? x.reportedAt).getTime() < 180 * 864e5);
   const repeat = all.length >= 3 || recent.length >= 2;
   return { previous, repeat, reason: repeat ? (recent.length >= 2 ? `${recent.length} breakdowns in the last 6 months` : `${all.length} breakdowns in total`) : '' };
+}
+
+/**
+ * Money when a breakdown replacement comes back (fleet cars only — a partner car is paid through the
+ * partner expense). The replacement's owner earns its daily rent × the days it served; the original
+ * owner's payout is reduced for those days at the agreed booking rate (never below zero).
+ */
+export function swapMoney(b: Booking, originalVehicleId: string | undefined, rate: number, days: number) {
+  const leg = legsOf(b).filter((l) => l.vehicleId === originalVehicleId).pop();
+  const perDay = leg && leg.days ? Math.max(0, leg.revenue - leg.referralFee) / leg.days : 0;
+  const originalDeduction = Math.min(Math.round(perDay * days), Math.round(leg?.payout ?? 0));
+  const replacementPayout = Math.round(Math.max(0, rate) * days);
+  return { perDay: Math.round(perDay), originalDeduction, replacementPayout, companyNet: originalDeduction - replacementPayout };
 }

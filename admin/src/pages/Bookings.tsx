@@ -1,5 +1,8 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useBreakdownStore } from '../store/useBreakdownStore';
+import { toast } from '../store/useToast';
+import type { BdSwap } from '../lib/breakdowns';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
@@ -255,6 +258,11 @@ export default function Bookings() {
     ? vehicles.filter((v) => v.ownerId === currentUser.ownerId).map((v) => v.id)
     : null;
 
+  const navigate = useNavigate();
+  const breakdownSwaps = useBreakdownStore((s) => s.swaps);
+  const breakdownsReady = useBreakdownStore((s) => s.ready);
+  useEffect(() => { if (!breakdownsReady) useBreakdownStore.getState().load(); }, [breakdownsReady]);
+
   const visibleBookings = myVehicleIds
     ? bookings.filter((b) => myVehicleIds.includes(b.vehicleId))
     : bookings;
@@ -498,20 +506,38 @@ export default function Bookings() {
     }
   }, [form.vehicleId, bookings]);
 
-  // Calendar events
-  const calEvents = visibleBookings
-    .filter((b) => b.status !== 'Cancelled')
-    .map((b) => ({
-      id:    b.id,
-      title: `${vehicles.find((v) => v.id === b.vehicleId)?.brand ?? ''} — ${b.customerName}`,
-      start: new Date(b.startDate),
-      end:   new Date(b.endDate),
-      resource: b,
-    }));
+  // Calendar events: bookings, plus days a car was out as a breakdown replacement (those are not
+  // bookings of that car — they live in breakdown_vehicle_swaps)
+  const swapCar = (w: BdSwap) => vehicles.find((v) => v.id === w.replacementVehicleId);
+  const calEvents: { id: string; title: string; start: Date; end: Date; resource: Booking | BdSwap }[] = [
+    ...visibleBookings
+      .filter((b) => b.status !== 'Cancelled')
+      .map((b) => ({
+        id:    b.id,
+        title: `${vehicles.find((v) => v.id === b.vehicleId)?.brand ?? ''} — ${b.customerName}`,
+        start: new Date(b.startDate),
+        end:   new Date(b.endDate),
+        resource: b,
+      })),
+    ...breakdownSwaps
+      .filter((w) => w.source === 'fleet' && (!myVehicleIds || myVehicleIds.includes(w.replacementVehicleId ?? '')))
+      .map((w) => {
+        const car = swapCar(w);
+        const until = w.backAt ?? bookings.find((b) => b.id === w.bookingId)?.endDate ?? new Date().toISOString();
+        return {
+          id: `swap-${w.id}`,
+          title: `${car?.vehicleNumber ?? 'Car'} — breakdown replacement${w.status === 'active' ? ' (out now)' : ''}`,
+          start: new Date(w.outAt),
+          end: new Date(until),
+          resource: w,
+        };
+      }),
+  ];
+  const isSwap = (r: Booking | BdSwap): r is BdSwap => 'outAt' in r;
 
   const eventStyleGetter = (ev: typeof calEvents[0]) => ({
     style: {
-      backgroundColor: STATUS_COLORS[(ev.resource as Booking).status] ?? '#111114',
+      backgroundColor: isSwap(ev.resource) ? '#6D28D9' : STATUS_COLORS[ev.resource.status] ?? '#111114',
       borderRadius: 6,
       border: 'none',
       fontSize: 11,
@@ -797,7 +823,15 @@ export default function Bookings() {
             endAccessor="end"
             style={{ height: '100%' }}
             eventPropGetter={eventStyleGetter}
-            onSelectEvent={(ev) => { setSelected((ev as typeof calEvents[0]).resource as Booking); setModal('view'); }}
+            onSelectEvent={(ev) => {
+              const r = (ev as typeof calEvents[0]).resource;
+              if (!isSwap(r)) { setSelected(r); setModal('view'); return; }
+              if (isAdmin()) { navigate(`/breakdowns/${r.incidentId}`); return; }
+              const car = swapCar(r);
+              const days = r.days ? `${r.days} day${r.days === 1 ? '' : 's'}` : 'still out';
+              toast.info(`${car?.vehicleNumber ?? 'Your car'} — breakdown replacement`,
+                `Given to a customer whose car broke down: ${new Date(r.outAt).toLocaleDateString('en-GB')} to ${r.backAt ? new Date(r.backAt).toLocaleDateString('en-GB') : 'now'} (${days}). Your payout for it is under Commissions.`);
+            }}
             onSelectSlot={onSelectSlot}
             selectable
             popup

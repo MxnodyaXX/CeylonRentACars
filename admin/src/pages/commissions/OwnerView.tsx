@@ -15,7 +15,7 @@ import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, 
 import { Booking, VehicleHandover } from '../../types';
 import { bookingDiscount } from '../../lib/revenue';
 import { durationLabel } from '../../lib/rentalPeriod';
-import { bookingTouchesVehicles, legsOf, ownerCommissions } from '../../lib/exchange';
+import { bookingTouchesVehicles, legsOf, ownerCommissions, splitNote } from '../../lib/exchange';
 
 const BAR_COLORS = ['#E11D2A', '#10B981', '#F59E0B', '#8B5CF6', '#111114', '#EC4899'];
 type PeriodKey = 'all' | 'week' | 'month' | 'year' | 'custom';
@@ -542,6 +542,34 @@ export default function OwnerView() {
         </div>
       </div>
 
+      {/* ── Payouts with a reason (breakdown replacements, owed-back amounts) ── */}
+      {myCommissions.some((c) => c.note) && (
+        <div className="card mb-6">
+          <p className="section-title mb-1">Breakdown replacements &amp; adjustments</p>
+          <p className="text-xs text-navy-400 mb-3">Payouts that aren't one of your own bookings — e.g. your car used as a replacement for another car that broke down.</p>
+          <div className="space-y-2">
+            {myCommissions.filter((c) => c.note).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => {
+              const [kind, detail] = splitNote(c.note);
+              const v = vehicles.find((vv) => vv.id === c.vehicleId);
+              return (
+                <div key={c.id} className="flex items-center gap-3 p-3 rounded-xl border border-navy-100">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-navy-800">{kind}{v ? ` · ${v.vehicleNumber}` : ''}</p>
+                    <p className="text-xs text-navy-500 break-words">{detail}</p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className={`text-sm font-bold ${c.ownerPayout < 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                      {c.ownerPayout < 0 ? `−Rs ${(-c.ownerPayout).toLocaleString()}` : `Rs ${c.ownerPayout.toLocaleString()}`}
+                    </p>
+                    <StatusBadge status={c.status} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Pending Payouts ─────────────────────────────────────────── */}
       <div className="card mb-6">
         <div className="flex items-center justify-between mb-4">
@@ -558,11 +586,12 @@ export default function OwnerView() {
               {pendingPayouts.map((c) => {
                 const booking = bookings.find((b) => b.id === c.bookingId);
                 const vehicle = vehicles.find((v) => v.id === c.vehicleId);
+                const [kind, detail] = splitNote(c.note);
                 return (
                   <div key={c.id} className="flex items-center gap-3 p-3 bg-amber-50/60 rounded-xl">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-navy-800 truncate">{booking?.customerName ?? '—'}</p>
-                      <p className="text-xs text-navy-400">{vehicle?.brand} {vehicle?.model} · {booking?.startDate}</p>
+                      <p className="text-sm font-semibold text-navy-800 truncate">{kind ?? booking?.customerName ?? '—'}</p>
+                      <p className="text-xs text-navy-400">{detail ?? `${vehicle?.brand ?? ''} ${vehicle?.model ?? ''} · ${booking?.startDate ?? ''}`}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <p className="text-sm font-bold text-amber-700">Rs {c.ownerPayout.toLocaleString()}</p>

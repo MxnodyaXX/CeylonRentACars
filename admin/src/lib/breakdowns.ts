@@ -88,6 +88,21 @@ export interface BdDocument {
   name: string; path: string; uploadedBy: string; uploadedAt: string;
 }
 
+/** A replacement period (08_breakdown_swaps.sql) — separate from the booking's "Exchange vehicle" records */
+export interface BdSwap {
+  id: string; incidentId: string; solutionId: string; bookingId: string; originalVehicleId?: string;
+  source: 'fleet' | 'partner'; replacementVehicleId?: string; partnerName?: string; partnerVehicle?: string; partnerReg?: string;
+  status: 'active' | 'closed';
+  outAt: string; outBy: string; outLocation?: string;
+  originalOdometer?: number; originalFuel?: string; replacementOdometerOut?: number; replacementFuelOut?: string;
+  replacementRate?: number; outNotes?: string;
+  outcome?: 'swapped_back' | 'customer_kept'; backAt?: string; backBy?: string; backLocation?: string;
+  replacementOdometerIn?: number; replacementFuelIn?: string; originalOdometerBack?: number; originalFuelBack?: string;
+  replacementTo?: string; days?: number; replacementPayout?: number; originalDeduction?: number;
+  commissionId?: string; adjustmentId?: string; backNotes?: string;
+  createdAt: string; updatedAt: string;
+}
+
 export interface BdData {
   incidents: BdIncident[]; events: BdEvent[]; solutions: BdSolution[]; expenses: BdExpense[];
   allocations: BdAllocation[]; payments: BdPayment[]; documents: BdDocument[];
@@ -180,13 +195,14 @@ export function fromRow<T>(r: Record<string, unknown>): T {
 export const TABLES = {
   incidents: 'breakdown_incidents', events: 'breakdown_events', solutions: 'breakdown_solutions', expenses: 'breakdown_expenses',
   allocations: 'breakdown_allocations', payments: 'breakdown_payments', documents: 'breakdown_documents',
+  swaps: 'breakdown_vehicle_swaps',
 } as const;
 export type TableKey = keyof typeof TABLES;
 
 /** Every breakdown record. null = the tables are not set up yet (run 06_breakdowns.sql) */
 export async function loadBreakdowns(): Promise<BdData | null> {
   if (!supabaseEnabled) return null;
-  const keys = Object.keys(TABLES) as TableKey[];
+  const keys = (Object.keys(TABLES) as TableKey[]).filter((k) => k !== 'swaps');   // swaps load on their own (08 may not be run yet)
   const results = await Promise.all(keys.map((k) => supabase.from(TABLES[k]).select('*')));
   const missing = results.find((r) => r.error && /breakdown_|does not exist|schema cache/i.test(r.error.message));
   if (missing) return null;
@@ -196,6 +212,21 @@ export async function loadBreakdowns(): Promise<BdData | null> {
   keys.forEach((k, i) => { out[k] = (results[i].data ?? []).map((r) => fromRow(r as Record<string, unknown>)); });
   return out as unknown as BdData;
 }
+
+/** Breakdown vehicle swaps. null = 08_breakdown_swaps.sql not run yet */
+export async function loadSwaps(): Promise<BdSwap[] | null> {
+  if (!supabaseEnabled) return null;
+  const { data, error } = await supabase.from(TABLES.swaps).select('*');
+  if (error) {
+    if (/breakdown_vehicle_swaps|does not exist|schema cache/i.test(error.message)) return null;
+    throw error;
+  }
+  return (data ?? []).map((r) => fromRow<BdSwap>(r as Record<string, unknown>));
+}
+
+/** Days a replacement served: started 24-hour periods, at least one */
+export const swapDays = (outAt: string, backAt: string) =>
+  Math.max(1, Math.ceil((new Date(backAt).getTime() - new Date(outAt).getTime()) / 864e5 - 0.01));
 
 export async function insertRow(table: TableKey, o: object) {
   if (!supabaseEnabled) return;
@@ -212,3 +243,63 @@ export const bdId = () => Math.random().toString(36).slice(2, 10) + Math.random(
 /** BD-YYMMDD-XXXX */
 export const newRef = (d = new Date()) =>
   `BD-${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+/**
+ * Leftover solutions — picked but never used (still Pending, never edited, no costs or documents):
+ *  • once another solution is being worked on, every untouched one added BEFORE that work is a leftover
+ *    (one added afterwards on purpose with "Add another solution" is kept, even before it is filled in);
+ *  • while nothing is in use yet, only the newest pick of each kind is kept.
+ */
+export function leftoverSolutions(sols: BdSolution[], expenses: { solutionId?: string; voidedAt?: string }[], documents: { solutionId?: string }[]): BdSolution[] {
+  const untouched = (s: BdSolution) => s.status === 'planned'
+    && Math.abs(Date.parse(s.updatedAt) - Date.parse(s.createdAt)) < 2000
+    && !expenses.some((e) => e.solutionId === s.id && !e.voidedAt)
+    && !documents.some((d) => d.solutionId === s.id);
+  const open = sols.filter((s) => s.status !== 'cancelled').sort((a, c) => a.createdAt.localeCompare(c.createdAt));
+  const idle = open.filter(untouched);
+  const inUse = open.filter((s) => !untouched(s));
+  if (inUse.length) {
+    const lastWork = inUse.map((s) => s.updatedAt).sort().pop()!;
+    return idle.filter((s) => s.createdAt < lastWork);
+  }
+  return idle.filter((s) => idle.some((x) => x.kind === s.kind && x.createdAt > s.createdAt));
+}
+
+/* ── What changed (timeline) ───────────────────────────────────────────────── */
+
+const FIELD_LABEL: Record<string, string> = {
+  result: 'Result', notes: 'Notes', providerName: 'Provider', providerCompany: 'Company / contact', providerPhone: 'Phone',
+  providerArea: 'Service area', acceptance: 'Acceptance', departAt: 'Departed', arriveAt: 'Arrived', workStartAt: 'Work started',
+  workEndAt: 'Work finished', travelKm: 'Travel km', repairLocation: 'Repair location', diagnosis: 'Diagnosis', workDone: 'Work done',
+  partsReplaced: 'Parts replaced', remarks: 'Remarks', repairResult: 'Repair result', clearanceBy: 'Safety clearance by',
+  clearanceAt: 'Safety clearance at', customerConfirmedBy: 'Customer confirmed by', customerConfirmedAt: 'Customer confirmed at',
+  pickupLocation: 'Pickup location', destination: 'Destination', garageName: 'Garage', garageContact: 'Garage contact', mechanic: 'Mechanic',
+  inspectionReport: 'Inspection report', quoteAmount: 'Quotation (Rs)', estCompletion: 'Estimated completion', invoiceAmount: 'Invoice (Rs)',
+  dispatchAt: 'Tow dispatched', collectedAt: 'Collected', deliveredAt: 'Delivered', deliveryDriver: 'Delivery driver',
+  deliveryDriverPhone: 'Driver phone', deliveryLocation: 'Delivery location', deliveryAt: 'Delivered at', collectionPerson: 'Collected by',
+  collectionLocation: 'Collected from', collectionAt: 'Collected at', insuranceChecked: 'Insurance checked', driverChecked: 'Driver / licence checked',
+  customerAckAt: 'Customer acknowledged', partnerVehicle: 'Partner vehicle', partnerReg: 'Registration', partnerCategory: 'Category',
+  periodStart: 'Rental start', periodEnd: 'Rental end', quotedAmount: 'Partner quoted (Rs)', agreedAmount: 'Agreed amount (Rs)',
+  depositAmount: 'Deposit (Rs)', transportType: 'Transport type', passengers: 'Passengers', fare: 'Fare (Rs)',
+  terminateAt: 'Terminate at', terminationReason: 'Termination reason', customerAgreedAt: 'Customer agreed at', deductionsNote: 'Deductions note',
+  refundMethod: 'Refund method', refundReference: 'Refund reference',
+};
+// bookkeeping fields set by the system — not shown as edits
+const SKIP = new Set(['id', 'incidentId', 'kind', 'status', 'createdBy', 'createdAt', 'updatedAt', 'assignedBy', 'assignedAt']);
+
+const showValue = (v: unknown): string => {
+  if (v === undefined || v === null || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  if (typeof v === 'number') return v.toLocaleString('en-LK');
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return new Date(s).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  return s.length > 80 ? s.slice(0, 77) + '…' : s;
+};
+
+/** The fields a save really changed, with readable labels and values (for the timeline) */
+export function describeChanges(before: object, patch: object): { label: string; from: string; to: string }[] {
+  const b = before as Record<string, unknown>;
+  return Object.entries(patch)
+    .filter(([k, v]) => !SKIP.has(k) && showValue(v) !== showValue(b[k]))
+    .map(([k, v]) => ({ label: FIELD_LABEL[k] ?? k.replace(/[A-Z]/g, (c) => ' ' + c.toLowerCase()), from: showValue(b[k]), to: showValue(v) }));
+}

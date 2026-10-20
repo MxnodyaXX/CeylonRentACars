@@ -66,7 +66,16 @@ function baseLegs(b: Booking): Leg[] {
 /** The commission row for the car the customer has now (past legs have their own rows) */
 export function mainCommission(commissions: Commission[], b: Booking): Commission | undefined {
   const legIds = new Set((b.exchanges ?? []).map((e) => e.commissionId));
-  return commissions.find((c) => c.bookingId === b.id && !legIds.has(c.id));
+  // breakdown swap rows ("sw-…": a replacement's earnings, or an amount an owner owes back) are never the main one
+  const rows = commissions.filter((c) => c.bookingId === b.id && !legIds.has(c.id) && !c.id.startsWith('sw-'));
+  return rows.find((c) => c.vehicleId === b.vehicleId) ?? rows[0];
+}
+
+/** The payout row that a car's part of this booking is paid from (its latest leg) */
+export function payoutRowFor(commissions: Commission[], b: Booking, vehicleId?: string): Commission | undefined {
+  const leg = [...legsOf(b)].reverse().find((l) => l.vehicleId === vehicleId);
+  if (!leg) return undefined;
+  return leg.commissionId ? commissions.find((c) => c.id === leg.commissionId) : mainCommission(commissions, b);
 }
 
 /** Every commission row of a booking that belongs to one owner (an owner can own two of its cars) */
@@ -120,4 +129,11 @@ export function previewExchange(b: Booking, fromDays: number, toRate: number) {
   const otherPayouts = legs.slice(0, -1).reduce((s, l) => s + l.payout, 0);
   const company = b.totalAmount - (b.referralFee ?? 0) - otherPayouts - fromPayout - toPayout;
   return { isFirst, fromDays: days, fromRevenue, fromPayout, toDays, toRevenue, toPayout, company };
+}
+
+/** "Breakdown replacement: CBU-0649 replaced …" → ["Breakdown replacement", "CBU-0649 replaced …"] (payout notes) */
+export function splitNote(note?: string): [string | undefined, string | undefined] {
+  if (!note) return [undefined, undefined];
+  const i = note.indexOf(': ');
+  return i > 0 && i < 40 ? [note.slice(0, i), note.slice(i + 2)] : ['Payout note', note];
 }

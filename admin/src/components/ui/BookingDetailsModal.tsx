@@ -16,6 +16,7 @@ import { bookingTiming, StatusPill } from './BookingCard';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
+import { printInvoice } from '../../lib/printInvoice';
 import {
   CHECK_ITEMS, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, rs, uploadBookingFile, newId,
 } from '../../lib/bookingRecord';
@@ -381,7 +382,7 @@ function Overview({ b, by, price, extra }: {
 function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
   b: Booking; by: string; price: ReturnType<typeof priceBreakdown>; commissionPayout?: number; includedKm: number; extraKmRate: number;
 }) {
-  const { recordPayment, settleDeposit, addCharge, waiveCharge } = useStore();
+  const { recordPayment, settleDeposit, addCharge, waiveCharge, vehicles } = useStore();
   const ledger = ledgerOf(b);
   const held = depositHeld(b);
   const [pay, setPay] = useState({ kind: 'Payment' as PaymentKind, amount: price.due || 0, method: 'Cash', receiptNo: '', note: '' });
@@ -395,6 +396,10 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
 
   return (
     <div className="space-y-3">
+      <div className="flex justify-end">
+        <button type="button" onClick={() => { if (!printInvoice(b, vehicles.find((v) => v.id === b.vehicleId))) toast.error('Invoice not opened', 'Allow pop-ups for this site and try again.'); }}
+                className="btn-secondary !py-1.5 text-sm inline-flex items-center gap-1.5"><Printer size={14} /> Print invoice</button>
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
           ['Bill', rs(price.bill), 'bg-navy-800 text-white'],

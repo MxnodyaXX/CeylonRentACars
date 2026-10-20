@@ -272,6 +272,7 @@ function cFromDb(r: Record<string, unknown>): Commission {
     ownerPayout: num(r.owner_payout),
     coordinatorFee: numOpt(r.coordinator_fee),
     status: r.status as Commission['status'], createdAt: r.created_at as string,
+    ...(r.note ? { note: r.note as string } : {}),
   }
 }
 
@@ -281,6 +282,8 @@ function cToDb(c: Commission) {
     referral: c.referral, total_income: c.totalIncome, commission_rate: c.commissionRate,
     commission_amount: c.commissionAmount, owner_payout: c.ownerPayout,
     coordinator_fee: c.coordinatorFee ?? null, status: c.status, created_at: c.createdAt,
+    // only sent when set, so saving works before 09_payout_notes.sql adds the column
+    ...(c.note ? { note: c.note } : {}),
   }
 }
 
@@ -570,6 +573,7 @@ export const db = {
   updateCommission: (id: string, u: Partial<Commission>) => {
     const row: Record<string, unknown> = {}
     if (u.status !== undefined) row.status = u.status
+    if (u.note !== undefined) row.note = u.note
     if (u.coordinatorFee !== undefined) row.coordinator_fee = u.coordinatorFee
     if (u.totalIncome !== undefined) row.total_income = u.totalIncome
     if (u.commissionRate !== undefined) row.commission_rate = u.commissionRate

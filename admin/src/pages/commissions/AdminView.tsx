@@ -666,6 +666,7 @@ export default function AdminView() {
                     <td className="py-3">
                       <p className="text-sm font-medium text-navy-800">{booking?.customerName ?? '—'}</p>
                       <p className="text-xs text-navy-400">{booking?.startDate} – {booking?.endDate}</p>
+                      {c.note && <p className="text-[11px] text-indigo-700 mt-0.5 max-w-[320px]">{c.note}</p>}
                     </td>
                     <td className="py-3">
                       <p className="text-sm text-navy-700">{vehicle?.brand} {vehicle?.model}</p>
