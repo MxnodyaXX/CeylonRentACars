@@ -201,7 +201,7 @@ function Recorded({ i, sols, solName, events, onOpenSolution }: {
           <Row ok={swaps.every((w) => w.status === 'closed')} label="Replacement vehicle">
             {swaps.map((w) => {
               const car = w.source === 'fleet' ? vehicles.find((x) => x.id === w.replacementVehicleId)?.vehicleNumber : [w.partnerVehicle, w.partnerReg].filter(Boolean).join(' ');
-              return <p key={w.id}>{car ?? 'Replacement'}: out {when(w.outAt)}{w.backAt ? `, back ${when(w.backAt)} (${w.outcome === 'swapped_back' ? 'swapped back' : 'trip ended'})` : ' — still with the customer'}</p>;
+              return <p key={w.id}>{car ?? 'Replacement'}: out {when(w.outAt)}{w.backAt ? `, back ${when(w.backAt)} (${w.outcome === 'swapped_back' ? 'swapped back' : w.outcome === 'replaced' ? 'changed for another car' : 'trip ended'})` : ' — still with the customer'}</p>;
             })}
           </Row>
         )}

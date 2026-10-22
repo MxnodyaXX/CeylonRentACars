@@ -22,7 +22,13 @@ export interface PriceLine { label: string; amount: number; tone?: 'minus' | 'mu
 export function priceBreakdown(b: Booking, vehicle?: Vehicle) {
   const type = (b.rentalType ?? 'Daily') as RentalType;
   const lines: PriceLine[] = [];
-  if (type !== 'Daily' && b.rentalUnits) {
+  // recovered part-way through a month: the full months, then the days of the month in progress
+  const recovered = type === 'Monthly' && b.checklists?.return?.recovery && b.unitRate;
+  const fullMonths = recovered ? (b.rentalUnits ?? 0) * b.unitRate! : 0;
+  if (recovered && b.totalAmount > fullMonths) {
+    if (b.rentalUnits) lines.push({ label: `${b.rentalUnits} ${b.rentalUnits === 1 ? UNIT[type].one : UNIT[type].many} × ${rs(b.unitRate!)}`, amount: fullMonths });
+    lines.push({ label: 'Part month — days used until the vehicle was recovered', amount: b.totalAmount - fullMonths });
+  } else if (type !== 'Daily' && b.rentalUnits) {
     lines.push({ label: `${b.rentalUnits} ${b.rentalUnits === 1 ? UNIT[type].one : UNIT[type].many} × ${rs(b.unitRate ?? 0)}`, amount: b.totalAmount });
   } else {
     const rate = b.totalDays ? Math.round(b.totalAmount / b.totalDays) : vehicle?.dailyRent ?? 0;
@@ -252,4 +258,36 @@ export function customerDetailsMessage(b: Booking, items: string[], via: 'whatsa
     + (text.length ? ` please reply with: ${text.join('; ')}.` : ' we need copies of your documents.')
     + (photos ? ' Please WhatsApp photos of your NIC/passport and licence to 071 733 3313.' : '')
     + ' Thank you.';
+}
+
+/** Status to show: a booking the company took back (non-payment, fraud…) reads "Recovered", not "Completed" */
+export const shownStatus = (b: Pick<Booking, 'status' | 'checklists'>): Booking['status'] | 'Recovered' =>
+  b.status === 'Completed' && b.checklists?.return?.recovery ? 'Recovered' : b.status;
+
+/** Same day-of-month n months later (31 Jan + 1 → 28/29 Feb), keeping the time of day */
+const addMonths = (d: Date, n: number) => {
+  const y = d.getFullYear(), m = d.getMonth() + n;
+  return new Date(y, m, Math.min(d.getDate(), new Date(y, m + 1, 0).getDate()), d.getHours(), d.getMinutes());
+};
+
+/**
+ * Rent for the time a monthly rental actually ran (e.g. the vehicle was recovered early):
+ * every full calendar month at the monthly rate, plus the days of the month in progress at
+ * that month's day rate (monthly rate ÷ the days in that month). A started day counts, unless
+ * partial days are waived for the booking.
+ */
+export function monthlyRentUsed(start: { date: string; time?: string }, endLocal: string, monthlyRate: number, waivePartialDay = false) {
+  const from = new Date(`${start.date}T${start.time || '00:00'}`);
+  const to = new Date(endLocal);
+  let months = 0;
+  while (months < 1200 && addMonths(from, months + 1) <= to) months++;
+  const periodStart = addMonths(from, months), periodEnd = addMonths(from, months + 1);
+  const monthDays = Math.round((periodEnd.getTime() - periodStart.getTime()) / 86_400_000);
+  const partMs = to.getTime() - periodStart.getTime();
+  let days = partMs <= 0 ? 0 : waivePartialDay ? Math.floor(partMs / 86_400_000) : Math.ceil(partMs / 86_400_000 - 1e-9);
+  if (!months && !days) days = 1;   // at least one day
+  const dayRate = monthlyRate / monthDays;
+  const partRent = Math.round(days * dayRate);
+  return { months, days, monthDays, dayRate, partRent, rent: months * monthlyRate + partRent,
+    from, to, periodStart, periodEnd, partMs: Math.max(0, partMs), waived: waivePartialDay };
 }

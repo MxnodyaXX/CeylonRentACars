@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
-  FileText, History, Loader2, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
+  FileText, History, Loader2, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldAlert, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
 } from 'lucide-react';
 import Modal from './Modal';
 import VehicleImage from './VehicleImage';
@@ -11,14 +11,18 @@ import ExtendRentalModal from './ExtendRentalModal';
 import SwapVehicleModal from './SwapVehicleModal';
 import ExchangeVehicleModal from './ExchangeVehicleModal';
 import BookingBreakdownsTab from '../breakdowns/BookingBreakdownsTab';
-import { earlierKm, legsOf, mainCommission } from '../../lib/exchange';
+import { legsOf, mainCommission } from '../../lib/exchange';
+import { chargedExtraKm } from '../../lib/tripKm';
+import { tripKmFor, useBreakdownStore } from '../../store/useBreakdownStore';
+import { SwapReadingsFix } from '../breakdowns/SwapPanel';
+import UsagePhases from '../breakdowns/UsagePhases';
 import { bookingTiming, StatusPill } from './BookingCard';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { printInvoice } from '../../lib/printInvoice';
 import {
-  CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, rs, uploadBookingFile, newId,
+  CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, rs, uploadBookingFile, newId, shownStatus,
 } from '../../lib/bookingRecord';
 import { durationLabel, UNIT, RentalType } from '../../lib/rentalPeriod';
 import { bookingBill, bookingDue } from '../../lib/credit';
@@ -104,7 +108,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const by = currentUser?.name ?? 'Staff';
   const b = bookings.find((x) => x.id === bookingId);
   const [tab, setTab] = useState<Tab>(page ? 'payments' : 'overview');
-  const [dialog, setDialog] = useState<null | 'pickup' | 'return' | 'extend' | 'swap' | 'exchange'>(null);
+  const [dialog, setDialog] = useState<null | 'pickup' | 'return' | 'recover' | 'extend' | 'swap' | 'exchange'>(null);
 
   if (!b) return null;
   const vehicle = vehicles.find((v) => v.id === b.vehicleId);
@@ -141,7 +145,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
       <button type="button" onClick={copyNo} className="font-mono text-sm font-bold text-navy-800 hover:text-navy-600 inline-flex items-center gap-1" title="Copy booking number">
         {no} <Copy size={12} className="text-navy-300" />
       </button>
-      <StatusPill status={b.status} />
+      <StatusPill status={shownStatus(b)} />
       {b.rentalType && b.rentalType !== 'Daily' && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">{b.rentalType}</span>}
       {b.insertedByAdmin && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Owner entry</span>}
     </>
@@ -233,9 +237,10 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
         </>
       )}
       {b.status === 'Ongoing' && (
-        <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button>
+        <>{isAdmin() && <button type="button" onClick={() => setDialog('recover')} title="The company takes the vehicle back (non-payment, fraud…)" className={`${smallBtn} text-red-700 hover:bg-red-50 border border-red-200`}><ShieldAlert size={13} /> Recover vehicle</button>}
+        <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button></>
       )}
-      {b.status === 'Completed' && (
+      {shownStatus(b) === 'Completed' && (
         <button type="button" onClick={() => sendWhatsApp(feedbackMessage(b.customerName.trim().split(' ')[0], vehicle ? `${vehicle.brand} ${vehicle.model}` : 'your vehicle', b.startDate, b.endDate, linkFor(b.vehicleId, b.customerName)), 'review request')}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><Star size={15} /> Ask for a review</button>
       )}
@@ -264,7 +269,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
       <div className="rounded-2xl border border-navy-100 bg-white px-4 py-2.5 flex flex-wrap items-center gap-2">{actionButtons}</div>
     </div>
   ) : (
-    <Modal open onClose={onClose} title="Booking details" width="max-w-4xl" headerActions={openInTab}>
+    <Modal open onClose={onClose} title="Booking details" width="max-w-6xl" headerActions={openInTab}>
       <div className="space-y-4 -mt-1">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -286,7 +291,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
     <>
       {body}
 
-      {(dialog === 'pickup' || dialog === 'return') && <HandoverModal booking={b} kind={dialog} onClose={() => setDialog(null)} />}
+      {(dialog === 'pickup' || dialog === 'return' || dialog === 'recover') && <HandoverModal booking={b} kind={dialog} onClose={() => setDialog(null)} />}
       {dialog === 'extend' && <ExtendRentalModal booking={b} onClose={() => setDialog(null)} />}
       {dialog === 'swap' && <SwapVehicleModal booking={b} onClose={() => setDialog(null)} />}
       {dialog === 'exchange' && <ExchangeVehicleModal booking={b} onClose={() => setDialog(null)} />}
@@ -472,9 +477,12 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
   const [pay, setPay] = useState({ kind: 'Payment' as PaymentKind, amount: price.due || 0, method: 'Cash', receiptNo: '', note: '' });
   const [dep, setDep] = useState({ returned: held, deduction: 0, method: 'Cash', notes: '' });
   const [charge, setCharge] = useState({ kind: 'Traffic fine' as ChargeKind, amount: 0, date: today(), note: '' });
-  const pickupKm = b.checklists?.pickup?.odometer, returnKm = b.checklists?.return?.odometer;
-  const extraKm = pickupKm !== undefined && returnKm !== undefined ? Math.max(0, returnKm - pickupKm + earlierKm(b) - includedKm) : 0;
-  const extraKmCharged = (b.charges ?? []).some((c) => c.kind === 'Other' && /extra km/i.test(c.note ?? ''));
+  // whole-trip km (breakdown replacements included); km entered later can top up what was already billed
+  useBreakdownStore((s) => s.swaps);
+  const trip = b.checklists?.return ? tripKmFor(b) : undefined;
+  const extraKm = trip?.total != null ? Math.max(0, trip.total - includedKm) : 0;
+  const billedKm = chargedExtraKm(b);
+  const kmToBill = Math.max(0, extraKm - billedKm);
 
   const sign = (k: PaymentKind) => (k === 'Refund' || k === 'Deposit returned' ? -1 : 1);
 
@@ -582,11 +590,19 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
               ))}
             </ul>
           )}
-          {extraKm > 0 && !extraKmCharged && (
-            <button type="button" onClick={() => addCharge(b.id, { kind: 'Other', amount: extraKm * extraKmRate, date: today(), note: `Extra km: ${extraKm.toLocaleString()} km × Rs ${extraKmRate}`, by })}
+          {kmToBill > 0 && (
+            <button type="button" onClick={() => addCharge(b.id, { kind: 'Other', amount: kmToBill * extraKmRate, date: today(),
+                      note: `Extra km: ${kmToBill.toLocaleString()} km × Rs ${extraKmRate}${billedKm ? ` (${trip!.total!.toLocaleString()} km over the trip, ${billedKm.toLocaleString()} extra km billed before)` : ''}`, by })}
                     className="w-full mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900 text-left">
-              Handover shows <b>{extraKm.toLocaleString()} extra km</b> — add {rs(extraKm * extraKmRate)} to the bill
+              {billedKm
+                ? <>The trip was <b>{trip!.total!.toLocaleString()} km</b> in all cars — <b>{kmToBill.toLocaleString()} more extra km</b> than billed. Add {rs(kmToBill * extraKmRate)} to the bill</>
+                : <>Handover shows <b>{extraKm.toLocaleString()} extra km</b> — add {rs(extraKm * extraKmRate)} to the bill</>}
             </button>
+          )}
+          {trip && !trip.complete && trip.missing.some((m) => m.swapId) && (
+            <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900">
+              Odometer readings of a breakdown replacement are missing, so the km of that car aren't on the bill yet — enter them on the Vehicle tab.
+            </p>
           )}
           <div className="grid grid-cols-2 gap-2">
             <select className="input !py-1.5 text-sm" value={charge.kind} onChange={(e) => setCharge((x) => ({ ...x, kind: e.target.value as ChargeKind }))}>{CHARGE_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
@@ -648,8 +664,10 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
   b: Booking; vehicle?: import('../../types').Vehicle; legacy: import('../../types').VehicleHandover[]; onPickup: () => void; onReturn: () => void;
 }) {
   const included = (vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1);
-  const out = b.checklists?.pickup?.odometer, back = b.checklists?.return?.odometer;
-  const driven = out !== undefined && back !== undefined ? back - out + earlierKm(b) : undefined;
+  const swaps = useBreakdownStore((s) => s.swaps);
+  const trip = tripKmFor(b);
+  const driven = b.checklists?.return ? trip.total : undefined;
+  const gapSwaps = swaps.filter((w) => trip.missing.some((m) => m.swapId === w.id));
   const ins = vehicle?.insurance;
   const insExpiresSoon = ins?.expiryDate && ins.expiryDate < b.endDate;
   return (
@@ -658,12 +676,15 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
         <ChecklistCard title="Pickup (handover)" list={b.checklists?.pickup} onRecord={onPickup} recordLabel="Hand over & start" canRecord={b.status === 'Confirmed'} />
         <ChecklistCard title="Return" list={b.checklists?.return} onRecord={onReturn} recordLabel="Receive & complete" canRecord={b.status === 'Ongoing'} />
       </div>
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className={`grid gap-3 ${trip.legs.length > 1 ? "" : "md:grid-cols-2"}`}>
         <Card title="Mileage" icon={ShieldCheck}>
           <KV k="Included" v={`${included.toLocaleString()} km`} />
-          <KV k="Driven" v={driven !== undefined ? `${driven.toLocaleString()} km` : 'After return'} />
+          {trip.legs.length > 1 && <div className="py-1"><UsagePhases trip={trip} /></div>}
+          <KV k={trip.legs.length > 1 ? 'Driven, all cars' : 'Driven'} v={driven !== undefined ? `${driven.toLocaleString()} km` : b.checklists?.return ? `${trip.known.toLocaleString()} km + missing readings` : 'After return'} warn={!!b.checklists?.return && driven === undefined} />
           <KV k="Extra km" v={driven !== undefined ? `${Math.max(0, driven - included).toLocaleString()} km × ${rs(vehicle?.extraKmRate ?? 50)}` : '—'} warn={driven !== undefined && driven > included} />
+          {trip.garageKm > 0 && <KV k="At the garage (not charged)" v={`${trip.garageKm.toLocaleString()} km`} />}
           {b.quotation?.totalKm ? <KV k="Quoted distance" v={`${b.quotation.totalKm.toLocaleString()} km`} /> : null}
+          {gapSwaps.map((w) => <div key={w.id} className="mt-2"><SwapReadingsFix w={w} /></div>)}
         </Card>
         <Card title="Insurance" icon={ShieldCheck}>
           <KV k="Provider" v={ins?.provider} />

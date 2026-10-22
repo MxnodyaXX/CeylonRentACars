@@ -96,7 +96,7 @@ export interface BdSwap {
   outAt: string; outBy: string; outLocation?: string;
   originalOdometer?: number; originalFuel?: string; replacementOdometerOut?: number; replacementFuelOut?: string;
   replacementRate?: number; outNotes?: string;
-  outcome?: 'swapped_back' | 'customer_kept'; backAt?: string; backBy?: string; backLocation?: string;
+  outcome?: 'swapped_back' | 'customer_kept' | 'replaced'; backAt?: string; backBy?: string; backLocation?: string;
   replacementOdometerIn?: number; replacementFuelIn?: string; originalOdometerBack?: number; originalFuelBack?: string;
   replacementTo?: string; days?: number; replacementPayout?: number; originalDeduction?: number;
   commissionId?: string; adjustmentId?: string; backNotes?: string;

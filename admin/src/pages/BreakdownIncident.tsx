@@ -2,19 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, Camera, Car, CheckCircle2, ClipboardList, FileText, History, Lock, MessageCircle, Plus, Printer,
-  Scale, ShieldAlert, Stethoscope, Truck, Users, Wrench,
+  Gauge, Scale, ShieldAlert, Stethoscope, Truck, Users, Wrench,
 } from 'lucide-react';
 import Header from '../components/layout/Header';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
-import { useBreakdownStore, forIncident } from '../store/useBreakdownStore';
+import { useBreakdownStore, forIncident, tripKmFor } from '../store/useBreakdownStore';
 import { leftoverSolutions, BdIncident, BdCategory, BdSolution, CATEGORY_LABEL, SOLUTION_LABEL, SOLUTION_STATUS_LABEL, SolutionKind, STATUS_LABEL, UNSAFE_CATEGORIES, BdDocument, PHASE_LABEL, phaseOf } from '../lib/breakdowns';
 import VehicleReadiness from '../components/breakdowns/VehicleReadiness';
 import VehicleBreakdownHistory from '../components/breakdowns/VehicleBreakdownHistory';
 import IncidentTimeline from '../components/breakdowns/IncidentTimeline';
 import { ledgerFor } from '../lib/breakdownLedger';
 import { legsOf } from '../lib/exchange';
-import { uploadBookingFile } from '../lib/bookingRecord';
+import { bookingNo, uploadBookingFile } from '../lib/bookingRecord';
+import UsagePhases from '../components/breakdowns/UsagePhases';
 import { openWhatsApp } from '../lib/whatsapp';
 import { printBreakdownReport } from '../lib/printBreakdown';
 import { toast } from '../store/useToast';
@@ -333,7 +334,16 @@ function Vehicles({ i }: { i: BdIncident }) {
   const legs = b ? legsOf(b) : [];
   const car = (id: string) => vehicles.find((v) => v.id === id);
   const partners = forIncident(store.solutions, i.id).filter((s) => s.kind === 'partner_vehicle' && (s.partnerVehicle || s.partnerReg));
+  const v0 = vehicles.find((v) => v.id === b?.vehicleId);
+  const trip = b ? tripKmFor(b) : undefined;
   return (
+    <>
+    {b && trip && (
+      <Section title="Vehicle usage phases & km" icon={Gauge}>
+        <p className="text-[11px] text-navy-400">Every car the customer drove on booking {bookingNo(b)}, from all its breakdowns — the final bill adds the km of every phase.</p>
+        <UsagePhases trip={trip} includedKm={(v0?.includedKmPerDay ?? 100) * (b.totalDays || 1)} kmRate={v0?.extraKmRate ?? 50} />
+      </Section>
+    )}
     <Section title="Vehicles on this booking" icon={Truck}>
       <p className="text-[11px] text-navy-400">Every car the customer had, in order. The booking keeps its ID; each owner earns for their own days. History is never deleted.</p>
       <ol className="space-y-2">
@@ -355,6 +365,7 @@ function Vehicles({ i }: { i: BdIncident }) {
         ))}
       </ol>
     </Section>
+    </>
   );
 }
 

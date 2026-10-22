@@ -479,5 +479,36 @@ ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`
 await db.exec(sql('security/rollback/09_rollback_payout_notes.sql'));
 ok((await db.query(`select count(*) n from information_schema.columns where table_name = 'commissions' and column_name = 'note'`)).rows[0].n == 0, 'rollback removes the column');
 
+console.log('\n11 — vehicle recovery, credit and bad debt');
+await db.exec(sql('security/11_vehicle_recovery.sql'));
+await db.exec(sql('security/11_vehicle_recovery.sql'));   // safe to re-run
+const recovery = `{"return": {"at": "2026-10-22T06:50:00Z", "by": "Ceylon Admin", "odometer": 20000, "fuel": "Full", "items": {},
+  "recovery": {"reason": "Non-payment", "details": "Rent unpaid, false NIC", "policeRef": "Kandy 45/2026", "customerFlagged": true}}}`;
+const bk = async (id) => (await db.query(`select recovered, recovery_reason, bad_debt, credit_amount, checklists from bookings where id = '${id}'`)).rows[0];
+ok((await bk('bA')).recovered === false, 'bookings are not recovered by default');
+ok(/Only an admin can record/.test((await as('A', () => tryQ(`update bookings set checklists = '${recovery}'::jsonb where id = 'bA'`))) ?? ''), "an owner can't record a recovery on their own car's booking");
+ok(/Only an admin can write off/.test((await as('A', () => tryQ(`update bookings set bad_debt = 5000 where id = 'bA'`))) ?? ''), "an owner can't write money off");
+ok((await as('admin', () => tryQ(`update bookings set status = 'Completed', total_amount = 171613, checklists = '${recovery}'::jsonb,
+  bad_debt = 100000, credit_amount = 71613, credit_settled = false where id = 'bA'`))) === null, 'admin records the recovery, the write-off and the credit');
+const rec = await bk('bA');
+ok(rec.recovered === true && rec.recovery_reason === 'Non-payment', 'the database marks it recovered, with the reason');
+ok(/negative|check constraint/i.test((await as('admin', () => tryQ(`update bookings set bad_debt = -1 where id = 'bA'`))) ?? ''), 'bad debt cannot be negative');
+ok(/negative|check constraint/i.test((await as('admin', () => tryQ(`update bookings set credit_amount = -1 where id = 'bA'`))) ?? ''), 'credit cannot be negative');
+ok((await as('A', () => tryQ(`update bookings set notes = 'called the customer' where id = 'bA'`))) === null, 'the owner can still edit other things on that booking');
+ok(/Only an admin can record/.test((await as('A', () => tryQ(`update bookings set checklists = checklists #- '{return,recovery}' where id = 'bA'`))) ?? ''), "…but can't remove the recovery");
+ok(!!(await as('admin', () => tryQ(`update bookings set recovered = false where id = 'bA'`))), 'the recovered column is filled by the database only');
+const vr = await as('admin', () => db.query(`select * from vehicle_recoveries`));
+ok(vr.rows.length === 1 && vr.rows[0].booking_ref.startsWith('CRC-') && Number(vr.rows[0].bad_debt) === 100000
+   && Number(vr.rows[0].credit_outstanding) === 71613 && vr.rows[0].police_ref === 'Kandy 45/2026', 'vehicle_recoveries lists it with the credit, bad debt and police ref');
+ok((await as('A', () => ids('select booking_id as id from vehicle_recoveries'))).join() === 'bA', "the car's owner sees the recovery of their car");
+ok((await as('B', () => ids('select booking_id as id from vehicle_recoveries'))).length === 0, "another owner doesn't");
+ok(!!(await as('anon', () => tryQ('select * from vehicle_recoveries'))), 'website visitors have no access');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 11');
+await db.exec(sql('security/rollback/11_rollback_vehicle_recovery.sql'));
+const after = await db.query(`select bad_debt, credit_amount, checklists -> 'return' -> 'recovery' ->> 'reason' as reason from bookings where id = 'bA'`);
+ok((await db.query(`select count(*) n from information_schema.columns where table_name = 'bookings' and column_name = 'recovered'`)).rows[0].n == 0
+   && Number(after.rows[0].bad_debt) === 100000 && after.rows[0].reason === 'Non-payment', 'rollback removes the rules and keeps the data');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

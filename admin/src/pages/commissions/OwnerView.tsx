@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { shownStatus } from '../../lib/bookingRecord';
 import Select from '../../components/ui/Select';
 import DateInput from '../../components/ui/DateInput';
 import Modal from '../../components/ui/Modal';
@@ -109,7 +110,7 @@ function RentDetailModal({ booking, handovers, onClose }: {
             </p>
             <p className="text-xs text-navy-400">{vehicle?.vehicleNumber} · {booking.startDate} to {booking.endDate} · {booking.totalDays} day{booking.totalDays !== 1 ? 's' : ''}</p>
           </div>
-          <StatusBadge status={booking.status} />
+          <StatusBadge status={shownStatus(booking)} />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">

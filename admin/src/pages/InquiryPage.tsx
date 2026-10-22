@@ -9,6 +9,7 @@ import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { toast } from '../store/useToast';
 import StatusBadge from '../components/ui/StatusBadge';
+import { shownStatus } from '../lib/bookingRecord';
 import Modal from '../components/ui/Modal';
 import Select from '../components/ui/Select';
 import { ContactLog } from '../components/ui/InquiryContact';
@@ -399,7 +400,7 @@ export default function InquiryPage() {
                     return (
                       <li key={b.id} className="py-2 flex items-center justify-between gap-2">
                         <span className="text-navy-700 truncate">{v ? `${v.brand} ${v.model}` : 'Vehicle'} · {prettyDate(b.startDate)}</span>
-                        <StatusBadge status={b.status} />
+                        <StatusBadge status={shownStatus(b)} />
                       </li>
                     );
                   })}

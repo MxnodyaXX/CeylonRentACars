@@ -6,6 +6,7 @@
 import type { Booking, Vehicle } from '../types';
 import { bookingNo, depositHeld, ledgerOf, priceBreakdown, rs } from './bookingRecord';
 import { earlierKm } from './exchange';
+import { tripKmProvider } from './tripKm';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const day = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
@@ -16,7 +17,10 @@ export const invoiceNo = (b: Booking) => bookingNo(b).replace(/^CRC-/, 'INV-');
 export function invoiceHtml(b: Booking, vehicle?: Vehicle): string {
   const price = priceBreakdown(b, vehicle);
   const pickup = b.checklists?.pickup, ret = b.checklists?.return;
-  const driven = pickup && ret ? ret.odometer - pickup.odometer + earlierKm(b) : undefined;
+  // every car the customer drove (breakdown replacements, exchanges), not only the final one
+  const trip = tripKmProvider.of?.(b);
+  const driven = trip?.total ?? (pickup && ret ? ret.odometer - pickup.odometer + earlierKm(b) : undefined);
+  const multi = trip && trip.legs.length > 1 ? trip : undefined;
   const included = (vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1);
   const payments = ledgerOf(b).filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
   const held = depositHeld(b);
@@ -50,7 +54,7 @@ export function invoiceHtml(b: Booking, vehicle?: Vehicle): string {
   .foot { margin-top: 28px; font-size: 11px; color: #71717A; text-align: center; }
 </style></head><body>
   <div class="top">
-    <div><div class="brand">CEYLON RENT A CARS</div><h1>Invoice</h1><div class="muted">ceylonrentacars.com · 071 733 3313</div></div>
+    <div><div class="brand">CEYLON RENT A CARS</div><h1>${ret?.recovery ? 'Statement of account' : 'Invoice'}</h1><div class="muted">ceylonrentacars.com · 071 733 3313</div></div>
     <div class="meta"><b>${invoiceNo(b)}</b><div>Booking ${bookingNo(b)}</div><div>Issued ${day(new Date().toISOString())}</div></div>
   </div>
   <div class="grid">
@@ -61,11 +65,15 @@ export function invoiceHtml(b: Booking, vehicle?: Vehicle): string {
       <div>In: ${ret ? dayTime(ret.at) : `${day(b.endDate)}${b.endTime ? ' ' + esc(b.endTime) : ''}`}${b.dropLocation ? ` · ${esc(b.dropLocation)}` : ''}</div>
       <div class="muted">${b.totalDays} day${b.totalDays === 1 ? '' : 's'}</div></div>
     <div class="box"><h3>Mileage</h3>
-      ${pickup && ret ? `<div>${pickup.odometer.toLocaleString()} → ${ret.odometer.toLocaleString()} km</div><div>${(driven ?? 0).toLocaleString()} km driven · ${included.toLocaleString()} km included</div>
+      ${multi ? `${multi.legs.map((l) => `<div>${esc(l.car)}: ${l.km != null ? `${l.km.toLocaleString()} km` : '<span class="muted">not recorded</span>'}${l.role === 'earlier' ? '' : ` <span class="muted">(${l.from?.toLocaleString() ?? '?'} → ${l.to?.toLocaleString() ?? '?'})</span>`}</div>`).join('')}
+      <div>${multi.total != null ? `<b>${multi.total.toLocaleString()} km</b> driven in all` : `${multi.known.toLocaleString()} km recorded`} · ${included.toLocaleString()} km included</div>
+      ${multi.total != null ? `<div>${Math.max(0, multi.total - included).toLocaleString()} extra km</div>` : ''}`
+      : pickup && ret ? `<div>${pickup.odometer.toLocaleString()} → ${ret.odometer.toLocaleString()} km</div><div>${(driven ?? 0).toLocaleString()} km driven · ${included.toLocaleString()} km included</div>
       <div>${Math.max(0, (driven ?? 0) - included).toLocaleString()} extra km</div>` : '<div class="muted">Not recorded</div>'}
       <div class="muted">Fuel: ${esc(pickup?.fuel ?? '—')} out · ${esc(ret?.fuel ?? '—')} in</div></div>
   </div>
 
+  ${ret?.recovery ? `<p class="box" style="border-color:#FCA5A5;background:#FEF2F2;color:#991B1B"><b>Vehicle recovered by the company</b> on ${dayTime(ret.at)} — ${esc(ret.recovery.reason.toLowerCase())}. The rental ended on that date; the balance below remains payable.</p>` : ''}
   <table><thead><tr><th>Description</th><th class="num">Amount</th></tr></thead><tbody>${lineRows}</tbody></table>
   <table class="totals">
     <tr><td>Total</td><td class="num">${rs(price.bill)}</td></tr>

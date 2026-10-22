@@ -8,7 +8,7 @@ import { vehicleBodyColor } from './CarSVG';
 import { bookingStartMs, bookingEndMs } from '../../lib/availability';
 import { bookingBill, bookingDue, bookingPaid } from '../../lib/credit';
 import { durationLabel } from '../../lib/rentalPeriod';
-import { missingInfo } from '../../lib/bookingRecord';
+import { missingInfo, shownStatus } from '../../lib/bookingRecord';
 import type { Booking, Owner, Vehicle } from '../../types';
 
 /* ---------- formatting ---------- */
@@ -29,7 +29,8 @@ const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((w) 
 
 /* ---------- status & timing ---------- */
 
-const STATUS: Record<Booking['status'], { pill: string; dot: string }> = {
+const STATUS: Record<Booking['status'] | 'Recovered', { pill: string; dot: string }> = {
+  Recovered: { pill: 'bg-red-50 text-red-700 ring-red-200', dot: 'bg-red-500' },
   Confirmed: { pill: 'bg-sky-50 text-sky-700 ring-sky-200', dot: 'bg-sky-500' },
   Ongoing:   { pill: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500 animate-pulse' },
   Completed: { pill: 'bg-navy-50 text-navy-500 ring-navy-100', dot: 'bg-navy-300' },
@@ -37,7 +38,7 @@ const STATUS: Record<Booking['status'], { pill: string; dot: string }> = {
 };
 const TYPE_ICON = { Hourly: CalendarClock, Daily: CalendarDays, Monthly: CalendarRange };
 
-export function StatusPill({ status }: { status: Booking['status'] }) {
+export function StatusPill({ status }: { status: Booking['status'] | 'Recovered' }) {
   const s = STATUS[status];
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${s.pill}`}>
@@ -50,7 +51,7 @@ type Tone = 'live' | 'soon' | 'warn' | 'muted';
 /** Where the rental is right now: progress through a live rental, time until it starts, or overdue */
 export function bookingTiming(b: Booking, now = Date.now()): { text: string; tone: Tone; pct?: number } {
   if (b.status === 'Cancelled') return { text: 'Cancelled', tone: 'muted' };
-  if (b.status === 'Completed') return { text: `Returned ${fmtDate(b.endDate)}`, tone: 'muted' };
+  if (b.status === 'Completed') return { text: `${b.checklists?.return?.recovery ? 'Recovered' : 'Returned'} ${fmtDate(b.endDate)}`, tone: b.checklists?.return?.recovery ? 'warn' : 'muted' };
   const s = bookingStartMs(b), e = bookingEndMs(b);
   const today = new Date(now);
   const hourly = b.rentalType === 'Hourly';
@@ -273,7 +274,7 @@ export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onCom
           </p>
           <p className="text-[11px] text-navy-500 truncate">{b.customerName}<span className="text-navy-300"> · {b.customerPhone}</span></p>
         </div>
-        <StatusPill status={b.status} />
+        <StatusPill status={shownStatus(b)} />
       </div>
 
       {/* period · timing */}
@@ -321,7 +322,7 @@ export function BookingRow({ booking: b, vehicle, owner, onOpen, onStart, onComp
           <div className="min-w-0">
             <p className="text-[15px] font-bold text-navy-900 truncate">{vehicle ? `${vehicle.brand} ${vehicle.model}` : 'Vehicle removed'}</p>
             <span className="inline-block mt-0.5 rounded-md bg-navy-50 px-1.5 py-0.5 font-mono text-[11px] text-navy-500">{vehicle?.vehicleNumber ?? '—'}</span>
-            <div className="mt-1"><StatusPill status={b.status} /></div>
+            <div className="mt-1"><StatusPill status={shownStatus(b)} /></div>
           </div>
         </div>
 

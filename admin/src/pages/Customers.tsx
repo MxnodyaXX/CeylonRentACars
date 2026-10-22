@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import Header from '../components/layout/Header';
 import Modal from '../components/ui/Modal';
 import StatusBadge from '../components/ui/StatusBadge';
+import { shownStatus } from '../lib/bookingRecord';
 import LocationInput from '../components/ui/LocationInput';
 import {
   Plus, Search, User, Phone, Mail, MapPin, CreditCard,
@@ -341,7 +342,7 @@ export default function Customers() {
                               </div>
 
                               {/* Status */}
-                              <StatusBadge status={b.status} size="sm" />
+                              <StatusBadge status={shownStatus(b)} size="sm" />
 
                               {/* More info */}
                               <button
@@ -548,7 +549,7 @@ export default function Customers() {
                   <p className="text-sm font-bold text-navy-800 truncate">{v ? `${v.brand} ${v.model}` : 'Vehicle'} <span className="font-normal text-navy-400">· {v?.vehicleNumber}</span></p>
                   <p className="text-xs text-navy-400">{owner ? `Owner: ${owner.name}` : ''}</p>
                 </div>
-                <StatusBadge status={b.status} />
+                <StatusBadge status={shownStatus(b)} />
               </div>
 
               {/* Rental */}

@@ -6,6 +6,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import Modal from '../components/ui/Modal';
 import StatusBadge from '../components/ui/StatusBadge';
+import { shownStatus } from '../lib/bookingRecord';
 import VehicleImage from '../components/ui/VehicleImage';
 import {
   OperationalAlerts, MoneyInsights, VehiclePerformance,
@@ -554,7 +555,7 @@ export default function Dashboard() {
                 </div>
                 <div className="text-right flex-shrink-0">
                   <p className="text-sm font-bold text-red-600">Rs {b.balance.toLocaleString()}</p>
-                  <StatusBadge status={b.status} />
+                  <StatusBadge status={shownStatus(b)} />
                 </div>
               </div>
             ))}

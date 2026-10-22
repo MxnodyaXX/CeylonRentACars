@@ -14,7 +14,7 @@ import { useBreakdownStore } from '../store/useBreakdownStore';
 import VehicleReviews from '../components/ui/VehicleReviews';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
-import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Hash, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { Vehicle, VehicleStatus } from '../types';
 import { isInsuranceComplete, clearInsuranceReminder } from '../lib/insuranceReminder';
 import { vehicleNetRevenue } from '../lib/revenue';
@@ -469,15 +469,9 @@ export default function Vehicles() {
 
         {/* Footer: revenue + actions */}
         <div className="flex items-center justify-between border-t border-navy-50 pt-3">
-          <div className="flex items-center gap-3">
-            <div>
-              <p className="text-xs text-navy-400">Revenue</p>
-              <p className="text-sm font-bold text-navy-700">Rs {vehicleNetRevenue(v, bookings).toLocaleString()}</p>
-            </div>
-            <div className="flex items-center gap-1 text-navy-400">
-              <Hash size={11} />
-              <span className="text-xs font-semibold text-navy-500">{v.rentCount ?? 0} rentals</span>
-            </div>
+          <div className="min-w-0">
+            <p className="text-xs text-navy-400 whitespace-nowrap">Revenue · {v.rentCount ?? 0} rental{(v.rentCount ?? 0) === 1 ? '' : 's'}</p>
+            <p className="text-sm font-bold text-navy-700 whitespace-nowrap">Rs {vehicleNetRevenue(v, bookings).toLocaleString()}</p>
           </div>
           {mine && (
             <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
@@ -554,7 +548,7 @@ export default function Vehicles() {
       {isOwnerRole ? (
         <>
           <SectionLabel count={myFiltered.length}>My Vehicles</SectionLabel>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1700px]:grid-cols-5 gap-4 mb-8">
             {myFiltered.length > 0
               ? myFiltered.map((v) => renderCard(v, true))
               : <div className="col-span-3 text-center py-10 text-navy-400 text-sm">No vehicles under your ownership.</div>
@@ -564,14 +558,14 @@ export default function Vehicles() {
           {othersFiltered.length > 0 && (
             <>
               <SectionLabel count={othersFiltered.length}>Other Fleet Vehicles</SectionLabel>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1700px]:grid-cols-5 gap-4">
                 {othersFiltered.map((v) => renderCard(v, false))}
               </div>
             </>
           )}
         </>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1700px]:grid-cols-5 gap-4">
           {filtered.map((v) => renderCard(v, true))}
           {filtered.length === 0 && (
             <div className="col-span-3 text-center py-16 text-navy-400 text-sm">No vehicles found.</div>

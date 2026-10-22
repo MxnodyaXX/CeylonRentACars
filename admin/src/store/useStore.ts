@@ -1117,7 +1117,7 @@ export const useStore = create<AppState>()(
         const pickupKm = kind === 'return' ? b.checklists?.pickup?.odometer : undefined;
         const text = kind === 'pickup'
           ? `Vehicle handed over — ${list.odometer.toLocaleString()} km, fuel ${list.fuel}`
-          : `Vehicle returned — ${list.odometer.toLocaleString()} km${pickupKm ? ` (${(list.odometer - pickupKm).toLocaleString()} km driven)` : ''}, fuel ${list.fuel}`;
+          : `${list.recovery ? `Vehicle recovered by the company (${list.recovery.reason.toLowerCase()}: ${list.recovery.details}${list.recovery.policeRef ? `; police ref ${list.recovery.policeRef}` : ''})` : 'Vehicle returned'} — ${list.odometer.toLocaleString()} km${pickupKm ? ` (${(list.odometer - pickupKm).toLocaleString()} km driven)` : ''}, fuel ${list.fuel}`;
         const vehicleUpdates: Partial<Vehicle> = { status: kind === 'pickup' ? 'Ongoing' : keepMaintenance(b.vehicleId, 'Available'), ...(list.odometer > (vehicle?.mileage ?? 0) ? { mileage: list.odometer } : {}) };
         set((x) => ({
           handovers: [...x.handovers, handover],
@@ -1129,7 +1129,8 @@ export const useStore = create<AppState>()(
         });
         sync(() => db.insertHandover(handover));
         sync(() => db.updateVehicle(b.vehicleId, vehicleUpdates));
-        toast.success(kind === 'pickup' ? 'Rental started' : 'Rental completed', `${b.customerName}: ${text.toLowerCase()}.`);
+        if (list.recovery) toast.warning('Vehicle recovered', `${b.customerName}'s rental is closed as Recovered.`);
+        else toast.success(kind === 'pickup' ? 'Rental started' : 'Rental completed', `${b.customerName}: ${text.toLowerCase()}.`);
       },
 
       // Settle a customer's credit due — the outstanding amount has been collected,

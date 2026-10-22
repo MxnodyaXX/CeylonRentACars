@@ -225,6 +225,16 @@ export interface HandoverChecklist {
   photos?: string[];      // storage paths
   signature?: string;     // customer's signature (data URL)
   notes?: string;
+  /** Set when the company took the vehicle back (non-payment, fraud…) — the booking shows as "Recovered" */
+  recovery?: VehicleRecovery;
+}
+
+export type RecoveryReason = 'Non-payment' | 'Fraud / false details' | 'Agreement broken' | 'Misuse / unsafe use' | 'Not returned on time' | 'Other';
+export interface VehicleRecovery {
+  reason: RecoveryReason;
+  details: string;
+  policeRef?: string;          // police complaint / entry number, if one was made
+  customerFlagged?: boolean;   // added to the do-not-rent list at recovery
 }
 
 export type ChargeKind = 'Traffic fine' | 'Toll' | 'Parking' | 'Damage' | 'Fuel' | 'Late return' | 'Cleaning' | 'Other';

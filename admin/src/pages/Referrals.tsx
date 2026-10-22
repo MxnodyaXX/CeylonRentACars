@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import StatusBadge from '../components/ui/StatusBadge';
+import { shownStatus } from '../lib/bookingRecord';
 import {
   HandCoins, Users, Clock, CheckCircle2, ChevronDown, Search,
   Wallet, CalendarClock, Crown, BellRing, ArrowDownLeft, ArrowUpRight,
@@ -84,7 +85,7 @@ function RecordsTable({ records, action, onToggle, vehicleLabel, leadColumn }: {
               <td className="py-2 text-navy-600">{r.booking.customerName}</td>
               <td className="py-2 text-navy-600">{vehicleLabel(r.booking.vehicleId)}</td>
               <td className="py-2 text-navy-500">{r.booking.startDate} → {r.booking.endDate}</td>
-              <td className="py-2 text-center"><StatusBadge status={r.booking.status} /></td>
+              <td className="py-2 text-center"><StatusBadge status={shownStatus(r.booking)} /></td>
               <td className="py-2 text-right font-semibold text-amber-700">Rs {r.fee.toLocaleString()}</td>
               <td className="py-2 text-center">
                 {!r.payable ? (

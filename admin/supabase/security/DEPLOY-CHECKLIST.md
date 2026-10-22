@@ -291,3 +291,24 @@ Breakdown replacements also show on the Bookings calendar (purple) for admins an
       It fills in the reason for breakdown payouts already recorded and sends those owners one alert.
 - [ ] Run `verify.sql` → still 0 FAIL.
 - [ ] Push the admin.
+
+## Part 8 — mileage on every breakdown swap (after Part 7)
+
+- [ ] SQL Editor → run `10_swap_mileage.sql` (undo: `rollback/10_rollback_swap_mileage.sql`).
+      New swaps need their odometer readings; the last query lists older swaps still missing some —
+      fill those in from the app (Breakdown → Vehicles → Correct).
+- [ ] Run `verify.sql` → still 0 FAIL.
+
+## Part 9 — vehicle recovery, credit and bad debt (after Part 8)
+
+"Recover vehicle" on an ongoing booking: the company takes the car back (non-payment, fraud…).
+What's still owed is kept as customer credit and/or written off as bad debt.
+
+- [ ] SQL Editor → run `11_vehicle_recovery.sql` (undo: `rollback/11_rollback_vehicle_recovery.sql`).
+      Adds `bookings.recovered` / `recovery_reason` (filled by the database), refuses negative credit or
+      bad debt, lets only admins record a recovery or write money off, and adds the `vehicle_recoveries` view.
+      The last query lists recoveries recorded so far (empty the first time).
+- [ ] Run `verify.sql` → still 0 FAIL.
+- [ ] Push the admin.
+- [ ] Check: Recover vehicle on a test booking → the booking shows "Recovered";
+      `select * from vehicle_recoveries` shows it with its credit / bad debt.

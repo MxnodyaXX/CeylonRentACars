@@ -10,6 +10,7 @@ import Select from '../components/ui/Select';
 import DateTimeInput from '../components/ui/DateTimeInput';
 import LocationInput from '../components/ui/LocationInput';
 import StatusBadge from '../components/ui/StatusBadge';
+import { shownStatus } from '../lib/bookingRecord';
 import InvoiceModal from '../components/ui/InvoiceModal';
 import {
   Truck, RotateCcw, CheckCircle2, MapPin, Gauge, Fuel,
@@ -247,7 +248,7 @@ export default function Handovers() {
                       <p className="text-xs text-navy-400">{b.customerPhone}</p>
                     </div>
                   </div>
-                  <StatusBadge status={b.status} size="md" />
+                  <StatusBadge status={shownStatus(b)} size="md" />
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -863,10 +864,11 @@ export default function Handovers() {
                               max={remaining}
                               value={payBadDebt}
                               onChange={(e) => setPayBadDebt(Math.min(remaining, Math.max(0, Number(e.target.value))))}
+                              disabled={!isAdmin()}   // the database only lets admins write money off (11_vehicle_recovery.sql)
                               className="input pl-9"
                             />
                           </div>
-                          <p className="text-[10px] text-red-500 mt-1">This amount will be written off as unrecoverable.</p>
+                          <p className="text-[10px] text-red-500 mt-1">{isAdmin() ? 'This amount will be written off as unrecoverable.' : 'Only an admin can write off bad debt — what is unpaid goes to customer credit.'}</p>
                         </div>
 
                         {/* Step 6 — Credit transfer (auto) */}
