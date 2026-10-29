@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Booking, VehicleHandover } from '../types';
 import { durationLabel, rateLine } from '../lib/rentalPeriod';
+import { bookingDue } from '../lib/credit';
 
 const FUEL_LEVELS = ['Full', '3/4', '1/2', '1/4', 'Empty'] as const;
 type FuelLevel = typeof FUEL_LEVELS[number];
@@ -233,7 +234,7 @@ export default function Handovers() {
           {activeBookings.map((b) => {
             const vehicle  = vehicles.find((v) => v.id === b.vehicleId);
             const { delivery, return: ret } = getHandovers(b.id);
-            const balance  = b.totalAmount - (b.discount ?? 0) - b.paidAmount;
+            const balance  = bookingDue(b);
 
             return (
               <div key={b.id} className="card">
@@ -274,7 +275,7 @@ export default function Handovers() {
                       <div className="space-y-1.5">
                         <HandoverDetail icon={MapPin}  value={delivery.location} />
                         <HandoverDetail icon={Clock}   value={delivery.dateTime.replace('T', ' ')} />
-                        <HandoverDetail icon={Gauge}   value={`${delivery.mileage.toLocaleString()} km`} />
+                        <HandoverDetail icon={Gauge}   value={delivery.mileage ? `${delivery.mileage.toLocaleString()} km` : 'Not recorded'} />
                         <HandoverDetail icon={Fuel}    value={delivery.fuelLevel}
                           className={FUEL_COLOR[delivery.fuelLevel as FuelLevel] ?? ''} />
                         {delivery.notes && (
@@ -311,7 +312,7 @@ export default function Handovers() {
                       <div className="space-y-1.5">
                         <HandoverDetail icon={MapPin}  value={ret.location} />
                         <HandoverDetail icon={Clock}   value={ret.dateTime.replace('T', ' ')} />
-                        <HandoverDetail icon={Gauge}   value={`${ret.mileage.toLocaleString()} km`} />
+                        <HandoverDetail icon={Gauge}   value={ret.mileage ? `${ret.mileage.toLocaleString()} km` : 'Not recorded'} />
                         <HandoverDetail icon={Fuel}    value={ret.fuelLevel}
                           className={FUEL_COLOR[ret.fuelLevel as FuelLevel] ?? ''} />
                         {(ret.extraKm ?? 0) > 0 && (

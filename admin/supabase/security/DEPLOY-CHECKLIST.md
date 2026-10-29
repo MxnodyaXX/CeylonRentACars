@@ -312,3 +312,19 @@ What's still owed is kept as customer credit and/or written off as bad debt.
 - [ ] Push the admin.
 - [ ] Check: Recover vehicle on a test booking → the booking shows "Recovered";
       `select * from vehicle_recoveries` shows it with its credit / bad debt.
+
+## Part 10 — readings from trip meters (after Part 8)
+
+A reading can come from a trip meter (Trip A / B / C) instead of the main odometer — e.g. 24,708 on
+Trip A at the breakdown and 559 on Trip B going back to the customer. Each reading box has an
+ODO / Trip A / B / C picker; km are only worked out between readings of the same meter.
+
+- [ ] SQL Editor → run `12_swap_trip_meters.sql` (needs 10; undo: `rollback/12_rollback_swap_trip_meters.sql`).
+      Adds `breakdown_vehicle_swaps.meters` and changes the 10 rule so "a reading can't go backwards"
+      only compares readings of the same meter. The last query lists swaps with trip-meter readings.
+- [ ] Run `verify.sql` → still 0 FAIL.
+- [ ] Push the admin. **Run 12 before** anyone picks Trip A/B on a swap — before it, saving such a
+      reading fails ("column meters not found"). Pickup / return readings keep their meter in
+      `checklists` and need nothing.
+- [ ] Check: the CBU-0745 booking (breakdown BD-261016-6A16) → Extra mileage → phase 3 "Correct" → booked car back to the customer
+      559 with **Trip B** → saves; the return reading is then entered from Trip B as well.

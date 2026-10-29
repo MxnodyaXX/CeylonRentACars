@@ -12,10 +12,15 @@ import UsagePhases from '../breakdowns/UsagePhases';
 import { rentalDays } from '../../lib/availability';
 import { breakdownHooks } from '../../store/useStore';
 import { printInvoice } from '../../lib/printInvoice';
-import type { Booking, ChargeKind, HandoverChecklist, RecoveryReason } from '../../types';
+import type { Booking, ChargeKind, HandoverChecklist, KmMeter, RecoveryReason } from '../../types';
+import KmReading from './KmReading';
+import { METER_LABEL, kmWithMeter, meterOf } from '../../lib/tripKm';
 import type { BdSwap } from '../../lib/breakdowns';
 
 const EXTRA_KINDS: ChargeKind[] = ['Fuel', 'Late return', 'Damage', 'Cleaning', 'Traffic fine', 'Toll', 'Parking', 'Other'];
+/** Money off the bill — what the customer paid for the car (tyres, parts…) is usually the owner's cost */
+const DEDUCTION_KINDS = ['Tyres', 'Battery', 'Repair / parts', 'Service', 'Other'] as const;
+type DeductionKind = typeof DEDUCTION_KINDS[number];
 const METHODS = ['Cash', 'Bank transfer', 'Card', 'Online'];
 const today = () => new Date().toLocaleDateString('en-CA');
 
@@ -38,6 +43,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const [at, setAt] = useState(localNow());
   const [location, setLocation] = useState((kind === 'pickup' ? b.pickupLocation : b.dropLocation) ?? '');
   const [odometer, setOdometer] = useState<number | ''>(step === 'return' ? '' : vehicle?.mileage ?? '');
+  // the meter it was read from: the odometer, or a trip meter (Trip A/B) — a return reading defaults to the pickup's
+  const [odoMeter, setOdoMeter] = useState<KmMeter>(step === 'return' ? meterOf(pickup?.meter) : 'odo');
   const [fuel, setFuel] = useState<string>(step === 'return' ? '' : 'Full');
   const [items, setItems] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(CHECK_ITEMS.map((i) => [i, step === 'return' ? pickup?.items?.[i] ?? true : true])));
@@ -52,10 +59,11 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   // Km for the return: driven (incl. any earlier car of a mid-trip exchange) vs included, with the extra-km cost
   // older bookings may have no pickup reading saved — then it can be typed in from the agreement
   const [pickupKmIn, setPickupKmIn] = useState('');
+  const [pickupMeterIn, setPickupMeterIn] = useState<KmMeter>('odo');
   const startKm = pickup?.odometer ?? (Number(pickupKmIn) > 0 ? Number(pickupKmIn) : undefined);
   // every car of the trip: the booked car, breakdown replacements, earlier cars of an exchange (lib/tripKm.ts)
   const swaps = useBreakdownStore((s) => s.swaps);   // subscribed: a missing reading entered here re-renders the km
-  const trip = step === 'return' ? tripKmFor(b, { startKm, returnKm: odometer === '' ? undefined : Number(odometer) }) : undefined;
+  const trip = step === 'return' ? tripKmFor(b, { startKm, startMeter: pickup ? pickup.meter : pickupMeterIn, returnKm: odometer === '' ? undefined : Number(odometer), returnMeter: odoMeter }) : undefined;
   const swapGaps = trip ? trip.missing.filter((m) => m.swapId) : [];
   const gapSwaps = swaps.filter((w) => swapGaps.some((m) => m.swapId === w.id));
   // breakdown replacements: the customer pays the booking price for those days too — only the owners' payouts move
@@ -135,6 +143,10 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const rate = Math.max(0, Number(kmRate) || 0);
   const kmCharge = isReturn && chargeKm && !kmAlreadyCharged ? Math.round(extraKm * rate) : 0;
   const extrasTotal = extras.reduce((s, x) => s + Math.max(0, Number(x.amount) || 0), 0);
+  // deductions: the customer paid for something the car needed (e.g. new tyres) — off the bill, and by default off the owner's payout
+  const [deds, setDeds] = useState<{ kind: DeductionKind; amount: string; note: string; owner: boolean }[]>([]);
+  const dedTotal = deds.reduce((s, x) => s + Math.max(0, Number(x.amount) || 0), 0);
+  const carOwner = useStore((s) => s.owners.find((o) => o.id === vehicle?.ownerId));
   // Returned early / late (daily rentals): the days actually used, from the scheduled start to the return time
   const daily = isReturn && !recover && (b.rentalType ?? 'Daily') === 'Daily' && b.totalDays > 0;
   const usedDays = daily ? rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay) : b.totalDays;
@@ -170,7 +182,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const span = (ms: number) => { const m = Math.max(0, Math.round(ms / 60_000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60; return [d && `${d} day${d === 1 ? '' : 's'}`, h && `${h} h`, mi && `${mi} min`].filter(Boolean).join(' ') || '0 min'; };
   const recoverRent = rcRent === 'full' ? b.totalAmount : rcRent === 'custom' ? Math.max(0, Math.round(Number(rcCustom) || 0)) : usedRent;
   const rentChange = recover ? recoverRent - b.totalAmount : 0;
-  const newBill = price.bill - earlyCut + rentChange + kmCharge + extrasTotal + lateCharge;
+  const newBill = price.bill - earlyCut + rentChange + kmCharge + extrasTotal + lateCharge - dedTotal;
   const dueNow = Math.max(0, newBill - price.paid);
   const refundDue = Math.max(0, price.paid - newBill);
   const [refundNow, setRefundNow] = useState(true);
@@ -201,23 +213,25 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
 
   const save = () => {
     setError('');
-    if (odometer === '' || Number(odometer) <= 0) return setError('Enter the odometer reading.');
-    if (!fuel) return setError('Choose the fuel level.');
+    // a recovery can be saved without the readings — staff can't always get them when the car is taken back
+    if (!recover && (odometer === '' || Number(odometer) <= 0)) return setError('Enter the odometer reading.');
+    if (!recover && !fuel) return setError('Choose the fuel level.');
     if (finalLeg?.wrong && finalLeg.from != null) return setError(`The odometer can't be lower than ${finalLeg.from.toLocaleString()} km (${finalLeg.part.split(' → ')[0].toLowerCase()}).`);
     if (isReturn && swapGaps.length && !kmAlreadyCharged && !kmAck) return setError('Odometer readings of a breakdown replacement are missing — enter them under Extra mileage, or tick that the bill goes out without those km.');
     if (recover && !rcReason) return setError('Choose why the vehicle was recovered.');
-    if (recover && rcDetails.trim().length < 5) return setError('Describe what happened (a few words at least).');
     if (recover && rcRent === 'custom' && rcCustom.trim() === '') return setError('Enter the rent the customer owes.');
     if (recover && remaining > 0 && !owedAs) return setError(`${rs(remaining)} is still owed — choose to keep it as credit or write it off as bad debt.`);
     if (recover && writeOff > 0 && !writeOffWhy.trim()) return setError('Say why the amount is written off.');
     const list: HandoverChecklist = {
-      at: new Date(at).toISOString(), by, odometer: Number(odometer), fuel, items,
+      at: new Date(at).toISOString(), by, ...(Number(odometer) > 0 ? { odometer: Number(odometer), ...(odoMeter !== 'odo' ? { meter: odoMeter } : {}) } : {}), fuel: fuel || '—', items,
       damage: damage.trim() || undefined, notes: notes.trim() || undefined,
       photos: photos.length ? photos : undefined, signature,
       ...(recover && rcReason ? { recovery: { reason: rcReason, details: rcDetails.trim(), policeRef: rcPolice.trim() || undefined, customerFlagged: rcFlag || undefined } } : {}),
     };
     if (isReturn && settleDep && keep > 0 && !depNote.trim()) return setError('Say why part of the deposit is kept.');
     if (isReturn && extras.some((x) => (Number(x.amount) || 0) > 0 && x.kind === 'Other' && !x.note.trim())) return setError('Describe each "Other" charge.');
+    if (isReturn && deds.some((x) => (Number(x.amount) || 0) > 0 && !x.note.trim())) return setError('Say what each deduction is for (e.g. 2 rear tyres, receipt from the shop).');
+    if (isReturn && newBill < 0) return setError('The deductions are more than the bill.');
     if (isReturn) {
       // nothing is changed when the rental can't be completed (e.g. a breakdown replacement is still out)
       const blocked = breakdownHooks.activeSwapNote?.(b.id);
@@ -261,15 +275,15 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
         const st = useStore.getState();
         const same = (p?: string) => (p ?? '').replace(/\D/g, '').slice(-9) === b.customerPhone.replace(/\D/g, '').slice(-9);
         const c = st.customers.find((x) => x.id === b.customerId) ?? st.customers.find((x) => same(x.phone));
-        const why = `Vehicle recovered ${new Date(at).toLocaleDateString('en-GB')} (${rcReason}): ${rcDetails.trim()}`;
+        const why = `Vehicle recovered ${new Date(at).toLocaleDateString('en-GB')} (${rcReason})${rcDetails.trim() ? `: ${rcDetails.trim()}` : ''}`;
         if (c && !c.doNotRent) st.updateCustomer(c.id, { doNotRent: true, doNotRentReason: why });
         // no customer record yet (older bookings) — make one, so the warning shows when their number is typed again
         if (!c) st.addCustomer({ name: b.customerName, phone: b.customerPhone, email: b.customerEmail, nic: b.customerNIC, doNotRent: true, doNotRentReason: why });
       }
       // a pickup reading typed in now (none was saved at pickup) is kept, so the booking and invoice show the km
       if (!pickup && startKm !== undefined) {
-        useStore.getState().logBookingActivity(b.id, { by, type: 'Handover', text: `Pickup odometer ${startKm.toLocaleString()} km entered at return (from the agreement)` }, {
-          checklists: { ...(done.checklists ?? {}), pickup: { at: b.pickupAt ?? new Date(`${b.startDate}T${b.startTime ?? '09:00'}`).toISOString(), by, odometer: startKm, fuel: '—', items: {}, notes: 'Entered at return from the agreement' } },
+        useStore.getState().logBookingActivity(b.id, { by, type: 'Handover', text: `Pickup reading ${kmWithMeter(startKm, pickupMeterIn)} entered at return (from the agreement)` }, {
+          checklists: { ...(done.checklists ?? {}), pickup: { at: b.pickupAt ?? new Date(`${b.startDate}T${b.startTime ?? '09:00'}`).toISOString(), by, odometer: startKm, ...(pickupMeterIn !== 'odo' ? { meter: pickupMeterIn } : {}), fuel: '—', items: {}, notes: 'Entered at return from the agreement' } },
         });
       }
       if (saveRate && vehicle && rate !== (vehicle.extraKmRate ?? 50)) updateVehicle(vehicle.id, { extraKmRate: rate });
@@ -278,6 +292,18 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
       extras.forEach((x) => {
         const amount = Math.max(0, Number(x.amount) || 0);
         if (amount > 0) addCharge(b.id, { kind: x.kind, amount, date: today(), note: x.note.trim() || undefined, by });
+      });
+      deds.forEach((x) => {
+        const amount = Math.max(0, Number(x.amount) || 0);
+        if (!amount) return;
+        const note = `${x.kind} paid by the customer — ${x.note.trim()}`;
+        // the owner's car got the tyres / parts: the same amount comes off their payout (reversible on the booking)
+        // (as far as this booking's payout goes; the rest is owed back from their next payout)
+        const o = x.owner && vehicle ? useStore.getState().chargeOwner(b.id, vehicle.id, amount, `${note} (customer paid it on ${vehicle.vehicleNumber})`, by) : undefined;
+        if (o?.error) toast.warning("Not taken from the owner's payout", o.error);
+        else if (o?.owed) toast.info(`${carOwner?.name ?? 'The owner'} owes Rs ${o.owed.toLocaleString('en-LK')}`, `More than this booking's payout${o.fromPayout ? ` (Rs ${o.fromPayout.toLocaleString('en-LK')} taken from it)` : ''} — the rest comes off their next payout.`);
+        addCharge(b.id, { kind: 'Deduction', amount: -amount, date: today(), note, by,
+          ...(o?.adjustmentId ? { ownerAdjustmentId: o.adjustmentId } : {}), ...(o?.owedId ? { ownerOwedId: o.owedId } : {}) });
       });
       if (collectAmt > 0) recordPayment(b.id, { kind: 'Payment', amount: collectAmt, method, receiptNo: receiptNo.trim() || undefined, note: recover ? 'Collected at recovery' : 'Collected at return', by });
       if (refundDue > 0 && refundNow) recordPayment(b.id, { kind: 'Refund', amount: refundDue, method, receiptNo: receiptNo.trim() || undefined, note: 'Overpayment refunded at return', by });
@@ -311,7 +337,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
       <div className="space-y-3">
         <div className="rounded-xl bg-navy-50/70 px-3 py-2 text-sm flex flex-wrap justify-between gap-2">
           <span><b className="text-navy-800">{b.customerName}</b> <span className="text-navy-500">· {vehicle ? `${vehicle.brand} ${vehicle.model} (${vehicle.vehicleNumber})` : ''}</span></span>
-          {isReturn && pickup && <span className="text-xs text-navy-500">At pickup: {pickup.odometer.toLocaleString()} km · fuel {pickup.fuel}</span>}
+          {isReturn && pickup && <span className="text-xs text-navy-500">At pickup: {kmWithMeter(pickup.odometer, pickup.meter)} · fuel {pickup.fuel}</span>}
         </div>
         {recover && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900 flex gap-2">
@@ -329,10 +355,12 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               <label className="text-xs font-medium text-navy-500">Location
                 <input className="input mt-1" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Colombo office / Hotel" />
               </label>
-              <label className="text-xs font-medium text-navy-500">Odometer (km) *
-                <input className="input mt-1" type="number" min="0" value={odometer} onChange={(e) => setOdometer(e.target.value === '' ? '' : Number(e.target.value))} placeholder="e.g. 48,250" />
-              </label>
-              <div className="text-xs font-medium text-navy-500">Fuel level *
+              <div className="text-xs font-medium text-navy-500">Odometer (km){recover ? <span className="font-normal text-navy-400"> (if known)</span> : ' *'}
+                <KmReading className="mt-1" value={odometer} onChange={(v) => setOdometer(v === '' ? '' : Number(v))} placeholder="e.g. 48,250"
+                           meter={odoMeter} onMeter={setOdoMeter} />
+                {odoMeter !== 'odo' && <span className="block text-[11px] text-amber-700 font-normal mt-0.5">From {METER_LABEL[odoMeter]} — km are counted only against a {METER_LABEL[odoMeter]} reading; the car's total km is not changed.</span>}
+              </div>
+              <div className="text-xs font-medium text-navy-500">Fuel level{recover ? <span className="font-normal text-navy-400"> (if known)</span> : ' *'}
                 <div className="grid grid-cols-5 gap-1 mt-1">
                   {FUEL_LEVELS.map((f) => (
                     <button key={f} type="button" onClick={() => setFuel(f)}
@@ -353,7 +381,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                             className={`rounded-full border px-3 py-1.5 text-sm font-medium ${rcReason === r ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-navy-200 text-navy-700 hover:border-red-300'}`}>{r}</button>
                   ))}
                 </div>
-                <label className="text-xs font-medium text-navy-500 block">What happened *
+                <label className="text-xs font-medium text-navy-500 block">What happened
                   <textarea className="input mt-1 min-h-[80px]" value={rcDetails} onChange={(e) => setRcDetails(e.target.value)}
                             placeholder="e.g. Rent unpaid since 15 Sep, calls not answered; gave a false address. Vehicle taken back from Kandy with the owner's consent." />
                 </label>
@@ -525,7 +553,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                 // recovered: the booked rent is replaced by the rent for the time used (below)
                 <div key={i} className="flex justify-between gap-3 py-0.5 text-navy-400"><span><span className="line-through">{l.label}</span> · booked, not charged</span><span className="line-through">{rs(l.amount)}</span></div>
               ) : (
-                <div key={i} className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">{l.label}</span><span className={l.amount < 0 ? 'text-red-600' : 'text-navy-800'}>{l.amount < 0 ? `− ${rs(-l.amount)}` : rs(l.amount)}</span></div>
+                <div key={i} className="flex justify-between gap-3 py-0.5"><span className="text-navy-600 min-w-0">{l.label}{l.detail && <span className="block text-xs text-navy-400">{l.detail}</span>}</span><span className={l.amount < 0 ? 'text-red-600' : 'text-navy-800'}>{l.amount < 0 ? `− ${rs(-l.amount)}` : rs(l.amount)}</span></div>
               ))}
               {recover && rentChange !== 0 && (rcRent === 'used' && rType === 'Monthly' ? [
                 ...(mu.months ? [{ k: `${mu.months} month${mu.months === 1 ? '' : 's'} × ${rs(monthRate)}`, v: mu.months * monthRate }] : []),
@@ -636,20 +664,22 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
             <div className="rounded-xl bg-navy-50/60 p-3 space-y-2">
               <p className="text-sm font-semibold text-navy-700">Extra mileage</p>
               {!kmAlreadyCharged && !pickup && (
-                <label className="text-sm text-navy-500 block">No odometer reading was saved at pickup — enter it from the agreement:
-                  <input className="input !py-1.5 mt-1 sm:!w-56" type="number" min="0" placeholder="Odometer at pickup (km)" value={pickupKmIn} onChange={(e) => setPickupKmIn(e.target.value)} />
-                </label>
+                <div className="text-sm text-navy-500">No odometer reading was saved at pickup — enter it from the agreement:
+                  <KmReading small className="mt-1 sm:!w-72" placeholder="Odometer at pickup (km)" value={pickupKmIn} onChange={setPickupKmIn} meter={pickupMeterIn} onMeter={setPickupMeterIn} />
+                </div>
               )}
               {trip?.endedInReplacement && (
                 <p className="text-sm text-sky-800 bg-sky-50 rounded-lg px-2 py-1.5">The trip ended in the replacement — its km are counted from the breakdown readings. The odometer above is {vehicle?.vehicleNumber ?? 'the booked car'}'s, for its record only.</p>
               )}
-              {trip && trip.legs.length > 1 && <UsagePhases trip={trip} includedKm={includedKm} />}
+              {trip && trip.legs.length > 1 && <UsagePhases trip={trip} includedKm={includedKm} bookingId={b.id} />}
               {!kmAlreadyCharged && gapSwaps.map((w) => <SwapReadingsFix key={w.id} w={w} />)}
               {!kmAlreadyCharged && swapGaps.length > 0 && (
                 <label className="text-sm text-amber-900 flex items-start gap-1.5"><input type="checkbox" className="mt-0.5" checked={kmAck} onChange={(e) => setKmAck(e.target.checked)} />
                   The readings can't be found — complete without charging the km of the missing parts (add an estimate under Other charges if agreed with the customer).</label>
               )}
-              {kmAlreadyCharged ? <p className="text-sm text-navy-500">Extra km is already on the bill.</p> : trip?.legs.some((l) => l.wrong) ? (
+              {kmAlreadyCharged ? <p className="text-sm text-navy-500">Extra km is already on the bill.</p> : trip?.legs.some((l) => l.mismatch) ? (
+                <p className="text-sm text-red-600">Readings from different meters ({trip.legs.filter((l) => l.mismatch).map((l) => `${l.car}: ${METER_LABEL[l.fromMeter ?? 'odo']} → ${METER_LABEL[l.toMeter ?? 'odo']}`).join('; ')}) — a phase needs both readings from the same meter. Correct the meter above or under the phase.</p>
+              ) : trip?.legs.some((l) => l.wrong) ? (
                 <p className="text-sm text-red-600">A reading is lower than the one before it ({trip.legs.filter((l) => l.wrong).map((l) => `${l.car}: ${l.part}`).join('; ')}) — check the numbers.</p>
               ) : driven === undefined ? (
                 <p className="text-sm text-navy-500">{swapGaps.length ? 'The km can be worked out when the missing readings are entered.' : `Enter the odometer reading${!pickup ? 's' : ' above'} to work it out.`}</p>
@@ -685,6 +715,31 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               <button type="button" onClick={() => setExtras((l) => [...l, { kind: 'Fuel', amount: '', note: '' }])} className="text-sm font-semibold text-navy-600 hover:text-navy-900 inline-flex items-center gap-1"><Plus size={13} /> Add a charge (fuel, late return, damage…)</button>
             </div>
 
+            {/* deductions: money off the bill — e.g. the customer paid for new tyres for the car */}
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-navy-700">Deductions</p>
+              {deds.map((x, i) => {
+                const set = (p: Partial<typeof x>) => setDeds((l) => l.map((y, j) => (j === i ? { ...y, ...p } : y)));
+                return (
+                  <div key={i} className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-2 space-y-1.5">
+                    <div className="grid grid-cols-[1fr_110px_auto] sm:grid-cols-[150px_120px_1fr_auto] gap-2 items-center">
+                      <select className="input !py-1.5 text-sm" value={x.kind} onChange={(e) => { const kind = e.target.value as DeductionKind; set({ kind, owner: kind !== 'Other' }); }}>
+                        {DEDUCTION_KINDS.map((k) => <option key={k}>{k}</option>)}
+                      </select>
+                      <input className="input !py-1.5 text-sm" type="number" min="0" placeholder="Rs" value={x.amount} onChange={(e) => set({ amount: e.target.value })} />
+                      <input className="input !py-1.5 text-sm col-span-2 sm:col-span-1 order-last sm:order-none" placeholder="What, e.g. 2 rear tyres — receipt from the tyre shop" value={x.note} onChange={(e) => set({ note: e.target.value })} />
+                      <button type="button" onClick={() => setDeds((l) => l.filter((_, j) => j !== i))} className="p-1.5 text-navy-400 hover:text-red-600" aria-label="Remove deduction"><Trash2 size={15} /></button>
+                    </div>
+                    <label className="text-xs text-navy-700 flex items-start gap-1.5">
+                      <input type="checkbox" className="mt-0.5" checked={x.owner} onChange={(e) => set({ owner: e.target.checked })} />
+                      <span>Take it from {carOwner?.name ?? 'the owner'}'s payout — it was for {vehicle?.vehicleNumber ?? 'their car'}{!x.owner && <span className="text-navy-400"> (unticked: the company carries it)</span>}</span>
+                    </label>
+                  </div>
+                );
+              })}
+              <button type="button" onClick={() => setDeds((l) => [...l, { kind: 'Tyres', amount: '', note: '', owner: true }])} className="text-sm font-semibold text-emerald-700 hover:text-emerald-900 inline-flex items-center gap-1"><Plus size={13} /> Add a deduction (tyres, parts the customer paid for…)</button>
+            </div>
+
             {/* deposit */}
             {held > 0 && (
               <div className="rounded-xl bg-amber-50/70 p-3 space-y-2">
@@ -701,6 +756,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
 
             {/* totals and payment collected now */}
             <div className="rounded-xl bg-navy-800 text-white p-3 space-y-2">
+              {dedTotal > 0 && <div className="flex justify-between text-sm"><span className="opacity-70">Deductions</span><b className="text-emerald-300">− {rs(dedTotal)}</b></div>}
               <div className="flex justify-between text-sm"><span className="opacity-70">Final bill</span><b>{rs(newBill)}</b></div>
               <div className="flex justify-between text-sm"><span className="opacity-70">Balance before payment</span><b>{rs(dueNow)}</b></div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">

@@ -1,5 +1,6 @@
 import { Booking, Vehicle } from '../types';
 import { durationLabel } from './rentalPeriod';
+import { bookingDue } from './credit';
 
 /** Build a polite credit-reminder WhatsApp message for a customer. */
 export function buildCreditReminderMsg(
@@ -53,7 +54,7 @@ export function buildBookingWhatsAppMsg(
   const vLabel = vehicle
     ? `${vehicle.brand} ${vehicle.model} (${vehicle.vehicleNumber})`
     : 'your vehicle';
-  const balance = booking.totalAmount - (booking.discount ?? 0) - booking.paidAmount;
+  const balance = bookingDue(booking);
 
   const lines = (parts: Array<string | false | null | undefined>): string =>
     parts.filter(Boolean).join('\n');

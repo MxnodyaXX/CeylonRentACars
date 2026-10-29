@@ -931,7 +931,7 @@ describe('breakdowns — vehicle usage phases (each car its own odometer)', () =
     expect(t.legs.map((l) => l.days)).toEqual([3, 2, undefined])
 
     expect(bd().fillSwapReadings(bd().swaps[0].id, { originalOdometerBack: 12400 }, '13,000 was the replacement reading — dashboard photo', 'Admin', true)).toBeNull()
-    expect(bd().events.at(-1)!.text).toMatch(/^Odometer corrected .* back to the customer 12,400 km \(was 13,000\)/)
+    expect(bd().events.at(-1)!.text).toMatch(/^Odometer corrected .* back to the customer 12,400 km \(was 13,000 km\)/)
     t = tripKmFor(bk(b), { returnKm: 13500 })
     expect(t.legs.map((l) => l.km)).toEqual([2380, 10400, 1100])
     expect(t).toMatchObject({ total: 13880, garageKm: 20 })
@@ -962,5 +962,202 @@ describe('breakdowns — vehicle usage phases (each car its own odometer)', () =
     expect(t.legs).toHaveLength(21)
     expect(t.legs.filter((l) => l.role === 'replacement').every((l) => l.km === 50)).toBe(true)
     expect(t.total).toBe(10 * 100 + 10 * 50 + 100)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Correcting a finished replacement — times, days, rate, readings; owner payouts follow
+// ─────────────────────────────────────────────────────────────────────────────
+describe('breakdowns — correcting a finished replacement', () => {
+  const closed = async (paidMain = false) => {
+    const b = world(); const i = report(b)
+    const s = bd().addSolution(i.id, 'replacement', 'A').solution!
+    if (paidMain) {
+      const m0 = main().commissions.find((c) => c.bookingId === b)!
+      useStore.setState((st) => ({ commissions: st.commissions.map((c) => (c.id === m0.id ? { ...c, status: 'Paid' as const } : c)) }))
+    }
+    bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', rate: 5000, originalOdometer: 10400, replacementOdometer: 500 })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 900, originalOdometer: 10410 })).toBeNull()
+    return { b, i, w: bd().swaps[0] }
+  }
+
+  it('only an admin, with a reason, and only when something changed', async () => {
+    const { w } = await closed()
+    expect(bd().editSwap(w.id, { days: 3 }, 'x', 'B', false)).toMatch(/Only an admin/)
+    expect(bd().editSwap(w.id, { days: 3 }, '  ', 'A', true)).toMatch(/why/)
+    expect(bd().editSwap(w.id, { days: w.days }, 'x', 'A', true)).toMatch(/Nothing was changed/)
+  })
+
+  it('more days → both owner payouts follow (pending payout line + booking adjustment)', async () => {
+    const { b, w } = await closed()
+    const oB = main().owners.find((o) => o.id === 'oB')!
+    expect(bd().editSwap(w.id, { backAt: iso('2026-07-06T12:00:00'), days: 3 }, 'wrong return date', 'A', true)).toBeNull()
+    const now = bd().swaps[0]
+    const m = swapMoney(main().bookings.find((x) => x.id === b)!, 'vA', 5000, 3)
+    expect(now).toMatchObject({ days: 3, replacementPayout: 15000, originalDeduction: m.originalDeduction })
+    expect(main().commissions.find((c) => c.id === w.commissionId)!.ownerPayout).toBe(15000)
+    const o2 = main().owners.find((o) => o.id === 'oB')!
+    expect(o2.totalEarnings - oB.totalEarnings).toBe(5000)
+    expect(o2.pendingPayout - oB.pendingPayout).toBe(5000)
+    const adj = main().bookings.find((x) => x.id === b)!.payoutAdjustments!.find((a) => a.id === w.adjustmentId)!
+    expect(adj.amount).toBe(m.originalDeduction)
+    expect(bd().events.at(-1)!.text).toMatch(/Replacement corrected \(wrong return date\): .*days 2 → 3.*replacement owner earns Rs 15,000 \(was Rs 10,000\)/)
+  })
+
+  it('a different agreed rate changes only the replacement owner', async () => {
+    const { w } = await closed()
+    expect(bd().editSwap(w.id, { replacementRate: 6000 }, 'owner agreed 6,000', 'A', true)).toBeNull()
+    expect(bd().swaps[0]).toMatchObject({ replacementRate: 6000, replacementPayout: 12000, originalDeduction: w.originalDeduction })
+    expect(main().commissions.find((c) => c.id === w.commissionId)!.ownerPayout).toBe(12000)
+  })
+
+  it('owed-back line (original owner already paid) is corrected too', async () => {
+    const { w } = await closed(true)
+    expect(w.adjustmentId).toBe(`sw-owed-${w.id}`)
+    expect(bd().editSwap(w.id, { days: 1 }, 'only 1 day', 'A', true)).toBeNull()
+    expect(main().commissions.find((c) => c.id === w.adjustmentId)!.ownerPayout).toBe(-bd().swaps[0].originalDeduction!)
+  })
+
+  it("a paid replacement payout can't be changed; nothing else changes either", async () => {
+    const { w } = await closed()
+    main().updateCommission(w.commissionId!, { status: 'Paid' })
+    expect(bd().editSwap(w.id, { days: 3 }, 'x', 'A', true)).toMatch(/already paid Rs 10,000/)
+    expect(bd().swaps[0].days).toBe(2)
+    // readings and notes can still be corrected
+    expect(bd().editSwap(w.id, { replacementOdometerIn: 950, backNotes: 'scratch on bumper' }, 'dashboard photo', 'A', true)).toBeNull()
+    expect(bd().swaps[0]).toMatchObject({ replacementOdometerIn: 950, backNotes: 'scratch on bumper', replacementPayout: 10000 })
+  })
+
+  it('readings: corrected, never removed or made lower than the start; times in order', async () => {
+    const { w } = await closed()
+    expect(bd().editSwap(w.id, { replacementOdometerIn: undefined }, 'x', 'A', true)).toMatch(/cannot be removed/)
+    expect(bd().editSwap(w.id, { replacementOdometerIn: 400 }, 'x', 'A', true)).toMatch(/lower than when handed over/)
+    expect(bd().editSwap(w.id, { backAt: iso('2026-07-02T12:00:00') }, 'x', 'A', true)).toMatch(/before the handover/)
+    expect(bd().editSwap(w.id, { replacementOdometerOut: 450, originalOdometerBack: 10420 }, 'agreement copy', 'A', true)).toBeNull()
+    expect(bd().swaps[0]).toMatchObject({ replacementOdometerOut: 450, originalOdometerBack: 10420 })
+    expect(main().bookings.find((x) => x.id === w.bookingId)!.activity!.at(-1)!.text).toMatch(/Replacement corrected \(agreement copy\)/)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trip meters — a reading can come from Trip A / B / C instead of the odometer
+// ─────────────────────────────────────────────────────────────────────────────
+describe('breakdowns — readings from trip meters (Trip A / B / C)', () => {
+  const bk = (b: string) => main().bookings.find((x) => x.id === b)!
+  const swappedBack = async (originalMeter?: 'A' | 'B') => {
+    const b = world(); const i = report(b, { mileage: 24708 })
+    const s = bd().addSolution(i.id, 'replacement', 'A').solution!
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', originalOdometer: 24708, originalMeter: 'A', replacementOdometer: 2450 })).toBeNull()
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    return { b, i, s, close: () => bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 3100, originalOdometer: 559, originalMeter }) }
+  }
+
+  it('Trip A at the breakdown and Trip B going back: not compared, no garage km, no warning', async () => {
+    const { b, close } = await swappedBack('B')
+    expect(close()).toBeNull()
+    const w = bd().swaps[0]
+    expect(w.meters).toEqual({ originalOdometer: 'A', originalOdometerBack: 'B' })
+    const t = tripKmFor(bk(b), { returnKm: 800, returnMeter: 'B' })
+    expect(t.garageKm).toBe(0)
+    expect(t.legs[2]).toMatchObject({ from: 559, to: 800, km: 241, fromMeter: 'B', toMeter: 'B' })
+    expect(t.legs[2].suspect).toBeUndefined()
+  })
+
+  it('the same meter is still checked: lower on the same meter is refused', async () => {
+    const { close } = await swappedBack('A')
+    expect(close()).toMatch(/lower than at the breakdown/)
+  })
+
+  it("a phase that starts and ends on different meters has no km and says why; correcting the meter fixes it", async () => {
+    const { b, close } = await swappedBack('B')
+    close()
+    // pickup on the odometer (10,000), breakdown on Trip A → phase 1 can't be worked out
+    let t = tripKmFor(bk(b), { returnKm: 800, returnMeter: 'B' })
+    expect(t.legs[0]).toMatchObject({ mismatch: true, km: undefined, fromMeter: 'odo', toMeter: 'A' })
+    expect(t.legs[0].suspect).toMatch(/started? was read from Odometer and the end from Trip A|start was read from Odometer and the end from Trip A/)
+    expect(t.complete).toBe(false)
+    // it was really the odometer at the breakdown → only the meter is corrected
+    expect(bd().fillSwapReadings(bd().swaps[0].id, {}, 'dashboard photo shows ODO', 'Admin', true, { originalOdometer: 'odo' })).toBeNull()
+    expect(bd().swaps[0].meters).toEqual({ originalOdometerBack: 'B' })
+    expect(bd().events.at(-1)!.text).toMatch(/at the breakdown 24,708 km \(was 24,708 km \(Trip A\)\)/)
+    t = tripKmFor(bk(b), { returnKm: 800, returnMeter: 'B' })
+    expect(t.legs.map((l) => l.km)).toEqual([14708, 650, 241])
+    expect(t.complete).toBe(true)
+  })
+
+  it('the pickup reading on a trip meter is compared with a breakdown reading on the same meter', async () => {
+    const b = world()
+    const p = bk(b).checklists?.pickup
+    useStore.setState((st) => ({ bookings: st.bookings.map((x) => (x.id === b ? { ...x, checklists: { ...x.checklists, pickup: { ...(p ?? { at: iso('2026-07-01T09:00:00'), by: 'A', fuel: 'Full', items: {} }), odometer: 22833, meter: 'A' as const } } } : x)) }))
+    const i = report(b, { mileage: 24708 })
+    const s = bd().addSolution(i.id, 'replacement', 'A').solution!
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', originalOdometer: 20000, originalMeter: 'A', replacementOdometer: 2450 })).toMatch(/lower than its last one/)
+    expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', originalOdometer: 24708, originalMeter: 'A', replacementOdometer: 2450 })).toBeNull()
+    expect(tripKmFor(bk(b)).legs[0]).toMatchObject({ km: 1875, fromMeter: 'A', toMeter: 'A' })
+  })
+
+  it('editing a finished replacement can change a meter', async () => {
+    const { close } = await swappedBack('B')
+    close()
+    expect(bd().editSwap(bd().swaps[0].id, { meters: { originalOdometer: 'A', originalOdometerBack: 'A' }, originalOdometerBack: 25000 }, 'both from Trip A', 'Admin', true)).toBeNull()
+    expect(bd().swaps[0]).toMatchObject({ originalOdometerBack: 25000, meters: { originalOdometer: 'A', originalOdometerBack: 'A' } })
+    expect(bd().editSwap(bd().swaps[0].id, { originalOdometerBack: 20000 }, 'x', 'Admin', true)).toMatch(/lower than at the breakdown/)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deductions at the return — the customer paid for something the car needed
+// ─────────────────────────────────────────────────────────────────────────────
+import { bookingBill } from '../../src/lib/credit'
+import { priceBreakdown } from '../../src/lib/bookingRecord'
+
+describe('return — deductions (e.g. the customer bought new tyres)', () => {
+  it('comes off the bill, shows as a deduction line, and can come off the owner payout; removing it puts both back', () => {
+    const b = world()
+    const bk = () => main().bookings.find((x) => x.id === b)!
+    const bill0 = bookingBill(bk())
+    const payout0 = legsOf(bk()).find((l) => l.vehicleId === 'vA')!.payout
+    expect(main().adjustOwnerPayout(b, { id: 'ded-1', vehicleId: 'vA', amount: 24000, source: 'Return', by: 'A', reason: 'Tyres paid by the customer' })).toBeNull()
+    main().addCharge(b, { kind: 'Deduction', amount: -24000, date: '2026-07-08', note: 'Tyres paid by the customer — 2 rear tyres', by: 'A', ownerAdjustmentId: 'ded-1' })
+    expect(bookingBill(bk())).toBe(bill0 - 24000)
+    expect(priceBreakdown(bk()).lines.at(-1)).toMatchObject({ label: 'Tyres', detail: '2 rear tyres', amount: -24000, tone: 'minus', group: 'deduction' })
+    expect(legsOf(bk()).find((l) => l.vehicleId === 'vA')!.payout).toBe(payout0 - 24000)
+    expect(bk().activity!.at(-1)!.text).toMatch(/^Deduction Rs 24,000 off the bill/)
+
+    const c = bk().charges!.find((x) => x.kind === 'Deduction')!
+    main().waiveCharge(b, c.id, 'A')
+    expect(bookingBill(bk())).toBe(bill0)
+    expect(legsOf(bk()).find((l) => l.vehicleId === 'vA')!.payout).toBe(payout0)
+  })
+})
+
+describe('return — a deduction bigger than the owner earns on the booking', () => {
+  it("takes what this booking's payout covers and records the rest as owed back; removing the deduction clears both", () => {
+    const b = world()
+    const bk = () => main().bookings.find((x) => x.id === b)!
+    const payout0 = legsOf(bk()).find((l) => l.vehicleId === 'vA')!.payout
+    const oA0 = main().owners.find((o) => o.id === 'oA')!.pendingPayout
+    const amount = Math.floor(payout0) + 5000
+    const o = main().chargeOwner(b, 'vA', amount, 'Tyres paid by the customer', 'A')
+    expect(o).toMatchObject({ fromPayout: Math.floor(payout0), owed: 5000 })
+    expect(legsOf(bk()).find((l) => l.vehicleId === 'vA')!.payout).toBe(payout0 - Math.floor(payout0))
+    const owed = main().commissions.find((c) => c.id === o.owedId)!
+    expect(owed).toMatchObject({ ownerPayout: -5000, status: 'Pending', ownerId: 'oA' })
+    expect(owed.note).toMatch(/^Owes back: Tyres paid by the customer — Rs 5,000 .*taken from the next payout/)
+    expect(main().owners.find((o) => o.id === 'oA')!.pendingPayout).toBe(oA0 - 5000)
+    main().addCharge(b, { kind: 'Deduction', amount: -amount, date: '2026-07-08', note: 'Tyres', by: 'A', ownerAdjustmentId: o.adjustmentId, ownerOwedId: o.owedId })
+    main().waiveCharge(b, bk().charges!.at(-1)!.id, 'A')
+    expect(legsOf(bk()).find((l) => l.vehicleId === 'vA')!.payout).toBe(payout0)
+    expect(main().commissions.find((c) => c.id === o.owedId)!.ownerPayout).toBe(0)
+  })
+
+  it('owner already paid for this booking → all of it is owed back', () => {
+    const b = world()
+    const m0 = main().commissions.find((c) => c.bookingId === b)!
+    useStore.setState((st) => ({ commissions: st.commissions.map((c) => (c.id === m0.id ? { ...c, status: 'Paid' as const } : c)) }))
+    const o = main().chargeOwner(b, 'vA', 24000, 'Tyres paid by the customer', 'A')
+    expect(o).toMatchObject({ fromPayout: 0, owed: 24000, adjustmentId: undefined })
+    expect(main().commissions.find((c) => c.id === o.owedId)!.note).toMatch(/already paid/)
   })
 })

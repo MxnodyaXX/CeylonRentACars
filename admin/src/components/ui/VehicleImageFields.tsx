@@ -15,6 +15,7 @@ interface Single { url: string | null; isNew: boolean }
 export const MAX_HEROES = 3;
 
 interface Props {
+  bare?: boolean;                   // no own heading (the parent section has one)
   enabled: boolean;                 // Supabase Storage configured
   admin: Single;
   heroes: Single[];                 // up to MAX_HEROES
@@ -152,17 +153,17 @@ function HeroSlots({ heroes, shown, enabled, onPick, onShow, onRemove }: {
 }
 
 export default function VehicleImageFields({
-  enabled, admin, heroes, heroShown, onShowHero, onRemoveHero, photos, onPick, onClear, onRemoveSaved, onRemovePending,
+  bare, enabled, admin, heroes, heroShown, onShowHero, onRemoveHero, photos, onPick, onClear, onRemoveSaved, onRemovePending,
 }: Props) {
   const photoInput = useRef<HTMLInputElement>(null);
   const count = photos.saved.length + photos.pending.length;
 
   return (
     <div className="sm:col-span-2 flex flex-col gap-5">
-      <div className="flex items-center gap-2 mt-1">
+      {!bare && <div className="flex items-center gap-2 mt-1">
         <Camera size={14} className="text-navy-400" />
         <p className="text-xs font-semibold text-navy-500 uppercase tracking-wide">Vehicle Images</p>
-      </div>
+      </div>}
 
       {!enabled && (
         <div className="flex items-center gap-2 bg-navy-50 rounded-xl px-3 py-2.5 text-xs text-navy-400">

@@ -172,7 +172,7 @@ export interface Booking {
   payments?: PaymentEntry[];        // every payment / refund / deposit movement, oldest first
   customerInfo?: CustomerInfo;      // licence, nationality, emergency contact
   documents?: BookingDocument[];    // licence / ID photos, signed agreement, receipts
-  checklists?: { pickup?: HandoverChecklist; return?: HandoverChecklist };
+  checklists?: { pickup?: HandoverChecklist; return?: HandoverChecklist; replacements?: ManualReplacement[] };
   charges?: ExtraCharge[];          // fines, tolls, damage — added during or after the rental
   exchanges?: VehicleExchange[];    // mid-trip vehicle exchanges, oldest first; vehicleId is the car the customer has now
   payoutAdjustments?: PayoutAdjustment[];  // deductions from a car owner's payout (e.g. their share of a breakdown repair)
@@ -215,10 +215,38 @@ export interface BookingDocument {
   by: string;
 }
 
+/** Which counter a km reading was read from: the main odometer, or a trip meter the driver can reset */
+export type KmMeter = 'odo' | 'A' | 'B' | 'C';
+
+/**
+ * A breakdown replacement typed in with a past (manual) booking — kept on the booking
+ * (checklists.replacements), so the km of every car count like a live breakdown swap.
+ */
+export interface ManualReplacement {
+  id: string;
+  source: 'fleet' | 'partner';
+  replacementVehicleId?: string;
+  /** another company's car */
+  partnerName?: string; partnerVehicle?: string; partnerReg?: string;
+  outAt: string;
+  backAt: string;
+  /** the booked car came back to the customer, or the customer kept the replacement to the end */
+  outcome: 'swapped_back' | 'customer_kept';
+  originalOdometer?: number; replacementOdometerOut?: number; replacementOdometerIn?: number; originalOdometerBack?: number;
+  meters?: Partial<Record<'originalOdometer' | 'replacementOdometerOut' | 'replacementOdometerIn' | 'originalOdometerBack', KmMeter>>;
+  reason?: string;
+  /** what the replacement's owner gets for it (a payout line) */
+  payout?: number;
+  payoutId?: string;
+}
+
 export interface HandoverChecklist {
   at: string;             // ISO — the actual handover time
   by: string;
-  odometer: number;
+  /** absent = not recorded (allowed only for a recovery, where staff can't always read it) */
+  odometer?: number;
+  /** the reading is from a trip meter (Trip A/B/C), not the main odometer — absent = odometer */
+  meter?: KmMeter;
   fuel: string;           // 'Full' | '3/4' | '1/2' | '1/4' | 'Empty'
   items: Record<string, boolean>;   // spare tyre, jack, documents…
   damage?: string;        // scratches / dents noted
@@ -237,7 +265,9 @@ export interface VehicleRecovery {
   customerFlagged?: boolean;   // added to the do-not-rent list at recovery
 }
 
-export type ChargeKind = 'Traffic fine' | 'Toll' | 'Parking' | 'Damage' | 'Fuel' | 'Late return' | 'Cleaning' | 'Other';
+export type ChargeKind = 'Traffic fine' | 'Toll' | 'Parking' | 'Damage' | 'Fuel' | 'Late return' | 'Cleaning' | 'Other'
+  /** money off the bill (negative amount) — e.g. the customer paid for new tyres for the car */
+  | 'Deduction';
 /**
  * A deduction from (or, if negative, an addition to) what one car's owner earns on a booking —
  * e.g. the owner's share of a breakdown repair, or days a partner vehicle covered. Kept on the
@@ -309,6 +339,10 @@ export interface ExtraCharge {
   status: 'Charged' | 'Waived';
   by: string;
   at: string;
+  /** a Deduction the car owner carries (their car's tyres / parts): the payout adjustment on this booking,
+   *  and the "owes back" line for what this booking's payout couldn't cover */
+  ownerAdjustmentId?: string;
+  ownerOwedId?: string;
 }
 
 export interface RentalAgreement {
@@ -636,9 +670,17 @@ export interface AppState {
   reverseOwnerPayoutAdjustment: (bookingId: string, adjustmentId: string, by: string) => string | null;
   /** A breakdown replacement car's earnings on a booking: its own payout row for its owner (once per id) */
   addSwapPayout: (x: { id: string; bookingId: string; vehicleId: string; amount: number; note?: string }) => string | null;
+  /** Change the amount of a pending breakdown payout line (sw-…); a paid one is left alone */
+  updateSwapPayout: (id: string, amount: number, note?: string) => string | null;
+  /** The car owner carries an amount (e.g. tyres the customer paid for): off this booking's payout as far as it goes,
+   *  the rest as a pending "owes back" line netted off their next payout */
+  chargeOwner: (bookingId: string, vehicleId: string, amount: number, reason: string, by: string) => { adjustmentId?: string; owedId?: string; fromPayout: number; owed: number; error?: string };
   /** Mid-trip vehicle exchange — returns an error message, or null when done */
   exchangeVehicle: (bookingId: string, x: ExchangeInput) => string | null;
-  settleCredit: (bookingId: string) => void;
+  /** Collect what is still owed on a booking's credit (logged as a payment) and close it */
+  settleCredit: (bookingId: string, by?: string, method?: string) => void;
+  /** The balance was recorded as credit by mistake — remove the credit (logged in the history) */
+  clearCredit: (bookingId: string, by: string, reason: string) => void;
 
   drafts: ProcessDraft[];
   saveDraft: (d: Omit<ProcessDraft, 'id' | 'createdAt' | 'updatedAt'>) => string;

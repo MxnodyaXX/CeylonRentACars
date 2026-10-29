@@ -346,6 +346,38 @@ describe('settleCredit — credit collection', () => {
     expect(calcDue(b)).toBe(2000)
   })
 
+  it('settleCredit puts the collection in the payment log with its method', () => {
+    useStore.getState().settleCredit('bk1', 'Nimal', 'Bank transfer')
+    const b = useStore.getState().bookings.find((x) => x.id === 'bk1')!
+    expect(b.payments?.at(-1)).toMatchObject({ kind: 'Payment', amount: 7000, method: 'Bank transfer', by: 'Nimal', note: 'Credit collected' })
+    expect(b.activity?.at(-1)?.text).toBe('Credit settled — Rs 7,000 collected by Bank transfer')
+  })
+
+  it('credit is never more than what is still owed — deductions at return bring it down', async () => {
+    const { bookingCredit, bookingDue } = await import('../../src/lib/credit')
+    // 110,000 booked, 90,000 paid, 20,000 saved as credit; the return adds 36,100 km and deducts 55,500
+    const b = { ...useStore.getState().bookings[0], totalAmount: 110000, paidAmount: 90000, advanceAmount: 0, discount: 0, badDebt: 0,
+      extraCharges: 36100 - 55500, creditAmount: 20000, creditSettled: false }
+    expect(bookingDue(b)).toBe(600)
+    expect(bookingCredit(b)).toBe(600)
+    useStore.setState({ bookings: [b] })
+    useStore.getState().settleCredit('bk1', 'Nimal', 'Cash')
+    const after = useStore.getState().bookings[0]
+    expect(after.paidAmount).toBe(90600)          // only the 600 still owed, not the 20,000 recorded
+    expect(bookingDue(after)).toBe(0)
+  })
+
+  it('clearCredit turns a balance wrongly saved as credit back into an ordinary balance due', async () => {
+    const { bookingCredit, bookingDue } = await import('../../src/lib/credit')
+    useStore.getState().clearCredit('bk1', 'Nimal', 'it was the balance paid at return')
+    const b = useStore.getState().bookings.find((x) => x.id === 'bk1')!
+    expect(b.creditAmount).toBe(0)
+    expect(b.creditSettled).toBe(false)
+    expect(bookingCredit(b)).toBe(0)
+    expect(bookingDue(b)).toBe(9000)              // what the customer owes doesn't change
+    expect(b.activity?.at(-1)?.text).toContain('Credit Rs 7,000 removed')
+  })
+
   it('calling settleCredit twice is a no-op on the second call', () => {
     useStore.getState().settleCredit('bk1')
     const afterFirst = useStore.getState().bookings.find((b) => b.id === 'bk1')!.paidAmount
@@ -667,6 +699,24 @@ describe('editBooking — admin correction of a wrongly entered booking', () => 
   })
   const manual = (o: Partial<Booking> = {}) =>
     useStore.getState().addManualBooking({ ...makeBookingInput({ status: 'Completed', totalAmount: 25000, ...o }), commissionAlreadyPaid: false })
+
+  it('a manual booking saves its extra km charge and replacement payout with the booking itself', async () => {
+    const { bookingBill, bookingDue } = await import('../../src/lib/credit')
+    const charge = { id: 'ch1', kind: 'Other' as const, amount: 605, date: '2026-10-25', note: 'Extra km: 11 km × Rs 55', status: 'Charged' as const, by: 'Admin', at: '2026-10-25T22:00:00Z' }
+    const id = useStore.getState().addManualBooking({
+      ...makeBookingInput({ status: 'Completed', totalAmount: 5500, discount: 105, paidAmount: 6000, charges: [charge], extraCharges: 605 }),
+      commissionAlreadyPaid: false,
+      extraPayouts: [{ id: 'man-pay-r1', vehicleId: 'v2', amount: 3000, note: 'Breakdown replacement' }],
+    } as Parameters<ReturnType<typeof useStore.getState>['addManualBooking']>[0])
+    const s = useStore.getState()
+    const b = s.bookings.find((x) => x.id === id)!
+    expect(b.charges).toHaveLength(1)
+    expect(bookingBill(b)).toBe(6000)          // 5,500 rental + 605 extra km − 105 discount
+    expect(bookingDue(b)).toBe(0)
+    expect((b as { extraPayouts?: unknown }).extraPayouts).toBeUndefined()   // not stored on the booking
+    expect(s.commissions.find((c) => c.id === 'man-pay-r1')).toMatchObject({ bookingId: id, ownerId: 'o2', ownerPayout: 3000, status: 'Pending' })
+    expect(s.owners.find((o) => o.id === 'o2')).toMatchObject({ totalEarnings: 3000, pendingPayout: 3000 })
+  })
 
   it('a corrected total moves vehicle revenue, the commission and the owner payout', () => {
     const id = manual()

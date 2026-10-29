@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, History, Save } from 'lucide-react';
+import { AlertCircle, Gauge, History, Receipt, Save } from 'lucide-react';
 import Modal from './Modal';
 import Select from './Select';
 import DateInput from './DateInput';
@@ -7,7 +7,13 @@ import TimePicker from './TimePicker';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { rentalDays, statusDateProblem, statusForDates } from '../../lib/availability';
-import type { Booking } from '../../types';
+import type { Booking, ExtraCharge } from '../../types';
+import { useBreakdownStore, tripKmFor } from '../../store/useBreakdownStore';
+import UsagePhases from '../breakdowns/UsagePhases';
+import ManualMileageFields, { extraKmCharges, mileageDraftOf, mileageOf } from './ManualMileageFields';
+import { chargeLine } from '../../lib/bookingRecord';
+import { kmWithMeter } from '../../lib/tripKm';
+import { toast } from '../../store/useToast';
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
 import { RentalType, UNIT } from '../../lib/rentalPeriod';
 
@@ -34,7 +40,8 @@ const formOf = (b: Booking) => ({
   dailyRate: b.totalDays ? Math.round(b.totalAmount / b.totalDays) : b.totalAmount,
   totalAmount: b.totalAmount,
   discount: b.discount ?? 0,
-  extraCharges: b.extraCharges ?? 0,
+  // the part of the extra charges not tied to a listed charge (extra km, fines, deductions are listed separately)
+  extraCharges: (b.extraCharges ?? 0) - (b.charges ?? []).filter((c) => c.status === 'Charged').reduce((t, c) => t + c.amount, 0),
   advanceAmount: b.advanceAmount ?? 0,
   paidAmount: b.paidAmount ?? 0,
   creditAmount: b.creditAmount ?? 0,
@@ -64,7 +71,7 @@ const FIELDS: { key: keyof Form; label: string; fmt?: (v: unknown, f: Form, vehi
   { key: 'totalDays', label: 'Days' },
   { key: 'totalAmount', label: 'Total', fmt: (v) => rs(v as number) },
   { key: 'discount', label: 'Discount', fmt: (v) => rs(v as number) },
-  { key: 'extraCharges', label: 'Extra charges', fmt: (v) => rs(v as number) },
+  { key: 'extraCharges', label: 'Other extra charges (not itemised)', fmt: (v) => rs(v as number) },
   { key: 'advanceAmount', label: 'Advance', fmt: (v) => rs(v as number) },
   { key: 'paidAmount', label: 'Paid', fmt: (v) => rs(v as number) },
   { key: 'creditAmount', label: 'Credit due', fmt: (v) => rs(v as number) },
@@ -89,7 +96,9 @@ const numIn = (v: string) => Math.max(0, Number(v) || 0);
 
 /** Admin-only: correct a booking that was entered wrongly (amounts, dates, status, customer…) */
 export default function EditBookingModal({ booking, onClose, onSaved }: { booking: Booking; onClose: () => void; onSaved?: (b: Booking) => void }) {
-  const { vehicles, owners, isVehicleAvailable, editBooking } = useStore();
+  const { vehicles, owners, commissions, isVehicleAvailable, editBooking, addSwapPayout, updateSwapPayout, updateVehicle } = useStore();
+  const allSwaps = useBreakdownStore((s) => s.swaps);
+  const liveSwaps = allSwaps.filter((w) => w.bookingId === booking.id);
   const staff = useAuthStore((s) => s.currentUser?.name) ?? 'Admin';
   const original = useMemo(() => formOf(booking), [booking]);
   const [f, setF] = useState<Form>(original);
@@ -119,11 +128,41 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     setF((cur) => ({ ...cur, ...patch } as Form));
   };
 
-  const changes = FIELDS.filter(({ key }) => String(f[key] ?? '') !== String(original[key] ?? ''))
+  /* ── Mileage: readings, breakdown replacements typed in with the booking, and the extra km charge ──
+     A booking with live breakdown swaps or vehicle exchanges keeps its readings there (corrected in
+     the usage phases); the others are corrected here. */
+  const liveTrip = liveSwaps.length > 0 || (booking.exchanges?.length ?? 0) > 0;
+  const mileage0 = useMemo(() => mileageDraftOf(booking), [booking]);
+  const [md, setMd] = useState(mileage0);
+  const mCtx = { vehicles, vehicleId: f.vehicleId, status: f.status, startDate: f.startDate, startTime: f.startTime, endDate: f.endDate, endTime: f.endTime, totalDays: f.totalDays, by: staff };
+  const mileage = mileageOf(md, mCtx);
+  const showMileage = f.status === 'Ongoing' || f.status === 'Completed';
+  const readingsChanged = !liveTrip && showMileage && JSON.stringify({ ...md, rate: '', chargeKm: false }) !== JSON.stringify({ ...mileage0, rate: '', chargeKm: false });
+  // the extra km on the bill now, and what it becomes (unchanged while the readings are incomplete)
+  const kmCharges = extraKmCharges(booking);
+  const oldKm = kmCharges.reduce((t, c) => t + c.amount, 0);
+  const newKm = liveTrip || !showMileage ? oldKm : !md.chargeKm ? 0 : mileage.trip?.total != null ? mileage.charge : oldKm;
+  const kmChanged = newKm !== oldKm || (newKm > 0 && !!kmCharges[0] && kmCharges[0].note !== mileage.chargeNote && !liveTrip && mileage.trip?.total != null && md.chargeKm);
+  // every other listed charge / deduction stays as it is (managed on the Payments tab)
+  const listed = (booking.charges ?? []).filter((c) => c.status === 'Charged' && !kmCharges.includes(c));
+  const listedTotal = listed.reduce((t, c) => t + c.amount, 0);
+  const extraTotal = listedTotal + newKm + f.extraCharges;
+
+  const r = (n?: number, m?: Parameters<typeof kmWithMeter>[1]) => kmWithMeter(n, m);
+  const mileageChanges: string[] = [];
+  if (readingsChanged) {
+    const p0 = booking.checklists?.pickup, r0 = booking.checklists?.return, c = mileage.checklists;
+    if (p0?.odometer !== c?.pickup?.odometer || (p0?.meter ?? 'odo') !== (c?.pickup?.meter ?? 'odo')) mileageChanges.push(`Pickup reading: ${p0 ? r(p0.odometer, p0.meter) : '—'} → ${c?.pickup ? r(c.pickup.odometer, c.pickup.meter) : '—'}`);
+    if (r0?.odometer !== c?.return?.odometer || (r0?.meter ?? 'odo') !== (c?.return?.meter ?? 'odo')) mileageChanges.push(`Return reading: ${r0 ? r(r0.odometer, r0.meter) : '—'} → ${c?.return ? r(c.return.odometer, c.return.meter) : '—'}`);
+    if (JSON.stringify(md.replacements) !== JSON.stringify(mileage0.replacements)) mileageChanges.push(`Breakdown replacements: ${mileage0.replacements.length} → ${md.replacements.length}${md.replacements.length && mileage0.replacements.length ? ' (readings / dates corrected)' : ''}`);
+  }
+  if (kmChanged) mileageChanges.push(`Extra km charge: ${rs(oldKm)} → ${rs(newKm)}${newKm ? ` (${mileage.chargeNote})` : ''}`);
+
+  const changes = [...FIELDS.filter(({ key }) => String(f[key] ?? '') !== String(original[key] ?? ''))
     .map(({ key, label, fmt }) => {
       const show = (x: unknown) => (fmt ? fmt(x, f, vehicleName) : (x === '' || x == null ? '—' : String(x)));
       return `${label}: ${show(original[key])} → ${show(f[key])}`;
-    });
+    }), ...mileageChanges];
 
   const statusProblem = statusDateProblem(f.status, f);
   const suggested = f.startDate && f.endDate && f.startDate <= f.endDate ? statusForDates(f) : undefined;
@@ -132,7 +171,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     || f.startTime !== original.startTime || f.endTime !== original.endTime || f.status !== original.status;
   const clash = live && datesOrVehicleChanged && !!f.vehicleId && !!f.startDate && !!f.endDate
     && !isVehicleAvailable(f.vehicleId, f.startDate, f.endDate, booking.id, f.startTime, f.endTime);
-  const bill = Math.max(0, f.totalAmount + f.extraCharges - f.discount);
+  const bill = Math.max(0, f.totalAmount + extraTotal - f.discount);
   const balance = bill - f.paidAmount - f.advanceAmount;
 
   const save = () => {
@@ -146,6 +185,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     if (f.referralFee > f.totalAmount) return setError("The referral fee can't be more than the total.");
     if (statusProblem) return setError(statusProblem);
     if (clash) return setError('This vehicle already has another live booking on these dates.');
+    if (readingsChanged && mileage.problems.length) return setError(`Mileage: ${mileage.problems[0]}`);
 
     const updates: Partial<Booking> = {
       vehicleId: f.vehicleId,
@@ -154,7 +194,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
       startDate: f.startDate, endDate: f.endDate, startTime: f.startTime || undefined, endTime: f.endTime || undefined,
       waiveExtraDay: f.waiveExtraDay, totalDays: f.totalDays, totalAmount: f.totalAmount,
       rentalType: f.rentalType, rentalUnits: f.rentalType === 'Daily' ? undefined : f.rentalUnits, unitRate: f.rentalType === 'Daily' ? undefined : f.unitRate,
-      discount: f.discount, extraCharges: f.extraCharges, advanceAmount: f.advanceAmount, paidAmount: f.paidAmount,
+      discount: f.discount, extraCharges: extraTotal, advanceAmount: f.advanceAmount, paidAmount: f.paidAmount,
       creditAmount: f.creditAmount, ...(f.creditAmount === 0 && booking.creditAmount ? { creditSettled: true } : {}),
       status: f.status, referral: f.referral, referralFee: f.referralFee,
       pickupLocation: f.pickupLocation, dropLocation: f.dropLocation,
@@ -166,7 +206,52 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     if (changedKeys.has('startTime') || changedKeys.has('startDate')) changedKeys.add('pickupAt');
     if (changedKeys.has('endTime') || changedKeys.has('endDate')) changedKeys.add('returnAt');
     if (changedKeys.has('creditAmount')) changedKeys.add('creditSettled');
+    if (kmChanged) changedKeys.add('extraCharges');
     const diff = Object.fromEntries(Object.entries(updates).filter(([k]) => changedKeys.has(k))) as Partial<Booking>;
+    // the extra km charge: the old one is marked waived (kept for the record) and the corrected one added
+    if (kmChanged) {
+      const now = new Date().toISOString();
+      const fresh: ExtraCharge[] = newKm > 0 ? [{ id: Math.random().toString(36).slice(2, 10), kind: 'Other', amount: newKm, date: f.endDate, note: mileage.chargeNote, status: 'Charged', by: staff, at: now }] : [];
+      diff.charges = [...(booking.charges ?? []).map((c) => (kmCharges.includes(c) ? { ...c, status: 'Waived' as const } : c)), ...fresh];
+    }
+    // the readings: the saved handover records keep their checklist, photos and signature — only the km change
+    const owedPaid: string[] = [];
+    if (readingsChanged) {
+      const c = mileage.checklists ?? {};
+      const keep = (old: NonNullable<Booking['checklists']>['pickup'], now: typeof old) => (now ? (old ? { ...old, odometer: now.odometer, meter: now.meter } : now) : undefined);
+      const pickup = keep(booking.checklists?.pickup, c.pickup), ret = keep(booking.checklists?.return, c.return);
+      diff.checklists = {
+        ...(booking.checklists ?? {}),
+        pickup, return: ret,
+        replacements: c.replacements,
+      };
+      (['pickup', 'return', 'replacements'] as const).forEach((k) => { if (diff.checklists![k] === undefined) delete diff.checklists![k]; });
+    }
+
+    editBooking(booking.id, diff, { by: staff, changes, reason: reason.trim() || undefined });
+
+    if (readingsChanged) {
+      // replacement owners' payout lines follow the corrected amounts (a paid one is left — settle it with the owner)
+      const want = new Map(mileage.payouts.map((x) => [x.id, x]));
+      for (const x of mileage.payouts) {
+        const row = commissions.find((c) => c.id === x.id);
+        if (!row) addSwapPayout({ ...x, bookingId: booking.id });
+        else if (row.status === 'Paid') { if (row.ownerPayout !== x.amount) owedPaid.push(x.id); }
+        else if (row.ownerPayout !== x.amount || row.vehicleId !== x.vehicleId) updateSwapPayout(x.id, x.amount, x.note);
+      }
+      (booking.checklists?.replacements ?? []).forEach((old) => {
+        if (!old.payoutId || want.has(old.payoutId)) return;
+        const row = commissions.find((c) => c.id === old.payoutId);
+        if (row && row.status !== 'Paid') updateSwapPayout(row.id, 0, 'Replacement removed from the booking');
+        else if (row) owedPaid.push(row.id);
+      });
+      mileage.carReadings.forEach((x) => {
+        const v = useStore.getState().vehicles.find((y) => y.id === x.vehicleId);
+        if (v && x.km > (v.mileage ?? 0)) updateVehicle(v.id, { mileage: x.km });
+      });
+    }
+    // a payout line already paid is not changed — the difference is settled with the owner
+    if (owedPaid.length) toast.warning('Paid payout not changed', 'A replacement owner was already paid — settle the difference with them in Commissions.');
 
     editBooking(booking.id, diff, { by: staff, changes, reason: reason.trim() || undefined });
     onSaved?.(useStore.getState().bookings.find((b) => b.id === booking.id) ?? booking);
@@ -240,7 +325,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
           <Field label="Total (Rs)" hint={<p className="text-[11px] text-navy-400 mt-1">{manualTotal ? 'Typed by hand' : f.rentalType === 'Daily' ? `${f.totalDays} × ${rs(f.dailyRate)}` : `${f.rentalUnits ?? 0} × ${rs(f.unitRate ?? 0)}`}</p>}>
             <input className="input" type="number" min="0" value={f.totalAmount || ''} onChange={(e) => { setManualTotal(true); set('totalAmount', numIn(e.target.value)); }} />
           </Field>
-          <Field label="Extra charges (Rs)">
+          <Field label="Other charges, not itemised (Rs)">
             <input className="input" type="number" min="0" value={f.extraCharges || ''} onChange={(e) => set('extraCharges', numIn(e.target.value))} placeholder="0" />
           </Field>
           <Field label="Discount (Rs)">
@@ -255,6 +340,22 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
           <Field label="Credit due (Rs)">
             <input className="input" type="number" min="0" value={f.creditAmount || ''} onChange={(e) => set('creditAmount', numIn(e.target.value))} placeholder="0" />
           </Field>
+          {/* everything on the bill, line by line */}
+          <div className="col-span-2 sm:col-span-4 rounded-xl border border-navy-100 px-3 py-2 text-xs space-y-1">
+            <p className="font-semibold text-navy-600 flex items-center gap-1.5"><Receipt size={13} /> On the bill</p>
+            <p className="flex justify-between"><span className="text-navy-500">Rental</span><span className="tabular-nums">{rs(f.totalAmount)}</span></p>
+            {(newKm > 0 || oldKm > 0) && (
+              <p className="flex justify-between gap-3"><span className="text-navy-500">Extra km{newKm !== oldKm ? <span className="text-amber-700"> (was {rs(oldKm)})</span> : null}</span><span className="tabular-nums">{rs(newKm)}</span></p>
+            )}
+            {listed.map((c) => { const l = chargeLine(c); return (
+              <p key={c.id} className="flex justify-between gap-3"><span className="text-navy-500 min-w-0">{c.amount < 0 ? 'Deduction — ' : ''}{l.label}{l.detail ? <span className="text-navy-400"> · {l.detail}</span> : null}</span>
+                <span className={`tabular-nums whitespace-nowrap ${c.amount < 0 ? 'text-emerald-700' : ''}`}>{c.amount < 0 ? '− ' : ''}{rs(Math.abs(c.amount))}</span></p>
+            ); })}
+            {f.extraCharges !== 0 && <p className="flex justify-between"><span className="text-navy-500">Other charges (not itemised)</span><span className="tabular-nums">{rs(f.extraCharges)}</span></p>}
+            {f.discount > 0 && <p className="flex justify-between"><span className="text-navy-500">Discount</span><span className="tabular-nums text-emerald-700">− {rs(f.discount)}</span></p>}
+            <p className="flex justify-between font-bold text-navy-900 border-t border-navy-100 pt-1"><span>Bill</span><span className="tabular-nums">{rs(bill)}</span></p>
+            {listed.length > 0 && <p className="text-[11px] text-navy-400">Fines, damage and deductions are added or removed on the booking's Payments tab.</p>}
+          </div>
           <div className="col-span-2 sm:col-span-4 grid grid-cols-3 gap-2 text-center">
             <div className="rounded-xl bg-navy-700 text-white p-2"><p className="text-[11px] opacity-70">Bill</p><p className="font-bold">{rs(bill)}</p></div>
             <div className="rounded-xl bg-emerald-50 p-2"><p className="text-[11px] text-emerald-600">Paid + advance</p><p className="font-bold text-emerald-700">{rs(f.paidAmount + f.advanceAmount)}</p></div>
@@ -264,6 +365,24 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
             </div>
           </div>
         </section>
+
+        {/* Mileage */}
+        {showMileage && (
+          <section className="border-t border-navy-100 pt-4">
+            <p className="text-sm font-semibold text-navy-700 flex items-center gap-1.5 mb-1"><Gauge size={15} /> Mileage</p>
+            {liveTrip ? (
+              <>
+                <p className="text-xs text-navy-400 mb-2">This booking has a breakdown replacement or a vehicle exchange — its readings are kept there. Correct a reading with "Correct" on its phase below.</p>
+                <UsagePhases trip={tripKmFor(booking)} bookingId={booking.id} includedKm={mileage.includedKm} />
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-navy-400 mb-3">Readings from the agreement / handover sheet, and any breakdown replacement on the way. Changing them updates the extra km on the bill.</p>
+                <ManualMileageFields value={md} onChange={setMd} mileage={mileage} ctx={mCtx} />
+              </>
+            )}
+          </section>
+        )}
 
         {/* Referral */}
         <section className="border-t border-navy-100 pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">

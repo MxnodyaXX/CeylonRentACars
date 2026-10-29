@@ -6,7 +6,7 @@ import { supabaseEnabled } from '../lib/supabase';
 import { db, dbFetchAll } from '../lib/db';
 import { resolveReferralFee } from '../lib/referral';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap } from '../lib/availability';
-import { legsOf, mainCommission, previewExchange } from '../lib/exchange';
+import { legsOf, mainCommission, payoutRowFor, previewExchange } from '../lib/exchange';
 import { sendSms, smsTemplates, ADMIN_PHONE } from '../lib/sms';
 import { toast } from './useToast';
 
@@ -26,6 +26,8 @@ function notifyListingError(message: string) {
 }
 import { useAuthStore } from './useAuthStore';
 import cab1234Img from '../data/CAB-1234.png';
+import { METER_LABEL, kmWithMeter, meterOf } from '../lib/tripKm';
+import { bookingCredit } from '../lib/credit';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
@@ -160,6 +162,56 @@ export const useStore = create<AppState>()(
           get().addNotification({
             type: 'General', relatedId: `payout:${row.id}`, ownerId: owner.id, message: x.note,
             title: x.amount >= 0 ? `Payout added: Rs ${Math.round(x.amount).toLocaleString('en-LK')}` : `Payout adjustment: −Rs ${Math.round(-x.amount).toLocaleString('en-LK')}`,
+          });
+        }
+        return null;
+      },
+
+      chargeOwner: (bookingId, vehicleId, amount, reason, by) => {
+        const b = get().bookings.find((x) => x.id === bookingId);
+        const car = get().vehicles.find((v) => v.id === vehicleId);
+        if (!b || !car) return { fromPayout: 0, owed: 0, error: 'Booking or vehicle not found.' };
+        const leg = [...legsOf(b)].reverse().find((l) => l.vehicleId === vehicleId);
+        const paid = payoutRowFor(get().commissions, b, vehicleId)?.status === 'Paid';
+        const fromPayout = paid || !leg ? 0 : Math.min(amount, Math.floor(leg.payout));
+        const owed = Math.round(amount - fromPayout);
+        const key = uid();
+        let adjustmentId: string | undefined, owedId: string | undefined;
+        if (fromPayout > 0) {
+          adjustmentId = `ded-${key}`;
+          const e = get().adjustOwnerPayout(bookingId, { id: adjustmentId, vehicleId, amount: fromPayout, source: 'Return', by, reason });
+          if (e) return { fromPayout: 0, owed: 0, error: e };
+        }
+        if (owed > 0) {
+          owedId = `ded-owed-${key}`;
+          const e = get().addSwapPayout({ id: owedId, bookingId, vehicleId, amount: -owed,
+            note: `Owes back: ${reason} — Rs ${owed.toLocaleString('en-LK')}${fromPayout ? ` (Rs ${fromPayout.toLocaleString('en-LK')} was taken from this booking’s payout)` : paid ? " (this booking's payout was already paid)" : ''}, taken from the next payout` });
+          if (e) return { adjustmentId, fromPayout, owed: 0, error: e };
+        }
+        return { adjustmentId, owedId, fromPayout, owed };
+      },
+
+      updateSwapPayout: (id, amount, note) => {
+        const s = get();
+        const row = s.commissions.find((c) => c.id === id);
+        if (!row) return 'Payout line not found.';
+        if (row.status === 'Paid') return 'That payout is already marked paid — record the difference with the owner instead.';
+        if (!Number.isFinite(amount)) return 'Invalid amount.';
+        const delta = amount - row.ownerPayout;
+        if (!delta && (!note || note === row.note)) return null;
+        const updates: Partial<Commission> = { ownerPayout: amount, totalIncome: Math.max(0, amount), ...(note ? { note } : {}) };
+        const owner = s.owners.find((o) => o.id === row.ownerId);
+        const ownerU: Partial<Owner> | null = owner && delta ? { totalEarnings: owner.totalEarnings + delta, pendingPayout: owner.pendingPayout + delta } : null;
+        set((st) => ({
+          commissions: st.commissions.map((c) => (c.id === id ? { ...c, ...updates } : c)),
+          owners: ownerU ? st.owners.map((o) => (o.id === owner!.id ? { ...o, ...ownerU } : o)) : st.owners,
+        }));
+        sync(() => db.updateCommission(id, updates));
+        if (ownerU) sync(() => db.updateOwner(owner!.id, ownerU));
+        if (owner && delta) {
+          get().addNotification({
+            type: 'General', relatedId: `payout:${id}`, ownerId: owner.id, message: note ?? row.note ?? 'Breakdown payout corrected',
+            title: `Payout corrected: Rs ${Math.round(row.ownerPayout).toLocaleString('en-LK')} → Rs ${Math.round(amount).toLocaleString('en-LK')}`,
           });
         }
         return null;
@@ -576,7 +628,9 @@ export const useStore = create<AppState>()(
         const ownerPayout = Math.max(0, data.totalAmount - referralFee);
 
         // ── 3. Booking record ─────────────────────────────────────────────
-        const newBooking: Booking = { ...data, id: bookingId, customerId, referralFee, createdAt: now() };
+        // (payouts for breakdown replacement cars come along with the booking — not a booking field)
+        const { extraPayouts = [], ...bookingData } = data as typeof data & { extraPayouts?: { id: string; vehicleId: string; amount: number; note: string }[] };
+        const newBooking: Booking = { ...bookingData, id: bookingId, customerId, referralFee, createdAt: now() };
 
         // ── 4. Commission record ──────────────────────────────────────────
         const commissionPaid = (data as { commissionAlreadyPaid?: boolean }).commissionAlreadyPaid ?? data.status === 'Completed';
@@ -595,6 +649,14 @@ export const useStore = create<AppState>()(
           status: commissionPaid ? 'Paid' : 'Pending',
           createdAt: now(),
         };
+
+        // ── 4b. Payout lines for breakdown replacement cars (their owners are paid for the days covered) ──
+        const payoutRows: Commission[] = isCancelled ? [] : extraPayouts.filter((x) => x.amount > 0).map((x) => ({
+          id: x.id, bookingId, vehicleId: x.vehicleId, ownerId: store.vehicles.find((v) => v.id === x.vehicleId)?.ownerId ?? '', referral: 'Direct',
+          totalIncome: x.amount, commissionRate: 0, commissionAmount: 0, ownerPayout: x.amount, coordinatorFee: 0,
+          status: commissionPaid ? 'Paid' : 'Pending', createdAt: now(), note: x.note,
+        }));
+        const payoutOwnerIds = [...new Set(payoutRows.map((r) => r.ownerId).filter(Boolean))];
 
         // ── 5. Vehicle stat updates (skip for Cancelled) ──────────────────
         const vehicleUpdates: Partial<Vehicle> = isCancelled ? {} : {
@@ -648,7 +710,7 @@ export const useStore = create<AppState>()(
             ? [...s.customers, customerRecord]
             : s.customers.map((c) => (c.id === customerId ? customerRecord : c)),
           bookings: [...s.bookings, { ...newBooking, referralPaid: referralPaidFlag }],
-          commissions: [...s.commissions, commission],
+          commissions: [...s.commissions, commission, ...payoutRows],
           vehicles: Object.keys(vehicleUpdates).length > 0
             ? s.vehicles.map((v) => (v.id === data.vehicleId ? { ...v, ...vehicleUpdates } : v))
             : s.vehicles,
@@ -663,6 +725,14 @@ export const useStore = create<AppState>()(
             ? [bookingNotif, referralNotif, ...s.notifications]
             : [bookingNotif, ...s.notifications],
         }));
+        // replacement owners' totals (on top of any update above — the same owner may own both cars)
+        if (payoutRows.length) set((s) => ({
+          owners: s.owners.map((o) => {
+            const add = payoutRows.filter((r) => r.ownerId === o.id).reduce((t, r) => t + r.ownerPayout, 0);
+            return add ? { ...o, totalEarnings: o.totalEarnings + add, pendingPayout: commissionPaid ? o.pendingPayout : o.pendingPayout + add } : o;
+          }),
+        }));
+        const payoutOwnersAfter = get().owners.filter((o) => payoutOwnerIds.includes(o.id));
 
         // ── 10. DB sync — each step is checked for a Supabase error so a silent
         //       failure (Supabase never rejects, it returns { error }) surfaces
@@ -690,6 +760,10 @@ export const useStore = create<AppState>()(
             .then((r) => { if (r) ok(r); })
             .then(() => { if (referralOwner && Object.keys(referralOwnerUpdates).length > 0) return db.updateOwner(referralOwner.id, referralOwnerUpdates); })
             .then((r) => { if (r) ok(r); })
+            .then(() => Promise.all(payoutRows.map((r) => db.insertCommission(r))))
+            .then((rs) => rs.forEach(ok))
+            .then(() => Promise.all(payoutOwnersAfter.map((o) => db.updateOwner(o.id, { totalEarnings: o.totalEarnings, pendingPayout: o.pendingPayout }))))
+            .then((rs) => rs.forEach(ok))
             .then(() => db.insertNotification(bookingNotif))
             .then(() => { if (referralNotif) return db.insertNotification(referralNotif); })
             .catch((err) => {
@@ -912,19 +986,24 @@ export const useStore = create<AppState>()(
         const b = get().bookings.find((x) => x.id === id);
         if (!b) return;
         const charge: ExtraCharge = { ...c, id: c.id ?? uid(), at: now(), status: 'Charged' };
-        get().logBookingActivity(id, { by: c.by, type: 'Charge', text: `${c.kind} Rs ${c.amount.toLocaleString()} added${c.note ? ` — ${c.note}` : ''}` },
+        const off = c.amount < 0;   // a deduction: money off the bill
+        get().logBookingActivity(id, { by: c.by, type: 'Charge', text: off ? `Deduction Rs ${(-c.amount).toLocaleString()} off the bill${c.note ? ` — ${c.note}` : ''}` : `${c.kind} Rs ${c.amount.toLocaleString()} added${c.note ? ` — ${c.note}` : ''}` },
           { charges: [...(b.charges ?? []), charge], extraCharges: (b.extraCharges ?? 0) + c.amount });
-        toast.success('Charge added', `${c.kind}: Rs ${c.amount.toLocaleString()} added to the bill.`);
+        if (off) toast.success('Deduction recorded', `Rs ${(-c.amount).toLocaleString()} off the bill${c.note ? ` — ${c.note}` : ''}.`);
+        else toast.success('Charge added', `${c.kind}: Rs ${c.amount.toLocaleString()} added to the bill.`);
         return charge.id;
       },
       waiveCharge: (id, chargeId, by) => {
         const b = get().bookings.find((x) => x.id === id);
         const c = b?.charges?.find((x) => x.id === chargeId);
         if (!b || !c || c.status === 'Waived') return;
-        get().logBookingActivity(id, { by, type: 'Charge', text: `${c.kind} Rs ${c.amount.toLocaleString()} waived` }, {
+        get().logBookingActivity(id, { by, type: 'Charge', text: c.amount < 0 ? `Deduction Rs ${(-c.amount).toLocaleString()} removed — back on the bill${c.note ? ` (${c.note})` : ''}` : `${c.kind} Rs ${c.amount.toLocaleString()} waived` }, {
           charges: (b.charges ?? []).map((x) => (x.id === chargeId ? { ...x, status: 'Waived' as const } : x)),
-          extraCharges: Math.max(0, (b.extraCharges ?? 0) - c.amount),
+          extraCharges: (b.extraCharges ?? 0) - c.amount,
         });
+        // a deduction the owner carried: their payout goes back up
+        if (c.ownerAdjustmentId) get().reverseOwnerPayoutAdjustment(id, c.ownerAdjustmentId, by);
+        if (c.ownerOwedId && get().commissions.find((x) => x.id === c.ownerOwedId)?.status !== 'Paid') get().updateSwapPayout(c.ownerOwedId, 0, 'Deduction removed — nothing owed');
       },
 
       // Pickup / return handover with its checklist — starts or completes the rental
@@ -1108,17 +1187,20 @@ export const useStore = create<AppState>()(
           return;
         }
         const status = kind === 'pickup' ? 'Ongoing' as const : 'Completed' as const;
+        // a trip meter (Trip A/B) reading is not the car's total km — never written as its mileage
+        const trip = meterOf(list.meter) !== 'odo';
         const handover: VehicleHandover = {
           id: uid(), bookingId: id, vehicleId: b.vehicleId, type: kind === 'pickup' ? 'delivery' : 'return',
           location: location || (kind === 'pickup' ? b.pickupLocation : b.dropLocation) || '—', dateTime: list.at,
-          mileage: list.odometer, fuelLevel: list.fuel, notes: [list.damage, list.notes].filter(Boolean).join(' · ') || undefined,
+          // 0 = not recorded (a recovery without a reading; the column is not null)
+          mileage: list.odometer ?? 0, fuelLevel: list.fuel, notes: [trip ? `Reading from ${METER_LABEL[list.meter!]}, not the odometer` : '', list.damage, list.notes].filter(Boolean).join(' · ') || undefined,
           createdAt: now(),
         };
-        const pickupKm = kind === 'return' ? b.checklists?.pickup?.odometer : undefined;
+        const pickupKm = kind === 'return' && meterOf(b.checklists?.pickup?.meter) === meterOf(list.meter) ? b.checklists?.pickup?.odometer : undefined;
         const text = kind === 'pickup'
-          ? `Vehicle handed over — ${list.odometer.toLocaleString()} km, fuel ${list.fuel}`
-          : `${list.recovery ? `Vehicle recovered by the company (${list.recovery.reason.toLowerCase()}: ${list.recovery.details}${list.recovery.policeRef ? `; police ref ${list.recovery.policeRef}` : ''})` : 'Vehicle returned'} — ${list.odometer.toLocaleString()} km${pickupKm ? ` (${(list.odometer - pickupKm).toLocaleString()} km driven)` : ''}, fuel ${list.fuel}`;
-        const vehicleUpdates: Partial<Vehicle> = { status: kind === 'pickup' ? 'Ongoing' : keepMaintenance(b.vehicleId, 'Available'), ...(list.odometer > (vehicle?.mileage ?? 0) ? { mileage: list.odometer } : {}) };
+          ? `Vehicle handed over — ${kmWithMeter(list.odometer, list.meter)}, fuel ${list.fuel}`
+          : `${list.recovery ? `Vehicle recovered by the company (${list.recovery.reason.toLowerCase()}${list.recovery.details ? `: ${list.recovery.details}` : ''}${list.recovery.policeRef ? `; police ref ${list.recovery.policeRef}` : ''})` : 'Vehicle returned'} — ${list.odometer == null ? 'odometer not recorded' : kmWithMeter(list.odometer, list.meter)}${pickupKm && list.odometer != null ? ` (${(list.odometer - pickupKm).toLocaleString()} km driven)` : ''}, fuel ${list.fuel}`;
+        const vehicleUpdates: Partial<Vehicle> = { status: kind === 'pickup' ? 'Ongoing' : keepMaintenance(b.vehicleId, 'Available'), ...(!trip && list.odometer != null && list.odometer > (vehicle?.mileage ?? 0) ? { mileage: list.odometer } : {}) };
         set((x) => ({
           handovers: [...x.handovers, handover],
           vehicles: x.vehicles.map((v) => (v.id === b.vehicleId ? { ...v, ...vehicleUpdates } : v)),
@@ -1133,16 +1215,28 @@ export const useStore = create<AppState>()(
         else toast.success(kind === 'pickup' ? 'Rental started' : 'Rental completed', `${b.customerName}: ${text.toLowerCase()}.`);
       },
 
-      // Settle a customer's credit due — the outstanding amount has been collected,
-      // so it's added to the booking's paid amount and the credit is marked settled.
-      settleCredit: (bookingId) => {
+      // Settle a customer's credit due — what is still owed on it has been collected: it goes into the
+      // payment log like any other payment (so the booking shows when and how), and the credit is closed.
+      settleCredit: (bookingId, by = 'Admin', method = 'Cash') => {
         const b = get().bookings.find((x) => x.id === bookingId);
         if (!b || b.creditSettled) return;
-        const credit = b.creditAmount ?? 0;
-        const updates: Partial<Booking> = { creditSettled: true, paidAmount: b.paidAmount + credit };
-        set((s) => ({ bookings: s.bookings.map((x) => (x.id === bookingId ? { ...x, ...updates } : x)) }));
-        sync(() => db.updateBooking(bookingId, updates));
-        toast.success('Credit settled', `Rs ${credit.toLocaleString()} collected from ${b.customerName}.`);
+        const credit = bookingCredit(b);   // never more than the balance still due
+        const entry: PaymentEntry = { id: uid(), at: now(), kind: 'Payment', amount: credit, method, by, note: 'Credit collected' };
+        const updates: Partial<Booking> = {
+          creditSettled: true,
+          ...(credit > 0 ? { paidAmount: b.paidAmount + credit, payments: [...(b.payments ?? []), entry] } : {}),
+        };
+        get().logBookingActivity(bookingId, { by, type: 'Payment', text: credit > 0 ? `Credit settled — Rs ${credit.toLocaleString()} collected by ${method}` : 'Credit closed — nothing left to collect' }, updates);
+        toast.success('Credit settled', credit > 0 ? `Rs ${credit.toLocaleString()} collected from ${b.customerName}.` : `Nothing was left to collect from ${b.customerName}.`);
+      },
+
+      // A balance wrongly recorded as credit (it is simply the balance due, paid at return): no credit on the booking any more
+      clearCredit: (bookingId, by, reason) => {
+        const b = get().bookings.find((x) => x.id === bookingId);
+        if (!b || !(b.creditAmount ?? 0)) return;
+        get().editBooking(bookingId, { creditAmount: 0, creditSettled: false }, {
+          by, type: 'Edited', changes: [`Credit Rs ${(b.creditAmount ?? 0).toLocaleString()} removed — the balance is an ordinary balance due`], reason,
+        });
       },
 
       // ── Customers ─────────────────────────────────────────────────────────

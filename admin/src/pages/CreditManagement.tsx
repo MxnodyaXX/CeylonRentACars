@@ -21,7 +21,9 @@ const money = (n: number) => `Rs ${n.toLocaleString()}`;
 
 export default function CreditManagement() {
   const { bookings, vehicles, owners, settleCredit } = useStore();
-  const { isAdmin } = useAuthStore();
+  const { isAdmin, currentUser } = useAuthStore();
+  // "Mark collected" asks how it was paid, so the payment log on the booking says it
+  const [collecting, setCollecting] = useState<{ id: string; method: string } | null>(null);
 
   const [search, setSearch] = useState('');
   const [resp, setResp] = useState<RespFilter>('all');
@@ -268,7 +270,15 @@ export default function CreditManagement() {
                               <td className="py-2 text-right">
                                 {r.settled
                                   ? <span className="text-[11px] text-emerald-600 inline-flex items-center gap-1"><CheckCircle2 size={12} /> Collected</span>
-                                  : <button onClick={() => settleCredit(r.booking.id)} className="text-[11px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-lg transition-colors">Mark Collected</button>}
+                                  : collecting?.id === r.booking.id
+                                    ? <span className="inline-flex items-center gap-1.5">
+                                        <select className="rounded-lg border border-navy-200 bg-white px-1.5 py-1 text-[11px]" value={collecting.method} onChange={(e) => setCollecting({ id: r.booking.id, method: e.target.value })}>
+                                          {['Cash', 'Bank transfer', 'Card', 'Online', 'Cheque'].map((m) => <option key={m}>{m}</option>)}
+                                        </select>
+                                        <button onClick={() => { settleCredit(r.booking.id, currentUser?.name ?? 'Admin', collecting.method); setCollecting(null); }} className="text-[11px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-lg transition-colors">Collected {money(r.amount)}</button>
+                                        <button onClick={() => setCollecting(null)} className="text-[11px] text-navy-400 hover:text-navy-700">Cancel</button>
+                                      </span>
+                                    : <button onClick={() => setCollecting({ id: r.booking.id, method: 'Cash' })} className="text-[11px] font-medium text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-lg transition-colors">Mark Collected</button>}
                               </td>
                             </tr>
                           ))}

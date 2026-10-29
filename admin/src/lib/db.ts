@@ -59,6 +59,7 @@ function vToDb(v: Vehicle) {
     ...(v.fuelEfficiency != null && { fuel_efficiency: v.fuelEfficiency }),
     ...(v.tankCapacity != null && { tank_capacity: v.tankCapacity }),
     ...(v.hillSuitable != null && { hill_suitable: v.hillSuitable }),
+    ...(v.webCategory && { web_category: v.webCategory }),
   }
 }
 
@@ -107,6 +108,20 @@ function bookingExtRow(u: Partial<Booking>) {
   for (const [k, col] of BOOKING_EXT) if (u[k] !== undefined) row[col] = u[k] ?? null
   return row
 }
+/**
+ * Writes to the same row go out one after another. Saving a return fires several quick updates
+ * (each charge, payment, payout…) that set totals such as extra_charges outright; sent together they
+ * could reach the database out of order and leave an older total behind.
+ */
+const rowQueues = new Map<string, Promise<unknown>>()
+function inOrder<T>(key: string, run: () => PromiseLike<T>): Promise<T> {
+  const next = (rowQueues.get(key) ?? Promise.resolve()).then(run, run)
+  const done = () => { if (rowQueues.get(key) === next) rowQueues.delete(key) }
+  rowQueues.set(key, next)
+  next.then(done, done)
+  return next
+}
+
 /** Run the core write, then the extended one; report the first error (core first) */
 async function withExt(core: PromiseLike<{ error: unknown }>, id: string, ext: Record<string, unknown>) {
   const a = await core
@@ -460,7 +475,7 @@ export const db = {
     if ('webBadge' in u) row.web_badge = u.webBadge || null
     if ('webLocation' in u) row.web_location = u.webLocation || null
     if ('webPrice' in u) row.web_price = u.webPrice ?? null
-    return supabase.from('vehicles').update(row).eq('id', id)
+    return inOrder(`vehicles:${id}`, () => supabase.from('vehicles').update(row).eq('id', id))
   },
   deleteVehicle: (id: string) => supabase.from('vehicles').delete().eq('id', id),
 
@@ -482,7 +497,7 @@ export const db = {
     if (u.totalEarnings !== undefined) row.total_earnings = u.totalEarnings
     if (u.pendingPayout !== undefined) row.pending_payout = u.pendingPayout
     if (u.smsOptIn !== undefined) row.sms_opt_in = u.smsOptIn
-    return supabase.from('owners').update(row).eq('id', id)
+    return inOrder(`owners:${id}`, () => supabase.from('owners').update(row).eq('id', id))
   },
 
   // ── Bookings ──────────────────────────────────────────────────────────────
@@ -538,8 +553,9 @@ export const db = {
     if (u.referral !== undefined) row.referral = u.referral
     if (u.referralFee !== undefined) row.referral_fee = u.referralFee
     const ext = bookingExtRow(u)
-    if (!Object.keys(row).length) return supabase.from('bookings').update(ext).eq('id', id)
-    return withExt(supabase.from('bookings').update(row).eq('id', id), id, ext)
+    return inOrder(`bookings:${id}`, () => Object.keys(row).length
+      ? withExt(supabase.from('bookings').update(row).eq('id', id), id, ext)
+      : supabase.from('bookings').update(ext).eq('id', id))
   },
 
   // ── Inquiries ─────────────────────────────────────────────────────────────
@@ -581,7 +597,7 @@ export const db = {
     if (u.ownerPayout !== undefined) row.owner_payout = u.ownerPayout
     if (u.ownerId !== undefined) row.owner_id = fk(u.ownerId)
     if (u.referral !== undefined) row.referral = u.referral
-    return supabase.from('commissions').update(row).eq('id', id)
+    return inOrder(`commissions:${id}`, () => supabase.from('commissions').update(row).eq('id', id))
   },
 
   // ── Expenses ──────────────────────────────────────────────────────────────

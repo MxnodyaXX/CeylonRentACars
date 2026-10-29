@@ -510,5 +510,33 @@ const after = await db.query(`select bad_debt, credit_amount, checklists -> 'ret
 ok((await db.query(`select count(*) n from information_schema.columns where table_name = 'bookings' and column_name = 'recovered'`)).rows[0].n == 0
    && Number(after.rows[0].bad_debt) === 100000 && after.rows[0].reason === 'Non-payment', 'rollback removes the rules and keeps the data');
 
+
+console.log('\n10 + 12 — swap mileage, readings from trip meters');
+await db.exec(sql('security/10_swap_mileage.sql'));
+await db.exec(sql('security/12_swap_trip_meters.sql'));
+await db.exec(sql('security/12_swap_trip_meters.sql'));   // safe to re-run
+const tm = (id, meters) => `insert into breakdown_vehicle_swaps (id, incident_id, solution_id, booking_id, original_vehicle_id, source, replacement_vehicle_id, out_at, out_by, replacement_rate, original_odometer, replacement_odometer_out, meters)
+  values ('${id}', 'iN', 'sN', 'bB', 'vA', 'fleet', 'vB', now(), 'Admin', 5000, 24708, 2450, '${meters}')`;
+ok(!!(await as('admin', () => tryQ(tm('wT0', '{"originalOdometer": "X"}')))), 'a meter must be odo, A, B or C');
+ok(!!(await as('admin', () => tryQ(tm('wT0', '{"pickup": "A"}')))), '…and only on the four swap readings');
+ok((await as('admin', () => tryQ(tm('wT1', '{"originalOdometer": "A"}')))) === null, 'admin records a breakdown reading taken from Trip A');
+ok((await as('admin', () => tryQ(`update breakdown_vehicle_swaps set status = 'closed', outcome = 'swapped_back', back_at = now(), back_by = 'Admin', days = 2,
+  replacement_odometer_in = 3100, original_odometer_back = 559, meters = '{"originalOdometer": "A", "originalOdometerBack": "B"}' where id = 'wT1'`))) === null,
+  'Trip B going back (559) is not compared with Trip A at the breakdown (24,708)');
+ok(/lower than at the breakdown/.test((await as('admin', () => tryQ(`update breakdown_vehicle_swaps set meters = '{"originalOdometer": "A", "originalOdometerBack": "A"}' where id = 'wT1'`))) ?? ''),
+  'on the same meter the old rule still holds');
+ok(/handed over/.test((await as('admin', () => tryQ(`update breakdown_vehicle_swaps set replacement_odometer_in = 100 where id = 'wT1'`))) ?? ''), "odometer readings still can't go backwards");
+ok(/cannot be removed/.test((await as('admin', () => tryQ(`update breakdown_vehicle_swaps set original_odometer_back = null where id = 'wT1'`))) ?? ''), '…or be removed');
+ok((await as('B', () => db.query(`update breakdown_vehicle_swaps set meters = null where id = 'wT1' returning id`))).rows.length === 0, 'owners cannot change the meters');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 10 + 12');
+let rb12 = null;
+try { await db.exec(sql('security/rollback/12_rollback_swap_trip_meters.sql')); } catch (e) { rb12 = e.message; }
+ok(/keep 12/.test(rb12 ?? ''), 'rollback stops while a trip-meter reading would break the old rule');
+await as('admin', () => db.exec(`update breakdown_vehicle_swaps set original_odometer_back = 25000, meters = '{"originalOdometer": "A", "originalOdometerBack": "A"}' where id = 'wT1'`));
+await db.exec(sql('security/rollback/12_rollback_swap_trip_meters.sql'));
+ok((await db.query(`select count(*) n from information_schema.columns where table_name = 'breakdown_vehicle_swaps' and column_name = 'meters'`)).rows[0].n == 0
+   && Number((await db.query(`select original_odometer_back from breakdown_vehicle_swaps where id = 'wT1'`)).rows[0].original_odometer_back) === 25000,
+   'rollback removes the meters and keeps the readings');
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

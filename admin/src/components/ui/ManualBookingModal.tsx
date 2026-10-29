@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  X, Car, User, Calendar, DollarSign, Users,
+  X, Car, User, Calendar, Gauge, DollarSign, Users,
   MapPin, FileText, AlertCircle, CheckCircle2, Search, UserCheck, Lock,
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
@@ -20,6 +20,7 @@ import { resolveReferralFee } from '../../lib/referral';
 import { creditResponsibilityOf } from '../../lib/credit';
 import { sendSms } from '../../lib/sms';
 import { sendBookingReceipt } from '../../lib/printReceipt';
+import ManualMileageFields, { emptyMileage, mileageOf } from './ManualMileageFields';
 
 const genOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -88,13 +89,14 @@ function Field({ label, children, required }: { label: string; children: React.R
 }
 
 export default function ManualBookingModal({ onClose }: Props) {
-  const { vehicles, owners, drivers, customers, addManualBooking, saveDraft, discardDraft, drafts, isVehicleAvailable } = useStore();
+  const { vehicles, owners, drivers, customers, bookings, addManualBooking, saveDraft, discardDraft, drafts, isVehicleAvailable, updateVehicle } = useStore();
   const currentUser = useAuthStore((s) => s.currentUser);
   // Owners can only record bookings against their own vehicles; admins see the full fleet.
   const selectableVehicles = currentUser?.role === 'owner'
     ? vehicles.filter((v) => v.ownerId === currentUser.ownerId)
     : vehicles;
   const [form, setForm]           = useState(emptyForm());
+  const [mileageDraft, setMileageDraft] = useState(emptyMileage());
   const [error, setError]         = useState('');
   // Until staff pick a status themselves, it follows the dates (past → Completed, now → Ongoing, future → Confirmed)
   const [statusTouched, setStatusTouched] = useState(false);
@@ -102,7 +104,7 @@ export default function ManualBookingModal({ onClose }: Props) {
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [custFound, setCustFound] = useState<null | 'found' | 'new'>(null);
   const [referralCustom, setReferralCustom] = useState(false);
-  const [creditChoice, setCreditChoice] = useState<'discount' | 'credit'>('credit');
+  const [creditChoice, setCreditChoice] = useState<'balance' | 'discount' | 'credit'>('balance');
   const [creditAck, setCreditAck] = useState(false);
   const [otp, setOtp] = useState<{ sent: boolean; code: string; input: string; verified: boolean; fallback?: string }>({ sent: false, code: '', input: '', verified: false });
 
@@ -140,7 +142,19 @@ export default function ManualBookingModal({ onClose }: Props) {
   const vehicleOwner = owners.find((o) => o.id === vehicle?.ownerId);
   const referralFee = resolveReferralFee(form.referralFeeType, form.referralFeeValue, form.totalAmount);
   const ownerPayout = Math.max(0, form.totalAmount - referralFee);
-  const billAmount  = Math.max(0, form.totalAmount - (form.discount || 0));
+  // readings, breakdown replacements and the extra km charge (Ongoing / Completed bookings)
+  const mileage = mileageOf(mileageDraft, {
+    vehicles, vehicleId: form.vehicleId, status: form.status, startDate: form.startDate, startTime: form.startTime,
+    endDate: form.endDate, endTime: form.endTime, totalDays: form.totalDays, by: currentUser?.name ?? 'Admin',
+  });
+  const billAmount  = Math.max(0, form.totalAmount + mileage.charge - (form.discount || 0));
+  // "Amount paid" of a finished (Completed) booking follows the bill (rental + extra km − discount − advance) until typed by hand
+  const [paidTouched, setPaidTouched] = useState(false);
+  const followBill = form.status === "Completed" && !paidTouched;
+  const autoPaid = Math.max(0, billAmount - (form.advanceAmount || 0));
+  useEffect(() => {
+    if (followBill && form.paidAmount !== autoPaid) setForm((f) => ({ ...f, paidAmount: autoPaid }));
+  }, [autoPaid, followBill]); // eslint-disable-line react-hooks/exhaustive-deps
   const paidTotal   = (form.paidAmount || 0) + (form.advanceAmount || 0);
   const due         = Math.max(0, billAmount - paidTotal);
 
@@ -198,13 +212,20 @@ export default function ManualBookingModal({ onClose }: Props) {
     return updated;
   });
 
+  // A returning customer's licence / ID details, from their latest booking that has them (shown, and filled in to check)
+  const lastDetails = (customerId: string, phone: string) => bookings
+    .filter((b) => (b.customerId === customerId || b.customerPhone === phone) && b.customerInfo && Object.keys(b.customerInfo).length)
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))[0];
+
   // Customer phone lookup
   useEffect(() => {
     if (form.customerPhone.length < 7) { setCustFound(null); return; }
     const existing = customers.find((c) => c.phone === form.customerPhone);
     if (existing) {
       setCustFound('found');
-      setForm((f) => ({ ...f, customerName: existing.name, customerEmail: existing.email ?? '', customerNIC: existing.nic ?? '', customerAddress: existing.address ?? '' }));
+      const prev = lastDetails(existing.id, existing.phone);
+      setForm((f) => ({ ...f, customerName: existing.name, customerEmail: existing.email ?? '', customerNIC: existing.nic ?? '', customerAddress: existing.address ?? '',
+        customerInfo: { ...(prev?.customerInfo ?? {}), ...f.customerInfo } }));
     } else {
       setCustFound('new');
     }
@@ -227,6 +248,7 @@ export default function ManualBookingModal({ onClose }: Props) {
     if (form.rentalType !== 'Daily' && !((form.rentalUnits ?? 0) > 0 && (form.unitRate ?? 0) > 0)) { setError(`Enter the number of ${form.rentalType === 'Hourly' ? 'hours' : 'months'} and the rate.`); return; }
     if (form.totalAmount <= 0)            { setError('Total amount must be greater than 0.'); return; }
     if (statusProblem)                    { setError(statusProblem); return; }
+    if (mileage.problems.length)          { setError(`Mileage: ${mileage.problems[0]}`); return; }
     if (clash)                            { setError(`This vehicle already has a ${form.status === 'Ongoing' ? 'live' : 'confirmed'} booking on these dates — check the dates or the status.`); return; }
 
     // Resolve the remaining balance into either a discount or a customer credit due.
@@ -234,10 +256,11 @@ export default function ManualBookingModal({ onClose }: Props) {
     let creditAmount = 0;
     if (due > 0) {
       if (isSocialReferral) {
-        setError('Social-media referral bookings must be fully paid — credit is not allowed. Add the balance as a discount or record full payment.');
-        if (creditChoice === 'credit') return;
+        if (creditChoice === 'credit') { setError('Social-media referral bookings cannot be on credit — leave it as the balance due, add it as a discount, or record full payment.'); return; }
       }
-      if (creditChoice === 'discount') {
+      if (creditChoice === 'balance') {
+        // an ordinary balance: the customer pays it at pickup / return — no credit, no discount
+      } else if (creditChoice === 'discount') {
         discount += due;                 // waive the remaining balance
       } else {
         if (!creditAck) { setError('Please acknowledge the credit responsibility notice before adding a credit due.'); return; }
@@ -256,10 +279,23 @@ export default function ManualBookingModal({ onClose }: Props) {
     const bookingId = addManualBooking({
       ...formData,
       discount, creditAmount, creditResponsibility, pickupAt, returnAt,
+      ...(mileage.checklists && Object.keys(mileage.checklists).length ? { checklists: mileage.checklists } : {}),
+      // the extra km is on the bill as a charge (shown with the km on the booking and the invoice) — saved with the booking
+      ...(mileage.charge > 0 ? {
+        charges: [{ id: Math.random().toString(36).slice(2, 10), kind: 'Other' as const, amount: mileage.charge, date: form.endDate, note: mileage.chargeNote, status: 'Charged' as const, by: currentUser?.name ?? 'Admin', at: new Date().toISOString() }],
+        extraCharges: mileage.charge,
+      } : {}),
+      // the replacement cars' owners are paid for the days they covered
+      extraPayouts: mileage.payouts,
       depositAssetDescription: form.depositType === 'vehicle'
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
     } as Parameters<typeof addManualBooking>[0]);
+    // each car's own mileage follows its last odometer reading (never lowered)
+    mileage.carReadings.forEach((r) => {
+      const v = useStore.getState().vehicles.find((x) => x.id === r.vehicleId);
+      if (v && r.km > (v.mileage ?? 0)) updateVehicle(v.id, { mileage: r.km });
+    });
     // Send SMS + email receipt automatically (only for Confirmed bookings)
     if (form.status === 'Confirmed' || !form.status) {
       const newBooking = useStore.getState().bookings.find((b) => b.id === bookingId);
@@ -369,6 +405,19 @@ export default function ManualBookingModal({ onClose }: Props) {
                 </div>
               </section>
 
+              {/* Mileage */}
+              {(form.status === 'Completed' || form.status === 'Ongoing') && (
+                <section>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Gauge size={15} className="text-navy-500" />
+                    <h3 className="text-sm font-semibold text-navy-700">Mileage</h3>
+                  </div>
+                  <p className="text-xs text-navy-400 mb-3">Readings from the agreement / handover sheet. Add a breakdown replacement for each car the customer was given on the way — the km of every car count.</p>
+                  <ManualMileageFields value={mileageDraft} onChange={setMileageDraft} mileage={mileage}
+                    ctx={{ vehicles, vehicleId: form.vehicleId, status: form.status, startDate: form.startDate, startTime: form.startTime, endDate: form.endDate, endTime: form.endTime, totalDays: form.totalDays, by: currentUser?.name ?? 'Admin' }} />
+                </section>
+              )}
+
               {/* Customer */}
               <section>
                 <div className="flex items-center justify-between mb-3">
@@ -404,7 +453,9 @@ export default function ManualBookingModal({ onClose }: Props) {
                           const c = customers.find((x) => x.id === id);
                           if (!c) return;
                           setSelectedCustomerId(id);
-                          setForm((f) => ({ ...f, customerId: c.id, customerName: c.name, customerPhone: c.phone, customerEmail: c.email ?? '', customerNIC: c.nic ?? '', customerAddress: c.address ?? '' }));
+                          const prev = lastDetails(c.id, c.phone);
+                          setForm((f) => ({ ...f, customerId: c.id, customerName: c.name, customerPhone: c.phone, customerEmail: c.email ?? '', customerNIC: c.nic ?? '', customerAddress: c.address ?? '',
+                            customerInfo: { ...(prev?.customerInfo ?? {}) } }));
                         }}
                         placeholder="Search customer…"
                         options={customers.map((c) => ({ value: c.id, label: c.name, sub: c.phone + (c.nic ? ` · ${c.nic}` : '') }))}
@@ -419,6 +470,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                           {c.email && <div><span className="text-navy-400">Email: </span><span className="font-medium text-navy-700">{c.email}</span></div>}
                           {c.nic && <div><span className="text-navy-400">NIC: </span><span className="font-medium text-navy-700">{c.nic}</span></div>}
                           {c.address && <div><span className="text-navy-400">Address: </span><span className="font-medium text-navy-700">{c.address}</span></div>}
+                          <LicenceSummary info={form.customerInfo} until={form.endDate} from={lastDetails(c.id, c.phone)?.startDate} />
                         </div>
                       );
                     })()}
@@ -468,21 +520,39 @@ export default function ManualBookingModal({ onClose }: Props) {
                   <h3 className="text-sm font-semibold text-navy-700">Payment</h3>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <Field label="Total Amount (Rs)" required>
+                  <Field label="Rental (Rs)" required>
                     <input className="input" type="number" min="0" value={form.totalAmount || ''} onChange={(e) => set('totalAmount', +e.target.value)} />
+                  </Field>
+                  <Field label="Extra km (Rs)">
+                    <input className="input bg-navy-50 text-navy-600" readOnly value={mileage.charge ? mileage.charge.toLocaleString() : '0'}
+                      title="From the Mileage section — change the readings or the rate there" />
                   </Field>
                   <Field label="Discount (Rs)">
                     <input className="input" type="number" min="0" value={form.discount || ''} onChange={(e) => set('discount', +e.target.value)} />
                   </Field>
+                </div>
+                {/* the bill, worked out in front of the user */}
+                <div className="mt-3 rounded-xl bg-navy-50/70 px-4 py-2.5 text-sm flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-navy-500">
+                    Rental Rs {form.totalAmount.toLocaleString()}
+                    {mileage.charge > 0 && <> + extra km Rs {mileage.charge.toLocaleString()}</>}
+                    {form.discount > 0 && <> − discount Rs {form.discount.toLocaleString()}</>}
+                  </span>
+                  <span className="font-bold text-navy-900">Bill total Rs {billAmount.toLocaleString()}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-3">
+                  <Field label="Advance (Rs)">
+                    <input className="input" type="number" min="0" value={form.advanceAmount || ''} onChange={(e) => set('advanceAmount', +e.target.value)} />
+                  </Field>
+                  <Field label="Amount Paid (Rs)">
+                    <input className="input" type="number" min="0" value={form.paidAmount || ''} onChange={(e) => { setPaidTouched(true); set('paidAmount', +e.target.value); }} />
+                    {!followBill && form.paidAmount !== autoPaid
+                      ? <button type="button" onClick={() => { setPaidTouched(false); setForm((f) => ({ ...f, paidAmount: autoPaid })); }} className="mt-1 text-[11px] text-navy-600 underline">Paid in full — Rs {autoPaid.toLocaleString()}</button>
+                      : followBill && <p className="mt-1 text-[11px] text-navy-400">Follows the bill total — change it if the customer paid less</p>}
+                  </Field>
                   <Field label="Payment Method">
                     <Select value={form.paymentMethod} onChange={(v) => set('paymentMethod', v)}
                       options={['Cash', 'Card', 'Bank Transfer', 'Online', 'Cheque'].map((s) => ({ value: s, label: s }))} />
-                  </Field>
-                  <Field label="Amount Paid (Rs)">
-                    <input className="input" type="number" min="0" value={form.paidAmount || ''} onChange={(e) => set('paidAmount', +e.target.value)} />
-                  </Field>
-                  <Field label="Advance (Rs)">
-                    <input className="input" type="number" min="0" value={form.advanceAmount || ''} onChange={(e) => set('advanceAmount', +e.target.value)} />
                   </Field>
                 </div>
                 {/* Security Deposit — spans full width */}
@@ -533,22 +603,30 @@ export default function ManualBookingModal({ onClose }: Props) {
                       <span className="text-sm font-semibold text-navy-700">Remaining balance</span>
                       <span className="text-base font-bold text-red-600">Rs {due.toLocaleString()}</span>
                     </div>
-                    {isSocialReferral ? (
-                      <p className="text-xs text-red-600 flex items-start gap-1.5">
-                        <AlertCircle size={13} className="mt-0.5 flex-shrink-0" />
-                        Social-media referral — credit is not allowed. Record full payment, or waive the balance as a discount.
-                      </p>
-                    ) : (
-                      <div className="flex gap-2">
+                    <div className="flex gap-2">
+                        <button type="button" onClick={() => setCreditChoice('balance')}
+                          className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${creditChoice === 'balance' ? 'bg-navy-700 text-white' : 'bg-white text-navy-600 border border-navy-200'}`}>
+                          Balance due — pays at return
+                        </button>
                         <button type="button" onClick={() => setCreditChoice('discount')}
                           className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${creditChoice === 'discount' ? 'bg-navy-700 text-white' : 'bg-white text-navy-600 border border-navy-200'}`}>
                           Add as Discount
                         </button>
                         <button type="button" onClick={() => setCreditChoice('credit')}
                           className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${creditChoice === 'credit' ? 'bg-amber-500 text-white' : 'bg-white text-navy-600 border border-navy-200'}`}>
-                          Add as Credit Due
+                          Credit — pays after the rental
                         </button>
                       </div>
+                    <p className="text-[11px] text-navy-500">
+                      {creditChoice === 'balance' ? 'The usual case: the customer pays the rest when the rental ends. It stays on the booking as the balance due, together with any extra km, charges or deductions at return.'
+                        : creditChoice === 'discount' ? 'The remaining amount is given off the price — the customer does not pay it.'
+                        : 'Only when the customer is allowed to pay after the rental is over. It is followed up on the Credit page, and is never more than what is still owed.'}
+                    </p>
+                    {isSocialReferral && creditChoice === 'credit' && (
+                      <p className="text-xs text-red-600 flex items-start gap-1.5">
+                        <AlertCircle size={13} className="mt-0.5 flex-shrink-0" />
+                        Social-media referral — credit is not allowed.
+                      </p>
                     )}
                     {due > 0 && creditChoice === 'credit' && !isSocialReferral && (
                       <div className="space-y-2">
@@ -764,9 +842,28 @@ export default function ManualBookingModal({ onClose }: Props) {
                   <p className="text-xs text-navy-400 mb-2">Financial Breakdown</p>
 
                   <div className="flex justify-between">
-                    <span className="text-navy-600">Total Rental</span>
+                    <span className="text-navy-600">Rental</span>
                     <span className="font-semibold text-navy-800">Rs {form.totalAmount.toLocaleString()}</span>
                   </div>
+
+                  {mileage.charge > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-navy-600">Extra km ({mileage.extraKm.toLocaleString()} km)</span>
+                      <span className="font-semibold text-navy-800">+ Rs {mileage.charge.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {form.discount > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-navy-600">Discount</span>
+                      <span className="font-semibold text-emerald-700">− Rs {form.discount.toLocaleString()}</span>
+                    </div>
+                  )}
+                  {(mileage.charge > 0 || form.discount > 0) && (
+                    <div className="flex justify-between border-t pt-2">
+                      <span className="text-navy-700 font-semibold">Bill total</span>
+                      <span className="font-bold text-navy-900">Rs {billAmount.toLocaleString()}</span>
+                    </div>
+                  )}
 
                   {referralFee > 0 && (
                     <div className="flex justify-between text-amber-700">
@@ -788,7 +885,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                     {due > 0 && (
                       <div className="flex justify-between">
                         <span className={creditChoice === 'credit' ? 'text-amber-600' : 'text-red-600'}>
-                          {creditChoice === 'credit' ? 'Credit Due' : 'To Discount'}
+                          {creditChoice === 'credit' ? 'Credit Due' : creditChoice === 'discount' ? 'To Discount' : 'Balance due'}
                         </span>
                         <span className={`font-semibold ${creditChoice === 'credit' ? 'text-amber-600' : 'text-red-600'}`}>Rs {due.toLocaleString()}</span>
                       </div>
@@ -846,6 +943,30 @@ export default function ManualBookingModal({ onClose }: Props) {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The licence / ID details we hold for a returning customer (from their last booking) */
+function LicenceSummary({ info, until, from }: { info: CustomerInfo; until?: string; from?: string }) {
+  const expired = !!info.licenceExpiry && !!until && info.licenceExpiry < until;
+  const rows: [string, string | undefined][] = [
+    ['Licence', info.licenceNumber ? `${info.licenceNumber}${info.licenceType ? ` · ${info.licenceType}` : ''}${info.idp ? ' · IDP' : ''}` : undefined],
+    ['Licence expiry', info.licenceExpiry],
+    ['Passport', info.passportNumber],
+    ['Nationality', info.nationality],
+    ['Emergency', [info.emergencyName, info.emergencyPhone].filter(Boolean).join(' · ') || undefined],
+  ];
+  return (
+    <div className="col-span-2 border-t border-navy-100 pt-2 mt-1">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-navy-400 mb-1">Licence &amp; ID{from ? ` — from their booking of ${from}` : ''}</p>
+      {!info.licenceNumber && !info.passportNumber ? <p className="text-amber-700">No licence details on file — enter them below.</p> : (
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+          {rows.filter(([, v]) => v).map(([k, v]) => (
+            <div key={k}><span className="text-navy-400">{k}: </span><span className={`font-medium ${k === 'Licence expiry' && expired ? 'text-red-600' : 'text-navy-700'}`}>{v}{k === 'Licence expiry' && expired ? ' — expires before the rental ends' : ''}</span></div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

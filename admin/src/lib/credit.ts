@@ -15,12 +15,14 @@ export function bookingDue(b: Booking): number {
   return Math.max(0, bookingBill(b) - bookingPaid(b));
 }
 
-/** Outstanding credit on a booking = an unsettled recorded credit amount.
+/** Outstanding credit on a booking: the part of the balance due the customer was allowed to pay
+ *  later. It is never more than what is still owed (less any bad debt written off) — when the bill
+ *  goes down (deductions, discount) or payments come in, the credit goes down with it.
  *  Cancelled bookings carry no credit. */
 export function bookingCredit(b: Booking): number {
   if (b.status === 'Cancelled') return 0;
   if (b.creditSettled) return 0;
-  return b.creditAmount ?? 0;
+  return Math.min(b.creditAmount ?? 0, Math.max(0, bookingDue(b) - (b.badDebt ?? 0)));
 }
 
 export interface CustomerCredit {
@@ -70,11 +72,15 @@ export function creditTotals(bookings: Booking[]): CreditTotals {
 
 export interface CreditRecord { booking: Booking; amount: number; settled: boolean; }
 
-/** Every booking that has a recorded credit amount (settled or not), newest first. */
+/** Every booking that has a recorded credit amount (settled or not), newest first.
+ *  An open credit shows what is still owed on it; one fully covered by payments counts as settled. */
 export function creditRecords(bookings: Booking[]): CreditRecord[] {
   return bookings
     .filter((b) => (b.creditAmount ?? 0) > 0 && b.status !== 'Cancelled')
-    .map((b) => ({ booking: b, amount: b.creditAmount ?? 0, settled: !!b.creditSettled }))
+    .map((b) => {
+      const open = bookingCredit(b);
+      return { booking: b, amount: b.creditSettled || open === 0 ? b.creditAmount ?? 0 : open, settled: !!b.creditSettled || open === 0 };
+    })
     .sort((a, b) => (a.booking.createdAt < b.booking.createdAt ? 1 : -1));
 }
 

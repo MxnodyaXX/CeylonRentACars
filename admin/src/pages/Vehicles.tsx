@@ -14,10 +14,11 @@ import { useBreakdownStore } from '../store/useBreakdownStore';
 import VehicleReviews from '../components/ui/VehicleReviews';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
-import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle, UserRound } from 'lucide-react';
 import { Vehicle, VehicleStatus } from '../types';
 import { isInsuranceComplete, clearInsuranceReminder } from '../lib/insuranceReminder';
 import { vehicleNetRevenue } from '../lib/revenue';
+import { VEHICLE_CATEGORIES, categoryLabel, guessCategory } from '../lib/vehicleCategory';
 
 const STATUS_OPTIONS: VehicleStatus[] = ['Available', 'Reserved', 'Ongoing', 'Maintenance'];
 const FUEL_TYPES    = ['Petrol', 'Diesel', 'Hybrid', 'Electric', 'CNG'];
@@ -28,6 +29,7 @@ const empty = (): Omit<Vehicle, 'id' | 'createdAt' | 'revenue' | 'rentCount'> =>
   vehicleNumber: '',
   brand: '',
   model: '',
+  webCategory: '',
   year: new Date().getFullYear(),
   ownerId: '',
   dailyRent: 0,
@@ -53,6 +55,7 @@ export default function Vehicles() {
   const [modal,    setModal]    = useState<'add' | 'edit' | 'view' | null>(null);
   const [selected, setSelected] = useState<Vehicle | null>(null);
   const [form,     setForm]     = useState(empty());
+  const [typeError, setTypeError] = useState(false);
   const [uploading,       setUploading]       = useState(false);
   const [savedUrls,       setSavedUrls]       = useState<string[]>([]);
   const [pendingFiles,    setPendingFiles]    = useState<File[]>([]);
@@ -99,10 +102,11 @@ export default function Vehicles() {
     setGalleryIndex(0);
   };
 
-  const openAdd = () => { setForm(empty()); resetImageState(); setModal('add'); };
+  const openAdd = () => { setForm(empty()); setTypeError(false); resetImageState(); setModal('add'); };
   const openEdit = (v: Vehicle) => {
     setSelected(v);
     setForm({ ...v });
+    setTypeError(false);
     resetImageState(v);
     setModal('edit');
   };
@@ -213,6 +217,20 @@ export default function Vehicles() {
     const hold = modal === 'edit' && selected ? breakdowns.activeHold(selected.id) : undefined;
     if (hold && form.status !== 'Maintenance') {
       toast.error('Vehicle under maintenance', `Breakdown ${hold.ref} is holding it — use "Mark vehicle as ready" on that breakdown.`);
+      return;
+    }
+    const missing = [
+      !form.vehicleNumber.trim() && 'vehicle number',
+      !form.brand.trim() && 'brand',
+      !form.model.trim() && 'model',
+    ].filter(Boolean);
+    if (missing.length) {
+      toast.error('Details missing', `Fill in the ${missing.join(', ')}.`);
+      return;
+    }
+    if (!form.webCategory) {
+      setTypeError(true);
+      toast.error('Vehicle type missing', 'Choose Economy, Sedan, Hybrid, SUV, Luxury or Van.');
       return;
     }
     setUploading(true);
@@ -406,7 +424,12 @@ export default function Vehicles() {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-navy-800 truncate">{v.brand} {v.model}</p>
-              <p className="text-xs text-navy-400">{v.vehicleNumber} · {v.year}</p>
+              <p className="text-xs text-navy-400">
+                {v.vehicleNumber} · {v.year} ·{' '}
+                {categoryLabel(v.webCategory)
+                  ? <span className="font-medium text-navy-600">{categoryLabel(v.webCategory)}</span>
+                  : <span className="font-medium text-amber-600">Type not set</span>}
+              </p>
             </div>
           </div>
         </div>
@@ -578,127 +601,203 @@ export default function Vehicles() {
         open={modal === 'add' || modal === 'edit'}
         onClose={() => setModal(null)}
         title={modal === 'add' ? 'Add New Vehicle' : 'Edit Vehicle'}
-        width="max-w-2xl"
+        width="max-w-5xl"
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Vehicle Number">
-            <input className="input" value={form.vehicleNumber} onChange={(e) => set('vehicleNumber', e.target.value)} placeholder="CAB-1234" />
-          </Field>
-          <Field label="Brand">
-            <input className="input" value={form.brand} onChange={(e) => set('brand', e.target.value)} placeholder="Toyota" />
-          </Field>
-          <Field label="Model">
-            <input className="input" value={form.model} onChange={(e) => set('model', e.target.value)} placeholder="Prius" />
-          </Field>
-          <Field label="Year">
-            <input className="input" type="number" value={form.year} onChange={(e) => set('year', +e.target.value)} />
-          </Field>
-          <Field label="Owner">
-            <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable
-              options={owners.map((o) => ({ value: o.id, label: o.name }))} />
-          </Field>
-          <Field label="Daily Rent (Rs)">
-            <input className="input" type="number" value={form.dailyRent} onChange={(e) => set('dailyRent', +e.target.value)} />
-          </Field>
-          <Field label="Included km / day">
-            <input className="input" type="number" value={form.includedKmPerDay ?? 100} onChange={(e) => set('includedKmPerDay', +e.target.value)} placeholder="100" />
-          </Field>
-          <Field label="Extra km rate (Rs/km)">
-            <input className="input" type="number" value={form.extraKmRate ?? 50} onChange={(e) => set('extraKmRate', +e.target.value)} placeholder="50" />
-          </Field>
-          <Field label="Hill country (Kandy, Nuwara Eliya, Ella…)">
-            <Select value={form.hillSuitable == null ? '' : form.hillSuitable ? 'yes' : 'no'}
-              onChange={(v) => set('hillSuitable', v === '' ? null : v === 'yes')} placeholder="Not set" nullable
-              options={[{ value: 'yes', label: 'Suitable for hill roads' }, { value: 'no', label: 'Not suitable for hill roads' }]} />
-          </Field>
-          <Field label="Status">
-            <Select value={form.status} onChange={(v) => set('status', v as VehicleStatus)}
-              disabled={!!(modal === 'edit' && selected && breakdowns.activeHold(selected.id))}
-              options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))} />
-            {modal === 'edit' && selected && breakdowns.activeHold(selected.id) && (
-              <p className="text-[11px] text-red-600 mt-1">Under maintenance (breakdown {breakdowns.activeHold(selected.id)!.ref}) — returns to service only through “Mark vehicle as ready” on that breakdown.</p>
-            )}
-          </Field>
-          <Field label="Color">
-            <input className="input" value={form.color ?? ''} onChange={(e) => set('color', e.target.value)} placeholder="Silver" />
-          </Field>
-          <Field label="Fuel Type">
-            <Select value={form.fuelType ?? ''} onChange={(v) => set('fuelType', v)}
-              options={FUEL_TYPES.map((f) => ({ value: f, label: f }))} />
-          </Field>
-          <Field label="Transmission">
-            <Select value={form.transmission ?? ''} onChange={(v) => set('transmission', v)}
-              options={TRANSMISSIONS.map((t) => ({ value: t, label: t }))} />
-          </Field>
-          <Field label="Seats">
-            <input className="input" type="number" value={form.seats ?? 5} onChange={(e) => set('seats', +e.target.value)} />
-          </Field>
-          <Field label="Mileage (km)">
-            <input className="input" type="number" value={form.mileage ?? 0} onChange={(e) => set('mileage', +e.target.value)} />
-          </Field>
-          <Field label="Fuel efficiency (km/L)">
-            <input className="input" type="number" step="0.1" min="0" placeholder="e.g. 18"
-                   value={form.fuelEfficiency ?? ''}
-                   onChange={(e) => set('fuelEfficiency', e.target.value === '' ? null : +e.target.value)} />
-          </Field>
-          <Field label="Fuel tank (litres)">
-            <input className="input" type="number" step="0.1" min="0" placeholder="e.g. 36"
-                   value={form.tankCapacity ?? ''}
-                   onChange={(e) => set('tankCapacity', e.target.value === '' ? null : +e.target.value)} />
-          </Field>
-
-          {/* ── Vehicle Images: admin cut-out, website hero, real photos ── */}
-          <VehicleImageFields
-            enabled={supabaseEnabled}
-            admin={{ url: adminPending?.preview ?? adminSaved, isNew: !!adminPending }}
-            heroes={[...heroSaved.map((url) => ({ url, isNew: false })), ...heroPending.map((h) => ({ url: h.preview, isNew: true }))]}
-            heroShown={heroShown}
-            onShowHero={setHeroShown}
-            onRemoveHero={removeHero}
-            photos={{ saved: savedUrls, pending: pendingPreviews }}
-            onPick={handleFileSelect}
-            onClear={clearSingle}
-            onRemoveSaved={removeSavedUrl}
-            onRemovePending={removePending}
-          />
-
-          {/* ── Insurance ───────────────────────────────────────────────────── */}
-          <div className="sm:col-span-2">
-            <div className="flex items-center gap-2 mb-3 mt-1">
-              <Shield size={14} className="text-navy-400" />
-              <p className="text-xs font-semibold text-navy-500 uppercase tracking-wide">Insurance Details</p>
+        <div className="flex flex-col gap-4">
+          {/* ── 1 · Identity ── */}
+          <Section icon={<Car size={16} />} title="Vehicle details" hint="How the vehicle is identified in bookings, invoices and on the website.">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+              <Field label="Vehicle number" required>
+                <input className="input" value={form.vehicleNumber} onChange={(e) => set('vehicleNumber', e.target.value)} placeholder="CAB-1234" />
+              </Field>
+              <Field label="Brand" required>
+                <input className="input" value={form.brand} onChange={(e) => set('brand', e.target.value)} placeholder="Toyota" />
+              </Field>
+              <Field label="Model" required>
+                <input className="input" value={form.model} onChange={(e) => set('model', e.target.value)} placeholder="Prius" />
+              </Field>
+              <Field label="Year">
+                <input className="input" type="number" value={form.year} onChange={(e) => set('year', +e.target.value)} />
+              </Field>
+              <Field label="Colour">
+                <input className="input" value={form.color ?? ''} onChange={(e) => set('color', e.target.value)} placeholder="Silver" />
+              </Field>
             </div>
+            <div className="mt-4">
+              <div className="flex items-baseline justify-between gap-2 mb-1.5">
+                <p className="label !mb-0">Vehicle type <span className="text-red-500">*</span></p>
+                {!form.webCategory && (
+                  <button type="button" className="text-[11px] text-navy-500 hover:text-navy-800 underline underline-offset-2"
+                    onClick={() => { set('webCategory', guessCategory(form)); setTypeError(false); }}>
+                    Suggest: {categoryLabel(guessCategory(form))}<span className="hidden sm:inline"> (from seats & fuel)</span>
+                  </button>
+                )}
+              </div>
+              <div role="radiogroup" aria-label="Vehicle type"
+                   className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 rounded-xl ${typeError ? 'ring-2 ring-red-300 ring-offset-2' : ''}`}>
+                {VEHICLE_CATEGORIES.map((c) => {
+                  const on = form.webCategory === c.id;
+                  return (
+                    <button key={c.id} type="button" role="radio" aria-checked={on}
+                      onClick={() => { set('webCategory', c.id); setTypeError(false); }}
+                      className={`text-left rounded-xl border px-3 py-2.5 transition-colors ${on
+                        ? 'border-navy-800 bg-navy-800 text-white shadow-sm'
+                        : 'border-navy-100 bg-white hover:border-navy-300 hover:bg-navy-50/60'}`}>
+                      <p className={`text-sm font-semibold ${on ? 'text-white' : 'text-navy-800'}`}>{c.label}</p>
+                      <p className={`text-[11px] leading-snug mt-0.5 ${on ? 'text-white/70' : 'text-navy-400'}`}>{c.hint}</p>
+                    </button>
+                  );
+                })}
+              </div>
+              {typeError && <p className="text-[11px] text-red-600 mt-1.5">Choose the vehicle type — it decides where the car shows on the website.</p>}
+            </div>
+          </Section>
+
+          {/* ── 2 · Owner & availability ── */}
+          <Section icon={<UserRound size={16} />} title="Owner & availability" hint="Who the car belongs to and whether it can be booked.">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Owner">
+                <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable searchable
+                  options={owners.map((o) => ({ value: o.id, label: o.name }))} />
+              </Field>
+              <Field label="Status">
+                <Select value={form.status} onChange={(v) => set('status', v as VehicleStatus)}
+                  disabled={!!(modal === 'edit' && selected && breakdowns.activeHold(selected.id))}
+                  options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))} />
+                {modal === 'edit' && selected && breakdowns.activeHold(selected.id) && (
+                  <p className="text-[11px] text-red-600 mt-1">Under maintenance (breakdown {breakdowns.activeHold(selected.id)!.ref}) — returns to service only through “Mark vehicle as ready” on that breakdown.</p>
+                )}
+              </Field>
+            </div>
+          </Section>
+
+          {/* ── 3 · Pricing & km terms ── */}
+          <Section icon={<TrendingUp size={16} />} title="Rent & mileage terms" hint="Used to price every booking and the extra-km charge at return.">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <Field label="Daily rent">
+                <Affix prefix="Rs">
+                  <input className="input pl-10" type="number" min="0" value={form.dailyRent} onChange={(e) => set('dailyRent', +e.target.value)} />
+                </Affix>
+              </Field>
+              <Field label="Included km">
+                <Affix suffix="km / day">
+                  <input className="input pr-20" type="number" min="0" value={form.includedKmPerDay ?? 100} onChange={(e) => set('includedKmPerDay', +e.target.value)} placeholder="100" />
+                </Affix>
+              </Field>
+              <Field label="Extra km rate">
+                <Affix prefix="Rs" suffix="/ km">
+                  <input className="input pl-10 pr-12" type="number" min="0" value={form.extraKmRate ?? 50} onChange={(e) => set('extraKmRate', +e.target.value)} placeholder="50" />
+                </Affix>
+              </Field>
+              <Field label="Hill country">
+                <Select value={form.hillSuitable == null ? '' : form.hillSuitable ? 'yes' : 'no'}
+                  onChange={(v) => set('hillSuitable', v === '' ? null : v === 'yes')} placeholder="Not set" nullable
+                  options={[{ value: 'yes', label: 'Suitable', sub: 'Kandy, Nuwara Eliya, Ella…' }, { value: 'no', label: 'Not suitable', sub: 'Flat roads only' }]} />
+              </Field>
+            </div>
+            {form.dailyRent > 0 && (
+              <p className="text-xs text-navy-500 bg-navy-50/70 rounded-lg px-3 py-2 mt-3">
+                Customer pays <b className="text-navy-800">Rs {form.dailyRent.toLocaleString()}</b> a day with{' '}
+                <b className="text-navy-800">{(form.includedKmPerDay ?? 100).toLocaleString()} km</b> included; each km over that costs{' '}
+                <b className="text-navy-800">Rs {(form.extraKmRate ?? 50).toLocaleString()}</b>.
+              </p>
+            )}
+          </Section>
+
+          {/* ── 4 · Specifications ── */}
+          <Section icon={<Wrench size={16} />} title="Specifications" hint="Shown to customers and used to match inquiries.">
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              <Field label="Fuel type">
+                <Select value={form.fuelType ?? ''} onChange={(v) => set('fuelType', v)}
+                  options={FUEL_TYPES.map((f) => ({ value: f, label: f }))} />
+              </Field>
+              <Field label="Transmission">
+                <Select value={form.transmission ?? ''} onChange={(v) => set('transmission', v)}
+                  options={TRANSMISSIONS.map((t) => ({ value: t, label: t }))} />
+              </Field>
+              <Field label="Seats">
+                <input className="input" type="number" min="1" value={form.seats ?? 5} onChange={(e) => set('seats', +e.target.value)} />
+              </Field>
+              <Field label="Odometer">
+                <Affix suffix="km">
+                  <input className="input pr-10" type="number" min="0" value={form.mileage ?? 0} onChange={(e) => set('mileage', +e.target.value)} />
+                </Affix>
+              </Field>
+              <Field label="Fuel efficiency">
+                <Affix suffix="km / L">
+                  <input className="input pr-16" type="number" step="0.1" min="0" placeholder="e.g. 18"
+                         value={form.fuelEfficiency ?? ''}
+                         onChange={(e) => set('fuelEfficiency', e.target.value === '' ? null : +e.target.value)} />
+                </Affix>
+              </Field>
+              <Field label="Fuel tank">
+                <Affix suffix="litres">
+                  <input className="input pr-16" type="number" step="0.1" min="0" placeholder="e.g. 36"
+                         value={form.tankCapacity ?? ''}
+                         onChange={(e) => set('tankCapacity', e.target.value === '' ? null : +e.target.value)} />
+                </Affix>
+              </Field>
+            </div>
+          </Section>
+
+          {/* ── 5 · Images: admin cut-out, website hero, real photos ── */}
+          <Section icon={<Camera size={16} />} title="Images" hint="Admin image for this panel, hero images for the website, and real photos.">
+            <VehicleImageFields
+              bare
+              enabled={supabaseEnabled}
+              admin={{ url: adminPending?.preview ?? adminSaved, isNew: !!adminPending }}
+              heroes={[...heroSaved.map((url) => ({ url, isNew: false })), ...heroPending.map((h) => ({ url: h.preview, isNew: true }))]}
+              heroShown={heroShown}
+              onShowHero={setHeroShown}
+              onRemoveHero={removeHero}
+              photos={{ saved: savedUrls, pending: pendingPreviews }}
+              onPick={handleFileSelect}
+              onClear={clearSingle}
+              onRemoveSaved={removeSavedUrl}
+              onRemovePending={removePending}
+            />
+          </Section>
+
+          {/* ── 6 · Insurance ── */}
+          <Section icon={<Shield size={16} />} title="Insurance"
+            hint="All four fields stop the weekly reminder to the owner."
+            badge={isInsuranceComplete(form)
+              ? <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Complete</span>
+              : <span className="text-[11px] font-semibold text-orange-700 bg-orange-50 px-2 py-0.5 rounded-full">Incomplete</span>}>
             {!isInsuranceComplete(form) && (
-              <div className="flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5 mb-3 text-xs text-orange-700">
+              <div className="flex items-start gap-2 bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5 mb-4 text-xs text-orange-700">
                 <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold">Insurance details are incomplete</p>
-                  <p className="text-orange-600 mt-0.5">A weekly reminder will be sent to the owner until all four fields are filled in.</p>
-                </div>
+                <p>A weekly reminder goes to the owner until the provider, policy number, expiry date and premium are filled in.</p>
               </div>
             )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Field label="Provider">
-                <input className="input" value={form.insurance.provider} onChange={(e) => setIns('provider', e.target.value)} />
+                <input className="input" value={form.insurance.provider} onChange={(e) => setIns('provider', e.target.value)} placeholder="e.g. Ceylinco" />
               </Field>
-              <Field label="Policy Number">
+              <Field label="Policy number">
                 <input className="input" value={form.insurance.policyNumber} onChange={(e) => setIns('policyNumber', e.target.value)} />
               </Field>
-              <Field label="Expiry Date">
+              <Field label="Expiry date">
                 <DateInput value={form.insurance.expiryDate} onChange={(v) => setIns('expiryDate', v)} />
               </Field>
-              <Field label="Premium (Rs)">
-                <input className="input" type="number" value={form.insurance.premium} onChange={(e) => setIns('premium', +e.target.value)} />
+              <Field label="Premium">
+                <Affix prefix="Rs">
+                  <input className="input pl-10" type="number" min="0" value={form.insurance.premium} onChange={(e) => setIns('premium', +e.target.value)} />
+                </Affix>
               </Field>
             </div>
-          </div>
+          </Section>
         </div>
 
-        <div className="flex justify-end gap-3 mt-6">
-          <button onClick={() => setModal(null)} className="btn-secondary" disabled={uploading}>Cancel</button>
-          <button onClick={handleSave} className="btn-primary disabled:opacity-60" disabled={uploading}>
-            {uploading ? 'Uploading…' : modal === 'add' ? 'Add Vehicle' : 'Save Changes'}
-          </button>
+        {/* footer stays in view while the form scrolls */}
+        <div className="sticky bottom-0 -mx-5 -mb-5 mt-5 px-5 py-3.5 bg-white/95 backdrop-blur border-t border-navy-100 flex items-center justify-between gap-3 z-10">
+          <p className="text-[11px] text-navy-400 hidden sm:block"><span className="text-red-500">*</span> Required</p>
+          <div className="flex gap-3 ml-auto">
+            <button onClick={() => setModal(null)} className="btn-secondary" disabled={uploading}>Cancel</button>
+            <button onClick={handleSave} className="btn-primary disabled:opacity-60" disabled={uploading}>
+              {uploading ? 'Uploading…' : modal === 'add' ? 'Add vehicle' : 'Save changes'}
+            </button>
+          </div>
         </div>
       </Modal>
 
@@ -795,6 +894,7 @@ export default function Vehicles() {
 
               <div className="grid grid-cols-2 gap-3">
                 {[
+                  ['Vehicle type',  categoryLabel(selected.webCategory) ?? 'Not set'],
                   ['Owner',         owner?.name ?? '—'],
                   ['Daily Rent',    `Rs ${selected.dailyRent.toLocaleString()}`],
                   ['Included km',   `${selected.includedKmPerDay ?? 100} km/day`],
@@ -860,11 +960,43 @@ export default function Vehicles() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <div>
-      <p className="label">{label}</p>
+      <p className="label">{label}{required && <span className="text-red-500"> *</span>}</p>
       {children}
+    </div>
+  );
+}
+
+/** A titled group in the Add / Edit Vehicle form */
+function Section({ icon, title, hint, badge, children }: {
+  icon: React.ReactNode; title: string; hint?: string; badge?: React.ReactNode; children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-navy-100 bg-white p-4 sm:p-5">
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-8 h-8 rounded-lg bg-navy-50 text-navy-600 flex items-center justify-center flex-shrink-0">{icon}</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-navy-800">{title}</h3>
+            {badge}
+          </div>
+          {hint && <p className="text-xs text-navy-400 mt-0.5">{hint}</p>}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Unit labels inside an input ("Rs", "km / day") */
+function Affix({ prefix, suffix, children }: { prefix?: string; suffix?: string; children: React.ReactNode }) {
+  return (
+    <div className="relative">
+      {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-medium text-navy-400 pointer-events-none">{prefix}</span>}
+      {children}
+      {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-navy-400 pointer-events-none">{suffix}</span>}
     </div>
   );
 }

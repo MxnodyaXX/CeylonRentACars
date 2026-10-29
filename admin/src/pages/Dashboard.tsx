@@ -23,7 +23,7 @@ import {
   ArrowUpRight, Crown, TrendingUp, Wallet, CreditCard,
 } from 'lucide-react';
 import { Vehicle, Booking } from '../types';
-import { creditTotals } from '../lib/credit';
+import { bookingCredit, bookingDue, creditTotals } from '../lib/credit';
 import { vehicleNetRevenue, totalDiscount } from '../lib/revenue';
 
 function useIsMobile() {
@@ -130,8 +130,9 @@ export default function Dashboard() {
   const receivableBookings = scopedBookings.filter((b) => b.status === 'Ongoing' || b.status === 'Completed');
   /* Exclude bookings already tracked as formal credit — those appear in the Total Credit card.
      The two cards are additive: Outstanding + Credit.total = all money owed, no double-counting. */
-  const informallyUnpaid = receivableBookings.filter((b) => !((b.creditAmount ?? 0) > 0 && !b.creditSettled));
-  const outstandingBalance = informallyUnpaid.reduce((s, b) => s + Math.max(0, b.totalAmount - (b.discount ?? 0) - b.paidAmount), 0);
+  // the balance due on the full bill (extra km, charges, deductions, advance) less the part on credit and any bad debt
+  const unpaidOf = (b: Booking) => Math.max(0, bookingDue(b) - bookingCredit(b) - (b.badDebt ?? 0));
+  const outstandingBalance = receivableBookings.reduce((s, b) => s + unpaidOf(b), 0);
   /* Credit to be received — balances recorded as customer credit dues. */
   const credit = creditTotals(scopedBookings);
   const today = new Date();
@@ -144,9 +145,9 @@ export default function Dashboard() {
   const monthlyProfit = thisMonthRevenue - thisMonthExpenses;
 
   /* breakdown rows for the info popups */
-  const outstandingRows = informallyUnpaid
-    .filter((b) => b.totalAmount - (b.discount ?? 0) > b.paidAmount)
-    .map((b) => ({ ...b, balance: b.totalAmount - (b.discount ?? 0) - b.paidAmount }))
+  const outstandingRows = receivableBookings
+    .map((b) => ({ ...b, balance: unpaidOf(b) }))
+    .filter((b) => b.balance > 0)
     .sort((a, b) => b.balance - a.balance);
   const monthRevenueRows = scopedBookings
     .filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })

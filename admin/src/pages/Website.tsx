@@ -3,31 +3,14 @@ import { useStore } from '../store/useStore';
 import { supabaseEnabled } from '../lib/supabase';
 import Header from '../components/layout/Header';
 import { Vehicle } from '../types';
+import { VEHICLE_CATEGORIES as CATEGORIES, guessCategory } from '../lib/vehicleCategory';
 import {
   Globe, Plus, X, ArrowUp, ArrowDown, Search, ExternalLink, ImageOff, AlertTriangle, Car,
 } from 'lucide-react';
 
-/* Categories used by the filter chips on the Ceylon Rent A Cars landing page */
-const CATEGORIES = [
-  { id: 'economy', label: 'Economy' },
-  { id: 'sedan',   label: 'Sedan' },
-  { id: 'hybrid',  label: 'Hybrid' },
-  { id: 'suv',     label: 'SUV' },
-  { id: 'luxury',  label: 'Luxury' },
-  { id: 'van',     label: 'Van' },
-];
-
 const BADGES = ['', 'Most booked', 'Premium', 'New', 'Best value', 'Family pick'];
 
 const WEBSITE_URL = (import.meta.env.VITE_WEBSITE_URL as string | undefined) ?? 'http://localhost:5173';
-
-/** Sensible first guess so a vehicle lands in the right filter when added */
-function guessCategory(v: Vehicle): string {
-  if ((v.seats ?? 0) >= 8) return 'van';
-  if ((v.seats ?? 0) === 7) return 'suv';
-  if (/hybrid|electric/i.test(v.fuelType ?? '')) return 'hybrid';
-  return 'economy';
-}
 
 const name = (v: Vehicle) => `${v.brand} ${v.model}`;
 

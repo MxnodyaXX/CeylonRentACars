@@ -19,13 +19,13 @@ export function invoiceHtml(b: Booking, vehicle?: Vehicle): string {
   const pickup = b.checklists?.pickup, ret = b.checklists?.return;
   // every car the customer drove (breakdown replacements, exchanges), not only the final one
   const trip = tripKmProvider.of?.(b);
-  const driven = trip?.total ?? (pickup && ret ? ret.odometer - pickup.odometer + earlierKm(b) : undefined);
+  const driven = trip?.total ?? (pickup?.odometer != null && ret?.odometer != null ? ret.odometer - pickup.odometer + earlierKm(b) : undefined);
   const multi = trip && trip.legs.length > 1 ? trip : undefined;
   const included = (vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1);
   const payments = ledgerOf(b).filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
   const held = depositHeld(b);
 
-  const lineRows = price.lines.map((l) => `<tr><td>${esc(l.label.replace(/^Other — (Extra km)/, '$1'))}</td><td class="num${l.amount < 0 ? ' minus' : ''}">${l.amount < 0 ? '− ' + rs(-l.amount) : rs(l.amount)}</td></tr>`).join('');
+  const lineRows = price.lines.map((l) => `<tr><td>${esc(l.label)}${l.detail ? `<div class="muted" style="font-size:11px">${esc(l.detail)}</div>` : ''}</td><td class="num${l.amount < 0 ? ' minus' : ''}">${l.amount < 0 ? '− ' + rs(-l.amount) : rs(l.amount)}</td></tr>`).join('');
   const payRows = payments.length
     ? payments.map((p) => `<tr><td>${day(p.at)}</td><td>${esc(p.kind)}</td><td>${esc(p.method)}${p.receiptNo ? ' · ' + esc(p.receiptNo) : ''}</td><td class="num${p.kind === 'Refund' ? ' minus' : ''}">${p.kind === 'Refund' ? '− ' : ''}${rs(p.amount)}</td></tr>`).join('')
     : '<tr><td colspan="4" class="muted">No payments recorded</td></tr>';
@@ -68,7 +68,7 @@ export function invoiceHtml(b: Booking, vehicle?: Vehicle): string {
       ${multi ? `${multi.legs.map((l) => `<div>${esc(l.car)}: ${l.km != null ? `${l.km.toLocaleString()} km` : '<span class="muted">not recorded</span>'}${l.role === 'earlier' ? '' : ` <span class="muted">(${l.from?.toLocaleString() ?? '?'} → ${l.to?.toLocaleString() ?? '?'})</span>`}</div>`).join('')}
       <div>${multi.total != null ? `<b>${multi.total.toLocaleString()} km</b> driven in all` : `${multi.known.toLocaleString()} km recorded`} · ${included.toLocaleString()} km included</div>
       ${multi.total != null ? `<div>${Math.max(0, multi.total - included).toLocaleString()} extra km</div>` : ''}`
-      : pickup && ret ? `<div>${pickup.odometer.toLocaleString()} → ${ret.odometer.toLocaleString()} km</div><div>${(driven ?? 0).toLocaleString()} km driven · ${included.toLocaleString()} km included</div>
+      : pickup?.odometer != null && ret?.odometer != null ? `<div>${pickup.odometer.toLocaleString()} → ${ret.odometer.toLocaleString()} km</div><div>${(driven ?? 0).toLocaleString()} km driven · ${included.toLocaleString()} km included</div>
       <div>${Math.max(0, (driven ?? 0) - included).toLocaleString()} extra km</div>` : '<div class="muted">Not recorded</div>'}
       <div class="muted">Fuel: ${esc(pickup?.fuel ?? '—')} out · ${esc(ret?.fuel ?? '—')} in</div></div>
   </div>

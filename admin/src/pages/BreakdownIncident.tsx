@@ -341,7 +341,7 @@ function Vehicles({ i }: { i: BdIncident }) {
     {b && trip && (
       <Section title="Vehicle usage phases & km" icon={Gauge}>
         <p className="text-[11px] text-navy-400">Every car the customer drove on booking {bookingNo(b)}, from all its breakdowns — the final bill adds the km of every phase.</p>
-        <UsagePhases trip={trip} includedKm={(v0?.includedKmPerDay ?? 100) * (b.totalDays || 1)} kmRate={v0?.extraKmRate ?? 50} />
+        <UsagePhases trip={trip} bookingId={b.id} includedKm={(v0?.includedKmPerDay ?? 100) * (b.totalDays || 1)} kmRate={v0?.extraKmRate ?? 50} />
       </Section>
     )}
     <Section title="Vehicles on this booking" icon={Truck}>

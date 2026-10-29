@@ -4,7 +4,7 @@
    review them (ideally with a lawyer) before relying on them.
    ===================================================================== */
 import type { Booking, Vehicle } from '../types';
-import { bookingNo, depositHeld, priceBreakdown } from './bookingRecord';
+import { bookingNo, depositHeld, lineText, priceBreakdown } from './bookingRecord';
 import { durationLabel } from './rentalPeriod';
 
 const esc = (s?: string | number) => String(s ?? '—').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -54,13 +54,13 @@ export function printRentalAgreement(b: Booking, vehicle: Vehicle | undefined, s
     ${row('Return', `${when(b.endDate, b.endTime)} — ${b.dropLocation || b.pickupLocation || '—'}`)}
     ${row('Rental', `${durationLabel(b)}${b.rentalType && b.rentalType !== 'Daily' ? ` (${b.rentalType.toLowerCase()})` : ''}`)}
     ${row('Included km', `${((vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)).toLocaleString()} km, then Rs ${(vehicle?.extraKmRate ?? 50).toLocaleString()} per extra km`)}
-    ${pickup ? row('At handover', `${pickup.odometer.toLocaleString()} km · fuel ${pickup.fuel}${pickup.damage ? ` · ${pickup.damage}` : ''}`) : ''}
+    ${pickup ? row('At handover', `${pickup.odometer?.toLocaleString() ?? '—'} km · fuel ${pickup.fuel}${pickup.damage ? ` · ${pickup.damage}` : ''}`) : ''}
   </table></div>
 </div>
 
 <h2>Charges</h2>
 <table class="money">
-  ${p.lines.map((l) => `<tr><td>${esc(l.label)}</td><td style="text-align:right">${l.amount < 0 ? '−' : ''}${rs(Math.abs(l.amount))}</td></tr>`).join('')}
+  ${p.lines.map((l) => `<tr><td>${esc(lineText(l))}</td><td style="text-align:right">${l.amount < 0 ? '−' : ''}${rs(Math.abs(l.amount))}</td></tr>`).join('')}
   <tr class="tot"><td>Total</td><td style="text-align:right">${rs(p.bill)}</td></tr>
   <tr><td>Paid so far</td><td style="text-align:right">${rs(p.paid)}</td></tr>
   <tr class="tot"><td>Balance due</td><td style="text-align:right">${rs(p.due)}</td></tr>

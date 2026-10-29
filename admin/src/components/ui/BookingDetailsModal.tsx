@@ -22,10 +22,10 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { printInvoice } from '../../lib/printInvoice';
 import {
-  CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, rs, uploadBookingFile, newId, shownStatus,
+  CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, chargeLine, type PriceLine, rs, uploadBookingFile, newId, shownStatus,
 } from '../../lib/bookingRecord';
 import { durationLabel, UNIT, RentalType } from '../../lib/rentalPeriod';
-import { bookingBill, bookingDue } from '../../lib/credit';
+import { bookingBill, bookingCredit, bookingDue } from '../../lib/credit';
 import { buildBookingWhatsAppMsg, openWhatsApp } from '../../lib/whatsapp';
 import { printBookingConfirmation } from '../../lib/printReceipt';
 import { sendSms } from '../../lib/sms';
@@ -303,14 +303,65 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
    Overview
    ===================================================================== */
 
+/** Who carries a credit if the customer never pays */
+const RISK = { self: "the vehicle owner's risk", owner: "the referring owner's risk", company: "the company's risk" } as const;
+
+const GROUP_TITLE ={ rent: '', charge: 'Charges', deduction: 'Deductions & discount' } as const;
+
+/** The price lines in three groups — rent, charges, deductions — each line with its detail underneath */
+function PriceLines({ lines }: { lines: PriceLine[] }) {
+  return (
+    <div className="divide-y divide-navy-100">
+      {(['rent', 'charge', 'deduction'] as const).map((g) => {
+        const list = lines.filter((l) => l.group === g);
+        if (!list.length) return null;
+        return (
+          <div key={g} className="py-2 first:pt-0">
+            {GROUP_TITLE[g] && <p className="text-[11px] font-semibold uppercase tracking-wide text-navy-400 mb-1">{GROUP_TITLE[g]}</p>}
+            <div className="space-y-1.5">
+              {list.map((l, i) => (
+                <div key={i} className="flex items-start justify-between gap-4 text-sm">
+                  <div className="min-w-0">
+                    <p className="text-navy-700">{l.label}</p>
+                    {l.detail && <p className="text-xs text-navy-400 leading-snug">{l.detail}</p>}
+                  </div>
+                  <span className={`font-medium tabular-nums whitespace-nowrap ${l.tone === 'minus' ? 'text-emerald-700' : 'text-navy-800'}`}>
+                    {l.amount < 0 ? '− ' : ''}{rs(Math.abs(l.amount))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Overview({ b, by, price, extra, narrow }: {
   b: Booking; vehicleName: string; by: string; price: ReturnType<typeof priceBreakdown>;
   extra: { vehicle?: import('../../types').Vehicle; owner?: import('../../types').Owner; driver?: import('../../types').Driver };
   /** full page: one column, two only on very wide screens */
   narrow?: boolean;
 }) {
-  const { logBookingActivity, vehicles: allVehicles } = useStore();
+  const { logBookingActivity, editBooking, clearCredit, vehicles: allVehicles } = useStore();
+  const { isAdmin } = useAuthStore();
   const { vehicle, owner, driver } = extra;
+  const moneyIn = ledgerOf(b).filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
+  const credit = bookingCredit(b);
+  // an open credit — shown so staff can check it really was agreed (older bookings had every unpaid balance saved as credit)
+  const staleCredit = !b.creditSettled && (b.creditAmount ?? 0) > 0 && b.status !== 'Cancelled';
+  const [creditWhy, setCreditWhy] = useState('');
+  // an amount on the bill that no listed charge explains and no one typed in Edit booking
+  const handTyped = /Extra charges:/.test(`${b.notes ?? ''}\n${(b.activity ?? []).map((a) => a.text).join('\n')}`);
+  const unlistedLeftover = price.unlisted !== 0 && (b.charges ?? []).length > 0 && !handTyped;
+  const fixUnlisted = () => {
+    const to = (b.extraCharges ?? 0) - price.unlisted;
+    editBooking(b.id, { extraCharges: to }, {
+      by, changes: [`Bill ${rs(price.bill)} → ${rs(price.bill - price.unlisted)}: ${price.unlisted > 0 ? 'removed' : 'restored'} ${rs(Math.abs(price.unlisted))} that matched no listed charge`],
+      reason: 'Bill matched to its listed charges',
+    });
+  };
   const t = bookingTiming(b);
   const type = (b.rentalType ?? 'Daily') as RentalType;
   const ci = b.customerInfo ?? {};
@@ -376,18 +427,55 @@ function Overview({ b, by, price, extra, narrow }: {
       </Card>
 
       <Card title="Price" icon={Wallet}>
-        <div className="space-y-1">
-          {price.lines.map((l) => (
-            <p key={l.label} className="flex justify-between gap-3 text-sm">
-              <span className="text-navy-500">{l.label}</span>
-              <span className={`font-medium ${l.tone === 'minus' ? 'text-emerald-700' : 'text-navy-800'}`}>{l.amount < 0 ? '−' : ''}{rs(Math.abs(l.amount))}</span>
-            </p>
-          ))}
-          <p className="flex justify-between text-sm font-bold border-t border-navy-100 pt-1.5 mt-1.5"><span>Bill</span><span>{rs(price.bill)}</span></p>
-          <p className="flex justify-between text-sm"><span className="text-navy-500">Paid (incl. advance)</span><span className="font-medium text-emerald-700">{rs(price.paid)}</span></p>
-          <p className={`flex justify-between text-sm font-bold ${price.due > 0 ? 'text-red-600' : 'text-emerald-700'}`}><span>Balance due</span><span>{price.due > 0 ? rs(price.due) : 'Paid in full'}</span></p>
-          {(b.creditAmount ?? 0) > 0 && <KV k={`Credit due (${b.creditResponsibility ?? '—'})`} v={b.creditSettled ? 'Settled' : rs(b.creditAmount ?? 0)} warn={!b.creditSettled} />}
-          {b.depositType && <KV k={`Deposit (${b.depositType})`} v={b.depositType === 'cash' ? `${rs(depositHeld(b))} held` : b.depositAssetDescription} />}
+        <PriceLines lines={price.lines} />
+        {unlistedLeftover && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 space-y-2">
+            <p className="flex gap-1.5"><AlertTriangle size={14} className="flex-shrink-0 mt-px" />
+              <span><b>{rs(Math.abs(price.unlisted))}</b> on this bill doesn't match any listed charge. No one added it by hand, so it is most likely left over
+                from saving the return (a sync problem, now fixed). Taking it off makes the bill {rs(price.bill - price.unlisted)}.</span></p>
+            {isAdmin() && <button type="button" onClick={fixUnlisted} className={`${smallBtn} bg-amber-600 text-white hover:bg-amber-700`}>Match the bill to its charges</button>}
+          </div>
+        )}
+        {staleCredit && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 space-y-2">
+            <p className="flex gap-1.5"><AlertTriangle size={14} className="flex-shrink-0 mt-px" />
+              <span>When the booking was made, the unpaid <b>{rs(b.creditAmount ?? 0)}</b> was recorded as <b>credit</b>.
+                {credit < (b.creditAmount ?? 0) && <> Only {rs(price.due)} is owed now, so the credit counts as {rs(credit)}.</>}
+                {' '}If it was just the balance to pay at return, not an agreement to pay after the rental, remove the credit — the balance due stays exactly as it is.</span></p>
+            {isAdmin() && (
+              <div className="flex flex-wrap items-center gap-2">
+                <input className="input !py-1 !text-xs flex-1 min-w-[12rem]" value={creditWhy} onChange={(e) => setCreditWhy(e.target.value)} placeholder="Why (e.g. it was the balance paid at return)" />
+                <button type="button" disabled={!creditWhy.trim()} onClick={() => { clearCredit(b.id, by, creditWhy.trim()); setCreditWhy(''); }}
+                  className={`${smallBtn} bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40`}>Not a credit — remove it</button>
+              </div>
+            )}
+          </div>
+        )}
+        <div className="mt-3 rounded-xl bg-navy-50/70 px-3 py-2.5 space-y-1.5 text-sm">
+          <p className="flex justify-between gap-3 font-bold text-navy-900"><span>Bill</span><span className="tabular-nums">{rs(price.bill)}</span></p>
+          <p className="flex justify-between gap-3"><span className="text-navy-500">Paid (incl. advance)</span><span className="font-medium tabular-nums text-emerald-700">− {rs(price.paid)}</span></p>
+          {/* every payment behind the total, so the figure can be checked */}
+          {moneyIn.length > 0 && (
+            <ul className="pl-3 border-l-2 border-navy-100 space-y-0.5">
+              {moneyIn.map((p) => (
+                <li key={p.id} className="flex justify-between gap-3 text-xs text-navy-500">
+                  <span className="min-w-0">{p.id.startsWith('legacy') ? 'Before the payment log' : fmtDate(p.at)} · {p.kind}{p.method && p.method !== '—' ? ` · ${p.method}` : ''}{p.note && !p.id.startsWith('legacy') ? ` · ${p.note}` : ''}</span>
+                  <span className="tabular-nums whitespace-nowrap">{p.kind === 'Refund' ? '+ ' : ''}{rs(p.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className={`flex justify-between gap-3 font-bold border-t border-navy-100 pt-1.5 ${price.due > 0 ? 'text-red-600' : 'text-emerald-700'}`}><span>Balance due</span><span className="tabular-nums">{price.due > 0 ? rs(price.due) : 'Paid in full'}</span></p>
+          {/* credit is part of the balance due (the customer may pay it after the rental), never on top of it */}
+          {credit > 0 && (
+            <p className="flex justify-between gap-3 text-xs"><span className="text-amber-700">of which on credit — pays after the rental ({RISK[b.creditResponsibility ?? 'self']})</span>
+              <span className="font-medium tabular-nums whitespace-nowrap text-amber-700">{rs(credit)}</span></p>
+          )}
+          {b.creditSettled && (b.creditAmount ?? 0) > 0 && <p className="text-xs text-emerald-700">Credit of {rs(b.creditAmount ?? 0)} settled</p>}
+          {b.depositType && (
+            <p className="flex justify-between gap-3"><span className="text-navy-500">Deposit ({b.depositType})</span>
+              <span className="font-medium text-navy-800 text-right">{b.depositType === 'cash' ? `${rs(depositHeld(b))} held` : b.depositAssetDescription}</span></p>
+          )}
         </div>
       </Card>
 
@@ -579,15 +667,19 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
         <Card title="Fines, damage & other charges" icon={AlertTriangle}>
           {(b.charges ?? []).length === 0 ? <p className="text-sm text-navy-400 mb-2">No extra charges.</p> : (
             <ul className="space-y-1 mb-2">
-              {(b.charges ?? []).map((c) => (
-                <li key={c.id} className={`flex items-center justify-between gap-2 text-sm ${c.status === 'Waived' ? 'text-navy-300 line-through' : 'text-navy-700'}`}>
-                  <span className="min-w-0 truncate">{c.kind}{c.note ? ` — ${c.note}` : ''} <span className="text-[11px] text-navy-400 no-underline">{fmtDate(c.date)}</span></span>
+              {(b.charges ?? []).map((c) => { const l = chargeLine(c); return (
+                <li key={c.id} className={`flex items-start justify-between gap-3 text-sm ${c.status === 'Waived' ? 'text-navy-300 line-through' : 'text-navy-700'}`}>
+                  <span className="min-w-0">
+                    {c.amount < 0 && <span className="mr-1.5 rounded bg-emerald-50 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-emerald-700 no-underline">Deduction</span>}
+                    {l.label}
+                    <span className="block text-xs text-navy-400 leading-snug">{[l.detail, fmtDate(c.date)].filter(Boolean).join(' · ')}</span>
+                  </span>
                   <span className="flex items-center gap-2 flex-shrink-0">
-                    <b>{rs(c.amount)}</b>
-                    {c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">Waive</button>}
+                    <b className={c.amount < 0 ? 'text-emerald-700' : ''}>{c.amount < 0 ? `− ${rs(-c.amount)}` : rs(c.amount)}</b>
+                    {c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">{c.amount < 0 ? 'Remove' : 'Waive'}</button>}
                   </span>
                 </li>
-              ))}
+              ); })}
             </ul>
           )}
           {kmToBill > 0 && (
@@ -647,7 +739,7 @@ function ChecklistCard({ title, list, onRecord, recordLabel, canRecord }: { titl
     <Card title={title} icon={ClipboardList}>
       <KV k="When" v={fmtDateTime(list.at)} />
       <KV k="By" v={list.by} />
-      <KV k="Odometer" v={`${list.odometer.toLocaleString()} km`} />
+      <KV k="Odometer" v={list.odometer == null ? 'Not recorded' : `${list.odometer.toLocaleString()} km`} />
       <KV k="Fuel" v={list.fuel} />
       <KV k="Checklist" v={missing.length ? `Not OK: ${missing.join(', ')}` : 'All OK'} warn={missing.length > 0} />
       {list.damage && <KV k="Damage" v={list.damage} warn />}
@@ -679,7 +771,7 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
       <div className={`grid gap-3 ${trip.legs.length > 1 ? "" : "md:grid-cols-2"}`}>
         <Card title="Mileage" icon={ShieldCheck}>
           <KV k="Included" v={`${included.toLocaleString()} km`} />
-          {trip.legs.length > 1 && <div className="py-1"><UsagePhases trip={trip} /></div>}
+          {trip.legs.length > 1 && <div className="py-1"><UsagePhases trip={trip} bookingId={b.id} /></div>}
           <KV k={trip.legs.length > 1 ? 'Driven, all cars' : 'Driven'} v={driven !== undefined ? `${driven.toLocaleString()} km` : b.checklists?.return ? `${trip.known.toLocaleString()} km + missing readings` : 'After return'} warn={!!b.checklists?.return && driven === undefined} />
           <KV k="Extra km" v={driven !== undefined ? `${Math.max(0, driven - included).toLocaleString()} km × ${rs(vehicle?.extraKmRate ?? 50)}` : '—'} warn={driven !== undefined && driven > included} />
           {trip.garageKm > 0 && <KV k="At the garage (not charged)" v={`${trip.garageKm.toLocaleString()} km`} />}

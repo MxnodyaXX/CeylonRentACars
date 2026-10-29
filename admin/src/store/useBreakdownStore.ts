@@ -4,14 +4,14 @@ import { supabaseEnabled } from '../lib/supabase';
 import {
   BdAllocation, BdData, BdDocument, BdEvent, BdExpense, BdIncident, BdPayment, BdSolution, ExpenseCategory, Party, PaymentKind,
   SolutionKind, SolutionStatus, TableKey, bdId, insertRow, loadBreakdowns, newRef, updateRow, CATEGORY_LABEL, SOLUTION_LABEL, SOLUTION_STATUS_LABEL, PARTY_LABEL,
-  markReadyOnServer, BdSwap, loadSwaps, swapDays, describeChanges,
+  markReadyOnServer, BdSwap, SwapMeters, loadSwaps, swapDays, describeChanges,
 } from '../lib/breakdowns';
 import { fmt, ledgerFor, resolveShares, sharesProblem, swapMoney, terminationProposal, vehicleHistory } from '../lib/breakdownLedger';
 import { bookingEndMs, rangesOverlap } from '../lib/availability';
 import { legsOf, payoutRowFor } from '../lib/exchange';
 import { useStore, breakdownHooks } from './useStore';
-import { tripKm, tripKmProvider, type TripKm } from '../lib/tripKm';
-import type { Booking } from '../types';
+import { MANUAL_INCIDENT, cleanMeters, kmWithMeter, manualSwaps, meterOf, tripKm, tripKmProvider, type TripKm } from '../lib/tripKm';
+import type { Booking, KmMeter } from '../types';
 import { toast } from './useToast';
 
 /*
@@ -49,6 +49,8 @@ export interface SwapOutInput {
   /** The replacement owner's agreed daily rate, when it differs from the listed rent */
   rate?: number;
   originalOdometer?: number; originalFuel?: string; replacementOdometer?: number; replacementFuel?: string; notes?: string;
+  /** a reading taken from a trip meter (Trip A/B/C) instead of the odometer */
+  originalMeter?: KmMeter; replacementMeter?: KmMeter;
 }
 export interface SwapBackInput {
   at: string; by: string; outcome: 'swapped_back' | 'customer_kept' | 'replaced'; location?: string; days?: number;
@@ -56,6 +58,7 @@ export interface SwapBackInput {
   rate?: number;
   replacementOdometer?: number; replacementFuel?: string; originalOdometer?: number; originalFuel?: string;
   replacementTo?: 'Available' | 'Maintenance'; notes?: string;
+  originalMeter?: KmMeter; replacementMeter?: KmMeter;
 }
 /** The replacement itself is changed for another fleet car (e.g. it broke down too) */
 export interface SwapReplaceInput {
@@ -64,9 +67,13 @@ export interface SwapReplaceInput {
   replacementOdometer?: number; replacementFuel?: string; replacementTo?: 'Available' | 'Maintenance';
   /** the next replacement */
   nextVehicleId: string; nextRate?: number; nextOdometer?: number; nextFuel?: string; notes?: string;
+  replacementMeter?: KmMeter; nextMeter?: KmMeter;
 }
 /** Odometer readings of a swap entered afterwards (from the agreement, photos, the car's records) */
 export type SwapReadings = Partial<Pick<BdSwap, 'originalOdometer' | 'replacementOdometerOut' | 'replacementOdometerIn' | 'originalOdometerBack'>>;
+/** What can be corrected on a finished replacement — the cars and the outcome stay as recorded */
+export type SwapEdit = SwapReadings & Partial<Pick<BdSwap, 'meters' | 'outAt' | 'backAt' | 'outLocation' | 'backLocation' | 'days' | 'replacementRate'
+  | 'originalFuel' | 'replacementFuelOut' | 'replacementFuelIn' | 'originalFuelBack' | 'outNotes' | 'backNotes'>>;
 
 interface BdState extends BdData {
   ready: boolean;
@@ -100,7 +107,9 @@ interface BdState extends BdData {
   /** Change the replacement for another fleet car: this swap closes ("replaced") and the next one starts */
   replaceSwap: (swapId: string, x: SwapReplaceInput) => string | null;
   /** Missing odometer readings of a swap, entered afterwards (admin) — logged on the breakdown and the booking */
-  fillSwapReadings: (swapId: string, readings: SwapReadings, reason: string, by: string, isAdmin: boolean) => string | null;
+  fillSwapReadings: (swapId: string, readings: SwapReadings, reason: string, by: string, isAdmin: boolean, meters?: SwapMeters) => string | null;
+  /** Correct a finished replacement (times, days, rate, readings, notes) — owner payouts follow (admin) */
+  editSwap: (swapId: string, patch: SwapEdit, reason: string, by: string, isAdmin: boolean) => string | null;
   /** Explicit return to service: outcome + safety confirmation; checked again by the database */
   markVehicleReady: (incidentId: string, x: { outcome: string; safe: boolean; comments?: string; approvedAt?: string; by: string; isAdmin: boolean }) => Promise<string | null>;
   linkLatestExchange: (solutionId: string, by: string) => string | null;
@@ -171,25 +180,29 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
   const swapLabel = (w: BdSwap) => w.source === 'fleet' ? carName(w.replacementVehicleId)
     : [w.partnerVehicle, w.partnerReg].filter(Boolean).join(' ') || `${w.partnerName ?? 'partner'}'s car`;
   /** Readings of one swap that contradict each other */
+  /** two readings of a swap that can be compared: read from the same meter */
+  const sameMeter = (w: BdSwap, a: keyof SwapMeters, b: keyof SwapMeters) => meterOf(w.meters?.[a]) === meterOf(w.meters?.[b]);
   const readingsProblem = (w: BdSwap): string | null => {
-    if (w.replacementOdometerOut != null && w.replacementOdometerIn != null && w.replacementOdometerIn < w.replacementOdometerOut) {
+    if (w.replacementOdometerOut != null && w.replacementOdometerIn != null && sameMeter(w, 'replacementOdometerOut', 'replacementOdometerIn') && w.replacementOdometerIn < w.replacementOdometerOut) {
       return `${swapLabel(w)}: the reading when collected (${fmt(w.replacementOdometerIn)} km) is lower than when handed over (${fmt(w.replacementOdometerOut)} km).`;
     }
-    if (w.originalOdometer != null && w.originalOdometerBack != null && w.originalOdometerBack < w.originalOdometer) {
+    if (w.originalOdometer != null && w.originalOdometerBack != null && sameMeter(w, 'originalOdometer', 'originalOdometerBack') && w.originalOdometerBack < w.originalOdometer) {
       return `${carName(w.originalVehicleId)}: the reading going back to the customer (${fmt(w.originalOdometerBack)} km) is lower than at the breakdown (${fmt(w.originalOdometer)} km).`;
     }
     return null;
   };
   /** The booked car's last reading on this trip before a swap: pickup, or going back to the customer after an earlier swap */
-  const lastBookedKm = (bookingId: string, beforeIso: string): number | undefined => {
+  const lastBookedKm = (bookingId: string, beforeIso: string): { km: number; meter: KmMeter } | undefined => {
     const b = useStore.getState().bookings.find((v) => v.id === bookingId);
     const back = get().swaps.filter((w) => w.bookingId === bookingId && w.outcome === 'swapped_back' && w.backAt && w.backAt <= beforeIso && w.originalOdometerBack != null)
       .sort((a, c) => (c.backAt ?? '').localeCompare(a.backAt ?? ''))[0];
-    return back?.originalOdometerBack ?? b?.checklists?.pickup?.odometer;
+    if (back) return { km: back.originalOdometerBack!, meter: meterOf(back.meters?.originalOdometerBack) };
+    const p = b?.checklists?.pickup;
+    return p?.odometer != null ? { km: p.odometer, meter: meterOf(p.meter) } : undefined;
   };
   /** Keep the car's own mileage up to date from a reading (never lowered) */
-  const bumpMileage = (vehicleId: string | undefined, km: number | undefined) => {
-    if (!vehicleId || km == null) return;
+  const bumpMileage = (vehicleId: string | undefined, km: number | undefined, meter?: KmMeter) => {
+    if (!vehicleId || km == null || meterOf(meter) !== 'odo') return;   // a trip meter is not the car's total
     const v = useStore.getState().vehicles.find((x) => x.id === vehicleId);
     if (v && km > (v.mileage ?? 0)) useStore.getState().updateVehicle(vehicleId, { mileage: km });
   };
@@ -548,7 +561,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       if (!opts?.afterReplaced) {
         if (!(x.originalOdometer != null && x.originalOdometer > 0)) return `Enter the odometer of ${carName(b.vehicleId)} at the breakdown.`;
         const last = lastBookedKm(b.id, at.toISOString());
-        if (last != null && x.originalOdometer < last) return `${carName(b.vehicleId)}'s reading (${fmt(x.originalOdometer)} km) is lower than its last one on this trip (${fmt(last)} km).`;
+        if (last && last.meter === meterOf(x.originalMeter) && x.originalOdometer < last.km) return `${carName(b.vehicleId)}'s reading (${fmt(x.originalOdometer)} km) is lower than its last one on this trip (${fmt(last.km)} km).`;
       }
       const w: BdSwap = {
         id: bdId(), incidentId: i.id, solutionId, bookingId: b.id, originalVehicleId: b.vehicleId,
@@ -558,13 +571,14 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
         ...(x.originalOdometer != null ? { originalOdometer: x.originalOdometer } : {}), ...(x.originalFuel ? { originalFuel: x.originalFuel } : {}),
         ...(x.replacementOdometer != null ? { replacementOdometerOut: x.replacementOdometer } : {}), ...(x.replacementFuel ? { replacementFuelOut: x.replacementFuel } : {}),
         ...(x.notes?.trim() ? { outNotes: x.notes.trim() } : {}),
+        ...(cleanMeters({ originalOdometer: x.originalMeter, replacementOdometerOut: x.replacementMeter }) ? { meters: cleanMeters({ originalOdometer: x.originalMeter, replacementOdometerOut: x.replacementMeter }) } : {}),
         createdAt: nowIso(), updatedAt: nowIso(),
       };
       set((s) => ({ swaps: [...s.swaps, w] }));
       save('swaps', 'insert', w);
       if (fleet) st.setVehicleStatus(x.replacementVehicleId!, 'Ongoing');
-      if (fleet) bumpMileage(x.replacementVehicleId, x.replacementOdometer);
-      if (!opts?.afterReplaced) bumpMileage(b.vehicleId, x.originalOdometer);
+      if (fleet) bumpMileage(x.replacementVehicleId, x.replacementOdometer, x.replacementMeter);
+      if (!opts?.afterReplaced) bumpMileage(b.vehicleId, x.originalOdometer, x.originalMeter);
       patchSolution(solutionId, {
         status: 'in_progress', startedAt: sol.startedAt ?? nowIso(), deliveryAt: w.outAt,
         ...(fleet ? { toVehicleId: x.replacementVehicleId, fromVehicleId: b.vehicleId } : {}),
@@ -593,10 +607,10 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       // the readings that make up the km on the final bill
       const backName = w.source === 'fleet' ? carName(w.replacementVehicleId) : 'the partner car';
       if (!(x.replacementOdometer != null && x.replacementOdometer > 0)) return `Enter the odometer of ${backName} as it comes back from the customer.`;
-      if (w.replacementOdometerOut != null && x.replacementOdometer < w.replacementOdometerOut) return `${backName}'s reading (${fmt(x.replacementOdometer)} km) is lower than when it was handed over (${fmt(w.replacementOdometerOut)} km).`;
+      if (w.replacementOdometerOut != null && meterOf(w.meters?.replacementOdometerOut) === meterOf(x.replacementMeter) && x.replacementOdometer < w.replacementOdometerOut) return `${backName}'s reading (${fmt(x.replacementOdometer)} km) is lower than when it was handed over (${fmt(w.replacementOdometerOut)} km).`;
       if (x.outcome === 'swapped_back') {
         if (!(x.originalOdometer != null && x.originalOdometer > 0)) return `Enter the odometer of ${carName(w.originalVehicleId)} as it goes back to the customer.`;
-        if (w.originalOdometer != null && x.originalOdometer < w.originalOdometer) return `${carName(w.originalVehicleId)}'s reading (${fmt(x.originalOdometer)} km) is lower than at the breakdown (${fmt(w.originalOdometer)} km).`;
+        if (w.originalOdometer != null && meterOf(w.meters?.originalOdometer) === meterOf(x.originalMeter) && x.originalOdometer < w.originalOdometer) return `${carName(w.originalVehicleId)}'s reading (${fmt(x.originalOdometer)} km) is lower than at the breakdown (${fmt(w.originalOdometer)} km).`;
       }
       if (x.outcome === 'replaced' && (w.source !== 'fleet' || b.status !== 'Ongoing')) return 'Only a fleet replacement on a rental in progress can be changed for another car.';
       if (x.outcome === 'swapped_back') {
@@ -633,6 +647,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
           note: `Breakdown replacement: ${num(w.replacementVehicleId)} replaced ${num(w.originalVehicleId)} (${i.ref}) — ${span}, ${plural} × Rs ${fmt(rate)}` });
         if (e) return e;
       }
+      const closeMeters = cleanMeters({ ...w.meters, replacementOdometerIn: x.replacementMeter, ...(x.outcome === 'swapped_back' ? { originalOdometerBack: x.originalMeter } : {}) });
       const patch: Partial<BdSwap> = {
         status: 'closed', outcome: x.outcome, backAt: at.toISOString(), backBy: x.by, days,
         ...(fleet && rate !== w.replacementRate ? { replacementRate: rate } : {}),
@@ -643,13 +658,14 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
         ...(money ? { replacementPayout: money.replacementPayout, originalDeduction: money.originalDeduction } : {}),
         ...(commissionId ? { commissionId } : {}), ...(adjustmentId ? { adjustmentId } : {}),
         ...(x.notes?.trim() ? { backNotes: x.notes.trim() } : {}),
+        ...(closeMeters ? { meters: closeMeters } : {}),
       };
       set((s) => ({ swaps: s.swaps.map((v) => (v.id === swapId ? { ...v, ...patch, updatedAt: nowIso() } : v)) }));
       save('swaps', 'update', { id: swapId }, patch);
       if (fleet) st.setVehicleStatus(w.replacementVehicleId!, x.replacementTo ?? 'Available');
       if (x.outcome === 'swapped_back' && w.originalVehicleId) st.setVehicleStatus(w.originalVehicleId, 'Ongoing');
-      if (fleet) bumpMileage(w.replacementVehicleId, x.replacementOdometer);
-      if (x.outcome === 'swapped_back') bumpMileage(w.originalVehicleId, x.originalOdometer);
+      if (fleet) bumpMileage(w.replacementVehicleId, x.replacementOdometer, x.replacementMeter);
+      if (x.outcome === 'swapped_back') bumpMileage(w.originalVehicleId, x.originalOdometer, x.originalMeter);
       const driven = w.replacementOdometerOut != null ? ` (${fmt(x.replacementOdometer - w.replacementOdometerOut)} km in ${swapLabel(w)})` : '';
       const back = x.outcome === 'swapped_back' ? `${carName(w.originalVehicleId)} back with the customer at ${fmt(x.originalOdometer!)} km${driven}`
         : x.outcome === 'replaced' ? `${swapLabel(w)} changed for another replacement${driven}` : `trip ended in the replacement${driven}`;
@@ -685,33 +701,157 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       if (!(x.nextOdometer != null && x.nextOdometer > 0)) return `Enter the odometer of ${carName(car.id)} as it goes to the customer.`;
       if (x.nextRate != null && !(x.nextRate >= 0)) return 'Enter a valid daily rate for the next car.';
       const e = get().closeSwap(swapId, { at: x.at, by: x.by, outcome: 'replaced', location: x.location, days: x.days, rate: x.rate,
-        replacementOdometer: x.replacementOdometer, replacementFuel: x.replacementFuel, replacementTo: x.replacementTo ?? 'Maintenance', notes: x.notes });
+        replacementOdometer: x.replacementOdometer, replacementFuel: x.replacementFuel, replacementTo: x.replacementTo ?? 'Maintenance', notes: x.notes, replacementMeter: x.replacementMeter });
       if (e) return e;
       return get().startSwap(w.solutionId, { at: x.at, by: x.by, replacementVehicleId: car.id, location: x.location, rate: x.nextRate,
-        replacementOdometer: x.nextOdometer, replacementFuel: x.nextFuel }, { afterReplaced: true });
+        replacementOdometer: x.nextOdometer, replacementFuel: x.nextFuel, replacementMeter: x.nextMeter }, { afterReplaced: true });
     },
 
-    fillSwapReadings: (swapId, r, reason, by, isAdmin) => {
+    fillSwapReadings: (swapId, r, reason, by, isAdmin, meters) => {
       const w = get().swaps.find((v) => v.id === swapId);
       if (!w) return 'Swap not found.';
       if (!isAdmin) return 'Only an admin can enter readings afterwards.';
       if (!reason.trim()) return "Say where the readings come from (agreement, photo, the car's records…).";
       const keys = (Object.keys(r) as (keyof SwapReadings)[]).filter((k) => r[k] != null);
-      if (!keys.length) return 'Enter at least one reading.';
       if (keys.some((k) => !(Number(r[k]) > 0))) return 'Enter each reading in km.';
-      const patch = Object.fromEntries(keys.map((k) => [k, Math.round(Number(r[k]))])) as SwapReadings;
+      const nextMeters = cleanMeters({ ...w.meters, ...meters });
+      const meterKeys = (Object.keys(meters ?? {}) as (keyof SwapMeters)[]).filter((k) => meterOf(w.meters?.[k]) !== meterOf(nextMeters?.[k]));
+      if (!keys.length && !meterKeys.length) return 'Enter at least one reading.';
+      const patch = Object.fromEntries(keys.map((k) => [k, Math.round(Number(r[k]))])) as Partial<BdSwap>;
+      if (meterKeys.length) patch.meters = nextMeters;
       const next: BdSwap = { ...w, ...patch };
       const problem = readingsProblem(next);
       if (problem) return problem;
       set((s) => ({ swaps: s.swaps.map((v) => (v.id === swapId ? { ...v, ...patch, updatedAt: nowIso() } : v)) }));
-      save('swaps', 'update', { id: swapId }, patch);
+      save('swaps', 'update', { id: swapId }, meterKeys.length ? { ...patch, meters: nextMeters ?? null } : patch);
       const label: Record<keyof SwapReadings, string> = {
         originalOdometer: `${carName(w.originalVehicleId)} at the breakdown`, replacementOdometerOut: `${swapLabel(w)} handed over`,
         replacementOdometerIn: `${swapLabel(w)} collected`, originalOdometerBack: `${carName(w.originalVehicleId)} back to the customer`,
       };
-      const text = `Odometer ${keys.some((k) => w[k] != null) ? 'corrected' : 'entered afterwards'} (${reason.trim()}): ${keys.map((k) => `${label[k]} ${fmt(patch[k]!)} km${w[k] != null ? ` (was ${fmt(w[k]!)})` : ''}`).join(', ')}`;
+      const all = [...new Set([...keys, ...meterKeys])];
+      const text = `Odometer ${all.some((k) => w[k] != null) ? 'corrected' : 'entered afterwards'} (${reason.trim()}): ${all.map((k) =>
+        `${label[k]} ${kmWithMeter(next[k], next.meters?.[k])}${w[k] != null ? ` (was ${kmWithMeter(w[k], w.meters?.[k])})` : ''}`).join(', ')}`;
       event(w.incidentId, by, 'swap', text, { swapId });
       useStore.getState().logBookingActivity(w.bookingId, { by, type: 'Swapped', text: `Breakdown ${incidentOf(w.incidentId)?.ref ?? ''}: ${text}` });
+      return null;
+    },
+
+    editSwap: (swapId, x, reason, by, isAdmin) => {
+      const w = get().swaps.find((v) => v.id === swapId);
+      if (!w) return 'Swap not found.';
+      if (!isAdmin) return 'Only an admin can correct a replacement.';
+      if (w.status !== 'closed') return 'Record the return first — then it can be corrected.';
+      if (!reason.trim()) return 'Say why it is being corrected.';
+      const st = useStore.getState();
+      const b = st.bookings.find((v) => v.id === w.bookingId);
+      if (!b) return 'Booking not found.';
+      const keys = (Object.keys(x) as (keyof SwapEdit)[]).filter((k) => k !== 'meters' && x[k] !== w[k] && !(x[k] === '' && w[k] == null));
+      // which meter each reading came from (odometer / Trip A, B, C)
+      const nextMeters = 'meters' in x ? cleanMeters(x.meters) : w.meters;
+      const meterKeys = (['originalOdometer', 'replacementOdometerOut', 'replacementOdometerIn', 'originalOdometerBack'] as const)
+        .filter((k) => meterOf(w.meters?.[k]) !== meterOf(nextMeters?.[k]));
+      if (!keys.length && !meterKeys.length) return 'Nothing was changed.';
+      const next: BdSwap = { ...w, ...Object.fromEntries(keys.map((k) => [k, x[k] === '' ? undefined : x[k]])), meters: nextMeters };
+      // times
+      const out = new Date(next.outAt).getTime(), back = new Date(next.backAt ?? '').getTime();
+      if (Number.isNaN(out) || Number.isNaN(back)) return 'Enter both times.';
+      if (back < out) return 'The return is before the handover.';
+      if (back > Date.now() + 864e5) return 'The return time is more than a day ahead.';
+      // readings: corrected, never removed (the database refuses that too)
+      const kmKeys = ['originalOdometer', 'replacementOdometerOut', 'replacementOdometerIn', 'originalOdometerBack'] as const;
+      for (const k of kmKeys) {
+        if (w[k] != null && next[k] == null) return 'An odometer reading cannot be removed — correct it instead.';
+        if (next[k] != null && !(Number(next[k]) > 0)) return 'Enter each reading in km.';
+      }
+      const problem = readingsProblem(next);
+      if (problem) return problem;
+      if (next.days == null || !(next.days >= 0)) return 'Enter the days the replacement served.';
+      next.days = Math.round(next.days);
+      if (w.source === 'fleet' && !(Number(next.replacementRate) >= 0)) return 'Enter a valid daily rate.';
+
+      // owner payouts follow the days and the agreed rate
+      const fleet = w.source === 'fleet';
+      const moneyChanged = fleet && (next.days !== w.days || next.replacementRate !== w.replacementRate);
+      const i = incidentOf(w.incidentId)!;
+      const num = (id?: string) => st.vehicles.find((v) => v.id === id)?.vehicleNumber ?? 'the vehicle';
+      const plural = `${next.days} day${next.days === 1 ? '' : 's'}`;
+      const span = `${dayMonth(next.outAt)} to ${dayMonth(next.backAt!)}`;
+      const moneyNotes: string[] = [];
+      if (moneyChanged) {
+        const money = swapMoney(b, w.originalVehicleId, next.replacementRate ?? 0, next.days);
+        // check every payout line first, so nothing changes when one can't
+        const replRow = w.commissionId ? st.commissions.find((c) => c.id === w.commissionId) : undefined;
+        if (replRow?.status === 'Paid' && replRow.ownerPayout !== money.replacementPayout) {
+          return `${num(w.replacementVehicleId)}'s owner was already paid Rs ${fmt(replRow.ownerPayout)} for this replacement — settle the difference with the owner, or change the days/rate back.`;
+        }
+        const owedRow = w.adjustmentId?.startsWith('sw-owed') ? st.commissions.find((c) => c.id === w.adjustmentId) : undefined;
+        if (owedRow?.status === 'Paid' && -owedRow.ownerPayout !== money.originalDeduction) {
+          return `The amount ${num(w.originalVehicleId)}'s owner owed back is already settled — change the days/rate back, or settle the difference with the owner.`;
+        }
+        const adj = w.adjustmentId?.startsWith('sw-adj') ? b.payoutAdjustments?.find((a) => a.id === w.adjustmentId && !a.reversedAt) : undefined;
+        const originalPaid = payoutRowFor(st.commissions, b, w.originalVehicleId)?.status === 'Paid';
+        if (adj && originalPaid && adj.amount !== money.originalDeduction) {
+          return `${num(w.originalVehicleId)}'s payout for this booking is already marked paid — its deduction can't be changed now.`;
+        }
+        // replacement owner
+        const replNote = `Breakdown replacement: ${num(w.replacementVehicleId)} replaced ${num(w.originalVehicleId)} (${i.ref}) — ${span}, ${plural} × Rs ${fmt(next.replacementRate ?? 0)}`;
+        if (replRow) {
+          const e = st.updateSwapPayout(replRow.id, money.replacementPayout, replNote);
+          if (e) return e;
+        } else if (money.replacementPayout > 0) {
+          const e = st.addSwapPayout({ id: `sw-pay-${w.id}`, bookingId: b.id, vehicleId: w.replacementVehicleId!, amount: money.replacementPayout, note: replNote });
+          if (e) return e;
+          next.commissionId = `sw-pay-${w.id}`;
+        }
+        // original owner
+        if (owedRow) {
+          const e = st.updateSwapPayout(owedRow.id, -money.originalDeduction, `Owes back: breakdown ${i.ref} — ${num(w.originalVehicleId)} was off the road ${plural} (${span}); the payout for this booking was already paid`);
+          if (e) return e;
+        } else if (adj) {
+          const cur = useStore.getState().bookings.find((v) => v.id === b.id)!;
+          st.editBooking(b.id, {
+            payoutAdjustments: (cur.payoutAdjustments ?? []).map((a) => (a.id !== adj.id ? a
+              : money.originalDeduction > 0 ? { ...a, amount: money.originalDeduction, reason: `Breakdown ${i.ref}: ${plural} served by ${swapLabel(w)}` }
+              : { ...a, reversedAt: nowIso(), reversedBy: by })),
+          }, { by, type: 'Edited', changes: [`Owner payout deduction ${fmt(adj.amount)} → ${fmt(money.originalDeduction)} (breakdown ${i.ref} corrected)`], reason: reason.trim() });
+        } else if (money.originalDeduction > 0) {
+          const id = `${originalPaid ? 'sw-owed' : 'sw-adj'}-${w.id}`;
+          const e = originalPaid
+            ? st.addSwapPayout({ id, bookingId: b.id, vehicleId: w.originalVehicleId!, amount: -money.originalDeduction,
+                note: `Owes back: breakdown ${i.ref} — ${num(w.originalVehicleId)} was off the road ${plural} (${span}); the payout for this booking was already paid` })
+            : st.adjustOwnerPayout(b.id, { id, vehicleId: w.originalVehicleId!, amount: money.originalDeduction, source: i.ref, by, reason: `Breakdown ${i.ref}: ${plural} served by ${swapLabel(w)}` });
+          if (e) return e;
+          next.adjustmentId = id;
+        }
+        if (money.replacementPayout !== w.replacementPayout) moneyNotes.push(`replacement owner earns Rs ${fmt(money.replacementPayout)} (was Rs ${fmt(w.replacementPayout ?? 0)})`);
+        if (money.originalDeduction !== w.originalDeduction) moneyNotes.push(`original owner's payout −Rs ${fmt(money.originalDeduction)} (was −Rs ${fmt(w.originalDeduction ?? 0)})`);
+        next.replacementPayout = money.replacementPayout;
+        next.originalDeduction = money.originalDeduction;
+      }
+
+      const patch: Partial<BdSwap> = Object.fromEntries(
+        (['outAt', 'backAt', 'outLocation', 'backLocation', 'days', 'replacementRate', ...kmKeys, 'originalFuel', 'replacementFuelOut', 'replacementFuelIn', 'originalFuelBack',
+          'outNotes', 'backNotes', 'replacementPayout', 'originalDeduction', 'commissionId', 'adjustmentId'] as (keyof BdSwap)[])
+          .filter((k) => next[k] !== w[k]).map((k) => [k, next[k] ?? null]),
+      );
+      if (meterKeys.length) (patch as Record<string, unknown>).meters = nextMeters ?? null;
+      set((s) => ({ swaps: s.swaps.map((v) => (v.id === swapId ? { ...v, ...next, updatedAt: nowIso() } : v)) }));
+      save('swaps', 'update', { id: swapId }, patch);
+      if (fleet) bumpMileage(w.replacementVehicleId, next.replacementOdometerIn, next.meters?.replacementOdometerIn);
+
+      const LABEL: Partial<Record<keyof SwapEdit, string>> = {
+        outAt: 'handed over', backAt: 'back', outLocation: 'handover place', backLocation: 'return place', days: 'days', replacementRate: 'agreed rate',
+        originalOdometer: `${carName(w.originalVehicleId)} at the breakdown`, replacementOdometerOut: `${swapLabel(w)} handed over`,
+        replacementOdometerIn: `${swapLabel(w)} collected`, originalOdometerBack: `${carName(w.originalVehicleId)} back to the customer`,
+        originalFuel: `${carName(w.originalVehicleId)} fuel`, replacementFuelOut: 'replacement fuel out', replacementFuelIn: 'replacement fuel back',
+        originalFuelBack: `${carName(w.originalVehicleId)} fuel back`, outNotes: 'handover notes', backNotes: 'return notes',
+      };
+      const show = (k: keyof SwapEdit, v: unknown) => v == null || v === '' ? '—'
+        : k === 'outAt' || k === 'backAt' ? new Date(String(v)).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+        : kmKeys.includes(k as typeof kmKeys[number]) ? kmWithMeter(Number(v), (v === w[k] ? w : next).meters?.[k as typeof kmKeys[number]]) : k === 'replacementRate' ? `Rs ${fmt(Number(v))}/day` : String(v);
+      const text = `Replacement corrected (${reason.trim()}): ${[...new Set([...keys, ...meterKeys])].map((k) => `${LABEL[k] ?? k} ${kmKeys.includes(k as typeof kmKeys[number]) ? kmWithMeter(w[k] as number | undefined, w.meters?.[k as typeof kmKeys[number]]) : show(k, w[k])} → ${kmKeys.includes(k as typeof kmKeys[number]) ? kmWithMeter(next[k] as number | undefined, next.meters?.[k as typeof kmKeys[number]]) : show(k, next[k])}`).join(', ')}${moneyNotes.length ? ` — ${moneyNotes.join(', ')}` : ''}`;
+      event(w.incidentId, by, 'swap', text, { swapId, solutionId: w.solutionId });
+      st.logBookingActivity(b.id, { by, type: 'Swapped', text: `Breakdown ${i.ref}: ${text}` });
       return null;
     },
 
@@ -970,13 +1110,15 @@ breakdownHooks.activeSwapNote = (bookingId) => {
 };
 
 /** Km over the whole trip of a booking, every car included (see lib/tripKm.ts) */
-export function tripKmFor(b: Booking, opts: { startKm?: number; returnKm?: number } = {}): TripKm {
+export function tripKmFor(b: Booking, opts: { startKm?: number; returnKm?: number; startMeter?: KmMeter; returnMeter?: KmMeter } = {}): TripKm {
   const bd = useBreakdownStore.getState();
   const st = useStore.getState();
   return tripKm({
-    booking: b, swaps: bd.swaps, startKm: opts.startKm ?? b.checklists?.pickup?.odometer, returnKm: opts.returnKm ?? b.checklists?.return?.odometer,
+    // replacements typed in with a manual (past) booking count like live swaps
+    booking: b, swaps: [...bd.swaps, ...manualSwaps(b)], startKm: opts.startKm ?? b.checklists?.pickup?.odometer, returnKm: opts.returnKm ?? b.checklists?.return?.odometer,
+    startMeter: opts.startMeter ?? b.checklists?.pickup?.meter, returnMeter: opts.returnMeter ?? b.checklists?.return?.meter,
     carNumber: (id) => st.vehicles.find((v) => v.id === id)?.vehicleNumber ?? 'Vehicle',
-    incidentRef: (id) => bd.incidents.find((i) => i.id === id)?.ref,
+    incidentRef: (id) => (id === MANUAL_INCIDENT ? '(entered with the booking)' : bd.incidents.find((i) => i.id === id)?.ref),
     incidentMileage: (id) => bd.incidents.find((i) => i.id === id)?.mileage,
     handovers: st.handovers,
   });

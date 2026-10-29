@@ -6,7 +6,7 @@
 import { supabase, supabaseEnabled } from './supabase';
 import { bookingBill, bookingDue, bookingPaid } from './credit';
 import { UNIT, RentalType } from './rentalPeriod';
-import type { ActivityEntry, Booking, PaymentEntry, Vehicle } from '../types';
+import type { ActivityEntry, Booking, ExtraCharge, PaymentEntry, Vehicle } from '../types';
 
 /** Human booking number for calls, receipts and WhatsApp: CRC-2026-K3F9 */
 export const bookingNo = (b: Pick<Booking, 'id' | 'createdAt' | 'startDate'>) =>
@@ -17,7 +17,34 @@ export const rs = (n: number) => `Rs ${Math.round(n).toLocaleString('en-LK')}`;
 
 /* ---------- Price ---------- */
 
-export interface PriceLine { label: string; amount: number; tone?: 'minus' | 'muted' }
+export interface PriceLine {
+  label: string;
+  /** the second, smaller line: how it was worked out / what it was for */
+  detail?: string;
+  amount: number;
+  tone?: 'minus' | 'muted';
+  group: 'rent' | 'charge' | 'deduction';
+}
+/** One line of text, for the printed agreement */
+export const lineText = (l: PriceLine) => (l.detail ? `${l.label} — ${l.detail}` : l.label);
+
+/** A charge or deduction as a short title + detail (the notes are written by the return form) */
+export function chargeLine(c: ExtraCharge): PriceLine {
+  const note = c.note?.trim() ?? '';
+  if (c.amount < 0) {
+    // "Tyres paid by the customer — 2 rear tyres"; "Other paid by the customer — Fuel at the replacement"
+    const m = note.match(/^(.+?) paid by the customer(?: — (.*))?$/);
+    const kind = m?.[1] ?? 'Deduction', what = (m ? m[2] : note)?.trim();
+    return kind === 'Other' && what
+      ? { label: what, amount: c.amount, tone: 'minus', group: 'deduction' }
+      : { label: kind, detail: what || undefined, amount: c.amount, tone: 'minus', group: 'deduction' };
+  }
+  // "Extra km: 722 km × Rs 50 (2,922 km driven in CBU-0745 + CBU-0649)"
+  const km = note.match(/^Extra km: (.*)$/);
+  if (km) return { label: 'Extra km', detail: km[1].replace(/ \((.*)\)$/, ' · $1'), amount: c.amount, group: 'charge' };
+  return { label: c.kind, detail: note || undefined, amount: c.amount, group: 'charge' };
+}
+
 /** Rental × rate, extra charges, discount → bill; then paid and due */
 export function priceBreakdown(b: Booking, vehicle?: Vehicle) {
   const type = (b.rentalType ?? 'Daily') as RentalType;
@@ -26,21 +53,24 @@ export function priceBreakdown(b: Booking, vehicle?: Vehicle) {
   const recovered = type === 'Monthly' && b.checklists?.return?.recovery && b.unitRate;
   const fullMonths = recovered ? (b.rentalUnits ?? 0) * b.unitRate! : 0;
   if (recovered && b.totalAmount > fullMonths) {
-    if (b.rentalUnits) lines.push({ label: `${b.rentalUnits} ${b.rentalUnits === 1 ? UNIT[type].one : UNIT[type].many} × ${rs(b.unitRate!)}`, amount: fullMonths });
-    lines.push({ label: 'Part month — days used until the vehicle was recovered', amount: b.totalAmount - fullMonths });
+    if (b.rentalUnits) lines.push({ label: `${b.rentalUnits} ${b.rentalUnits === 1 ? UNIT[type].one : UNIT[type].many} × ${rs(b.unitRate!)}`, amount: fullMonths, group: 'rent' });
+    lines.push({ label: 'Part month', detail: 'days used until the vehicle was recovered', amount: b.totalAmount - fullMonths, group: 'rent' });
   } else if (type !== 'Daily' && b.rentalUnits) {
-    lines.push({ label: `${b.rentalUnits} ${b.rentalUnits === 1 ? UNIT[type].one : UNIT[type].many} × ${rs(b.unitRate ?? 0)}`, amount: b.totalAmount });
+    lines.push({ label: `${b.rentalUnits} ${b.rentalUnits === 1 ? UNIT[type].one : UNIT[type].many} × ${rs(b.unitRate ?? 0)}`, amount: b.totalAmount, group: 'rent' });
   } else {
     const rate = b.totalDays ? Math.round(b.totalAmount / b.totalDays) : vehicle?.dailyRent ?? 0;
-    lines.push({ label: `${b.totalDays} day${b.totalDays === 1 ? '' : 's'} × ${rs(rate)}`, amount: b.totalAmount });
+    lines.push({ label: `${b.totalDays} day${b.totalDays === 1 ? '' : 's'} × ${rs(rate)}`, amount: b.totalAmount, group: 'rent' });
   }
   const charged = (b.charges ?? []).filter((c) => c.status === 'Charged');
   const chargedTotal = charged.reduce((s, c) => s + c.amount, 0);
-  const otherExtras = (b.extraCharges ?? 0) - chargedTotal;
-  if (otherExtras > 0) lines.push({ label: 'Extra charges (km, extras)', amount: otherExtras });
-  charged.forEach((c) => lines.push({ label: `${c.kind}${c.note ? ` — ${c.note}` : ''}`, amount: c.amount }));
-  if (b.discount) lines.push({ label: 'Discount', amount: -b.discount, tone: 'minus' });
-  return { lines, bill: bookingBill(b), paid: bookingPaid(b), due: bookingDue(b) };
+  // extra charges typed in Edit booking (or a total out of step with its charges): not tied to a listed charge
+  const unlisted = (b.extraCharges ?? 0) - chargedTotal;
+  if (unlisted > 0) lines.push({ label: 'Other extra charges', detail: 'not itemised', amount: unlisted, group: 'charge' });
+  charged.filter((c) => c.amount >= 0).forEach((c) => lines.push(chargeLine(c)));
+  if (unlisted < 0) lines.push({ label: 'Other reduction', detail: 'not itemised', amount: unlisted, tone: 'minus', group: 'deduction' });
+  charged.filter((c) => c.amount < 0).forEach((c) => lines.push(chargeLine(c)));
+  if (b.discount) lines.push({ label: 'Discount', amount: -b.discount, tone: 'minus', group: 'deduction' });
+  return { lines, unlisted, bill: bookingBill(b), paid: bookingPaid(b), due: bookingDue(b) };
 }
 
 /* ---------- Payment ledger ---------- */

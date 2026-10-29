@@ -1,3 +1,4 @@
+import type { KmMeter } from '../types';
 import { supabase, supabaseEnabled } from './supabase';
 
 /*
@@ -100,8 +101,11 @@ export interface BdSwap {
   replacementOdometerIn?: number; replacementFuelIn?: string; originalOdometerBack?: number; originalFuelBack?: string;
   replacementTo?: string; days?: number; replacementPayout?: number; originalDeduction?: number;
   commissionId?: string; adjustmentId?: string; backNotes?: string;
+  /** readings taken from a trip meter (12_swap_trip_meters.sql) — a reading not listed is from the main odometer */
+  meters?: SwapMeters;
   createdAt: string; updatedAt: string;
 }
+export type SwapMeters = Partial<Record<'originalOdometer' | 'replacementOdometerOut' | 'replacementOdometerIn' | 'originalOdometerBack', KmMeter>>;
 
 export interface BdData {
   incidents: BdIncident[]; events: BdEvent[]; solutions: BdSolution[]; expenses: BdExpense[];
