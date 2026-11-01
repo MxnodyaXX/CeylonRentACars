@@ -2,3 +2,8 @@ node_modules
 dist
 .env.local
 .env*.local
+
+# design sources - too big for GitHub
+Assets/*.psd
+Assets/20-4Size.png
+Assets/debug.log
