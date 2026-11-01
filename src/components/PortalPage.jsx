@@ -12,7 +12,13 @@ const PERKS = [
   ['file', 'Track your requests', 'See where each booking request stands'],
 ];
 
-function SignIn({ onSignedIn }) {
+/** Phone + SMS code sign-in box. Also used by "List your vehicle" (purpose "partner", any Sri Lankan number). */
+export function SignIn({
+  onSignedIn, purpose,
+  intro = "Use the number you booked with. We'll text you a 6-digit code — no password needed.",
+  cta = 'View my bookings',
+  waText = 'Hi, I would like to check my booking.',
+}) {
   const [step, setStep] = useState('phone');           // phone | code
   const [phone, setPhone] = useState('');
   const [sentTo, setSentTo] = useState('');
@@ -34,7 +40,7 @@ function SignIn({ onSignedIn }) {
     if (phone.replace(/\D/g, '').length < 9) { setError({ message: 'Please enter your mobile number.' }); return; }
     setBusy(true);
     try {
-      const to = await requestCode(phone);
+      const to = await requestCode(phone, purpose);
       setSentTo(to); setCode(''); setStep('code'); setWait(RESEND_AFTER);
       setTimeout(() => codeRef.current?.focus(), 50);
     } catch (err) { setError({ message: err.message, notFound: err.notFound }); }
@@ -56,17 +62,17 @@ function SignIn({ onSignedIn }) {
       {step === 'phone' ? (
         <form onSubmit={send} className="portal-form" noValidate>
           <h2>Sign in with your phone</h2>
-          <p className="portal-muted">Use the number you booked with. We'll text you a 6-digit code — no password needed.</p>
+          <p className="portal-muted">{intro}</p>
           <label className="fb-field">
             <span>Mobile number</span>
             <input type="tel" inputMode="tel" autoComplete="tel" placeholder="077 123 4567" value={phone}
                    onChange={(e) => setPhone(e.target.value)} maxLength={24} autoFocus />
-            <small>Outside Sri Lanka? Include your country code, e.g. +44 7700 900123.</small>
+            {purpose !== 'partner' && <small>Outside Sri Lanka? Include your country code, e.g. +44 7700 900123.</small>}
           </label>
           {error && (
             <p className="fb-error" role="alert">
               {error.message}
-              {error.notFound && <> <a href={waLink('Hi, I would like to check my booking.')} target="_blank" rel="noreferrer">Open WhatsApp</a></>}
+              {error.notFound && <> <a href={waLink(waText)} target="_blank" rel="noreferrer">Open WhatsApp</a></>}
             </p>
           )}
           <button type="submit" className="btn btn--red btn--lg fb-submit" disabled={busy}>
@@ -84,7 +90,7 @@ function SignIn({ onSignedIn }) {
           </label>
           {error && <p className="fb-error" role="alert">{error.message}</p>}
           <button type="submit" className="btn btn--red btn--lg fb-submit" disabled={busy}>
-            {busy ? 'Checking…' : <>View my bookings <Icon name="arrow" /></>}
+            {busy ? 'Checking…' : <>{cta} <Icon name="arrow" /></>}
           </button>
           <div className="portal-links">
             <button type="button" onClick={() => { setStep('phone'); setError(null); }}>Change number</button>

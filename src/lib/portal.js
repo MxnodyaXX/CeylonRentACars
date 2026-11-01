@@ -43,10 +43,11 @@ async function token() {
   return next.access_token;
 }
 
-/** Step 1 — send a code. Returns the number in international form (+94…). */
-export async function requestCode(phone) {
+/** Step 1 — send a code. Returns the number in international form (+94…).
+ *  purpose "partner" ("List your vehicle"): new numbers get a code too. */
+export async function requestCode(phone, purpose) {
   const res = await fetch(`${URL}/functions/v1/portal-login`, {
-    method: 'POST', headers: { ...base, Authorization: `Bearer ${KEY}` }, body: JSON.stringify({ phone }),
+    method: 'POST', headers: { ...base, Authorization: `Bearer ${KEY}` }, body: JSON.stringify({ phone, ...(purpose ? { purpose } : {}) }),
   }).catch(() => null);
   if (!res) throw new Error('No connection — please check your internet and try again.');
   const data = await res.json().catch(() => ({}));
@@ -80,13 +81,38 @@ export async function signOut() {
   if (t) await fetch(`${URL}/auth/v1/logout`, { method: 'POST', headers: { ...base, Authorization: `Bearer ${t}` } }).catch(() => {});
 }
 
-async function rpc(name) {
+async function signedInToken() {
   const t = await token();
   if (!t) { const e = new Error('Please sign in again.'); e.signedOut = true; throw e; }
-  const res = await fetch(`${URL}/rest/v1/rpc/${name}`, { method: 'POST', headers: { ...base, Authorization: `Bearer ${t}` }, body: '{}' });
+  return t;
+}
+
+/** Call a database function as the signed-in customer. Errors carry the database message. */
+export async function rpc(name, args = {}, failMessage = 'We couldn’t load your bookings — please try again.') {
+  const t = await signedInToken();
+  const res = await fetch(`${URL}/rest/v1/rpc/${name}`, { method: 'POST', headers: { ...base, Authorization: `Bearer ${t}` }, body: JSON.stringify(args) });
   if (res.status === 401) { save(null); const e = new Error('Please sign in again.'); e.signedOut = true; throw e; }
-  if (!res.ok) throw new Error('We couldn’t load your bookings — please try again.');
-  return res.json();
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    // messages raised on purpose by our functions (plpgsql "raise exception") are shown as they are
+    throw new Error(body?.code === 'P0001' && body.message ? body.message : failMessage);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+/** Upload one file to Storage as the signed-in customer (the bucket rules decide where they may write) */
+export async function uploadFile(bucket, path, file) {
+  const t = await signedInToken();
+  const res = await fetch(`${URL}/storage/v1/object/${bucket}/${path}`, {
+    method: 'POST', headers: { apikey: KEY, Authorization: `Bearer ${t}`, 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'false' }, body: file,
+  }).catch(() => null);
+  if (!res) throw new Error('No connection — please check your internet and try again.');
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(/size|large/i.test(String(body?.message ?? body?.error ?? '')) ? 'That file is too large (10 MB at most).' : 'The file could not be uploaded — please try again.');
+  }
+  return path;
 }
 
 /** Your profile, bookings and booking requests */

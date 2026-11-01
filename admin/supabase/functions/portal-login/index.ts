@@ -8,7 +8,9 @@
 // can't make us send (and pay for) SMS. Limits: 5 codes per number and 10 tries per connection an hour.
 //
 // Deploy:   supabase functions deploy portal-login --no-verify-jwt
-// Body:     { phone: "077 123 4567" }  →  { ok: true, phone: "+94771234567" }  or  { ok: false, error }
+// Body:     { phone: "077 123 4567", purpose?: "partner" }  →  { ok: true, phone: "+94771234567" }  or  { ok: false, error }
+//           purpose "partner" = "List your vehicle" on the website: any Sri Lankan mobile may get a code
+//           (same limits), since a new partner has no bookings with us yet.
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { serviceClient } from "../_shared/staff.ts";
@@ -35,8 +37,12 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ ok: false, error: "Method not allowed" }, 405);
 
-  let phone = "";
-  try { phone = String((await req.json())?.phone ?? "").slice(0, 40); } catch { return json({ ok: false, error: "Invalid request" }, 400); }
+  let phone = "", partner = false;
+  try {
+    const body = await req.json();
+    phone = String(body?.phone ?? "").slice(0, 40);
+    partner = body?.purpose === "partner";
+  } catch { return json({ ok: false, error: "Invalid request" }, 400); }
   const key = phoneKey(phone);
   const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim();
 
@@ -44,7 +50,8 @@ serve(async (req) => {
   if (error) { console.error("[portal-login] check failed:", error.message); return json({ ok: false, error: "Sign-in isn't available right now — please try again later." }, 503); }
   if (status === "invalid") return json({ ok: false, error: "Please enter your mobile number, e.g. 077 123 4567 or +44 7700 900123." }, 400);
   if (status === "limited") return json({ ok: false, error: "Too many attempts — please wait an hour, or message us on WhatsApp." }, 429);
-  if (status !== "ok") {
+  if (partner && !/^947\d{8}$/.test(key)) return json({ ok: false, error: "Please use a Sri Lankan mobile number, e.g. 077 123 4567." }, 400);
+  if (status !== "ok" && !(partner && status === "unknown")) {
     return json({ ok: false, notFound: true, error: "We couldn't find any bookings for this number. Please use the number you booked with, or message us on WhatsApp." }, 404);
   }
 

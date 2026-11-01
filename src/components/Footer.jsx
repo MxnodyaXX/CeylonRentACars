@@ -24,7 +24,7 @@ export default function Footer() {
           </div>
           <div className="footer__cta-btns">
             <a href="#search" className="btn btn--red btn--lg">Find a Vehicle</a>
-            <a href="#" className="btn btn--ghost btn--lg">List Your Vehicle</a>
+            <a href="/list-your-vehicle" className="btn btn--ghost btn--lg">List Your Vehicle</a>
           </div>
         </div>
 

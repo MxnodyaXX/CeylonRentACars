@@ -7,7 +7,7 @@ import { stageInfo } from '../lib/consultation';
 import Modal from '../components/ui/Modal';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
-import { Plus, MessageSquare, AlertTriangle, Phone, MessageCircle, CalendarClock, Clock } from 'lucide-react';
+import { Plus, MessageSquare, AlertTriangle, Phone, MessageCircle, CalendarClock, Clock, Car, Calendar, Check, X } from 'lucide-react';
 import { FollowUp, loadFollowUps, stageOf, intlDigits, parseRequest } from '../lib/inquiryFollowups';
 import { temperatureOf, responseInfo } from '../lib/inquiryReview';
 import { LOST_REASONS as REASONS } from './InquiryPage';
@@ -200,24 +200,24 @@ export default function Inquiries() {
       })()}
 
       {/* Cards grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
         {sorted.map((inq) => (
           <div
             key={inq.id}
-            className="card hover:shadow-card-hover transition-shadow cursor-pointer"
+            className="card !p-4 hover:shadow-card-hover transition-shadow cursor-pointer"
             onClick={() => navigate(`/inquiries/${inq.id}`)}
           >
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-navy-50 flex items-center justify-center">
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-navy-50 flex items-center justify-center flex-shrink-0">
                   <MessageSquare size={16} className="text-navy-500" />
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-navy-800">{inq.customerName}</p>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-navy-800 truncate">{inq.customerName}</p>
                   <p className="text-xs text-navy-400">{inq.customerPhone}</p>
                 </div>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex flex-col items-end gap-1 flex-shrink-0">
                 <StatusBadge status={inq.status} />
                 {inq.status === 'Pending' && (() => {
                   const st = stage(inq);
@@ -236,42 +236,28 @@ export default function Inquiries() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-y-2 text-xs mb-3">
-              <div>
-                <p className="text-navy-400">Requested</p>
-                <p className="font-medium text-navy-700">{inq.requestedVehicle}</p>
-              </div>
-              <div>
-                <p className="text-navy-400">Referral</p>
-                <p className="font-medium text-navy-700">{inq.referral || '—'}</p>
-              </div>
-              <div>
-                <p className="text-navy-400">From</p>
-                <p className="font-medium text-navy-700">{inq.startDate || '—'}</p>
-              </div>
-              <div>
-                <p className="text-navy-400">To</p>
-                <p className="font-medium text-navy-700">{inq.endDate || '—'}</p>
-              </div>
+            <div className="text-xs text-navy-600 space-y-1 mb-2">
+              <p className="flex items-center gap-1.5 min-w-0"><Car size={12} className="text-navy-400 flex-shrink-0" /><span className="font-medium text-navy-700 truncate">{inq.requestedVehicle}</span></p>
+              <p className="flex items-center gap-1.5"><Calendar size={12} className="text-navy-400 flex-shrink-0" />{inq.startDate || '—'} → {inq.endDate || '—'}<span className="text-navy-400 truncate">· {inq.referral || '—'}</span></p>
             </div>
 
             {inq.alternativeChosen ? (
-              <div className="flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 rounded-lg px-3 py-2 mb-3">
+              <div className="flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 rounded-lg px-2.5 py-1.5 mb-2">
                 ↪ Customer chose an alternative — continued in a new inquiry
               </div>
             ) : inq.status === 'Lost' && inq.lostReason && (
-              <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">
+              <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 rounded-lg px-2.5 py-1.5 mb-2">
                 <AlertTriangle size={11} />
                 {inq.lostReason}
               </div>
             )}
             {(inq.vehicleHistory?.length ?? 0) > 0 && (
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg px-3 py-2 mb-3">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 rounded-lg px-2.5 py-1.5 mb-2">
                 ↻ Alternative chosen — vehicle choice {inq.vehicleHistory!.length + 1} (was {inq.vehicleHistory![inq.vehicleHistory!.length - 1].vehicle.replace(/\s*\(.*\)$/, '')})
               </div>
             )}
             {inq.alternativeOf && (
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 mb-3">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 rounded-lg px-2.5 py-1.5 mb-2">
                 ✓ Alternative chosen by customer
               </div>
             )}
@@ -279,50 +265,42 @@ export default function Inquiries() {
             {(() => {
               const st = stage(inq);
               if (st.last) return (
-                <div className="text-xs bg-navy-50/60 rounded-lg px-3 py-2 mb-3">
+                <div className="text-xs bg-navy-50/60 rounded-lg px-2.5 py-1.5 mb-2">
                   <p className="flex items-center gap-1.5 text-navy-500"><Clock size={11} /> Last: {st.last.channel} · <b className="text-navy-700">{st.last.outcome}</b></p>
                   {st.due && <p className={`flex items-center gap-1.5 mt-1 font-semibold ${st.stage === 'Follow-up due' ? 'text-amber-700' : 'text-navy-400'}`}><CalendarClock size={11} /> Follow up {st.due}</p>}
                 </div>
               );
               const req = parseRequest(inq.notes);
               const preview = req.reference ? `Website request ${req.reference}${req.fields.Type ? ' · ' + req.fields.Type : ''}` : inq.notes;
-              return preview ? <p className="text-xs text-navy-400 bg-navy-50/60 rounded-lg px-3 py-2 mb-3 truncate">{preview}</p> : null;
+              return preview ? <p className="text-xs text-navy-400 bg-navy-50/60 rounded-lg px-2.5 py-1.5 mb-2 truncate">{preview}</p> : null;
             })()}
 
-            {/* Quick contact */}
-            {inq.status === 'Pending' && inq.customerPhone && (
-              <div className="flex gap-2 mb-2" onClick={(e) => e.stopPropagation()}>
-                <a href={`tel:+${intlDigits(inq.customerPhone)}`} className="flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 rounded-xl bg-navy-700 text-white hover:bg-navy-600 font-medium">
-                  <Phone size={12} /> Call
-                </a>
+            {/* Quick actions — one row */}
+            {inq.status === 'Pending' && (
+              <div className="flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+                {inq.customerPhone && (
+                  <a href={`tel:+${intlDigits(inq.customerPhone)}`} className="flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 rounded-lg bg-navy-700 text-white hover:bg-navy-600 font-medium">
+                    <Phone size={12} /> Call
+                  </a>
+                )}
                 <button type="button" onClick={() => navigate(`/inquiries/${inq.id}`)}
-                        className="flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 font-medium">
+                        className="flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 font-medium">
                   <MessageCircle size={12} /> Review
                 </button>
-              </div>
-            )}
-
-            {/* Quick status actions */}
-            {inq.status === 'Pending' && (
-              <div className="flex gap-2 border-t border-navy-50 pt-3" onClick={(e) => e.stopPropagation()}>
-                <button
-                  onClick={() => convertInquiry(inq)}
-                  className="flex-1 text-xs py-1.5 rounded-xl bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-medium transition-colors"
-                >
-                  ✓ Convert
+                <button type="button" onClick={() => convertInquiry(inq)} title="Convert" aria-label="Convert"
+                        className="px-2.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors">
+                  <Check size={14} />
                 </button>
-                <button
-                  onClick={() => openLostModal(inq)}
-                  className="flex-1 text-xs py-1.5 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 font-medium transition-colors"
-                >
-                  ✕ Mark Lost
+                <button type="button" onClick={() => openLostModal(inq)} title="Mark lost" aria-label="Mark lost"
+                        className="px-2.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
+                  <X size={14} />
                 </button>
               </div>
             )}
           </div>
         ))}
         {sorted.length === 0 && (
-          <div className="col-span-3 text-center py-16 text-navy-400 text-sm">No inquiries found.</div>
+          <div className="col-span-full text-center py-16 text-navy-400 text-sm">No inquiries found.</div>
         )}
       </div>
 

@@ -538,5 +538,60 @@ await db.exec(sql('security/rollback/12_rollback_swap_trip_meters.sql'));
 ok((await db.query(`select count(*) n from information_schema.columns where table_name = 'breakdown_vehicle_swaps' and column_name = 'meters'`)).rows[0].n == 0
    && Number((await db.query(`select original_odometer_back from breakdown_vehicle_swaps where id = 'wT1'`)).rows[0].original_odometer_back) === 25000,
    'rollback removes the meters and keeps the readings');
+
+console.log('\n13 — partner applications ("List your vehicle")');
+await db.exec(sql('security/05_customer_portal.sql'));
+// Supabase's buckets table has these two columns
+await db.exec(`alter table storage.buckets add column if not exists file_size_limit bigint; alter table storage.buckets add column if not exists allowed_mime_types text[]`);
+await db.exec(sql('security/13_partner_applications.sql'));
+await db.exec(sql('security/13_partner_applications.sql'));   // safe to re-run
+claims.applicant = { sub: '00000000-0000-0000-0000-0000000000d1', role: 'authenticated', phone: '94765551234', app_metadata: { role: 'customer' } };
+const sig = 'data:image/png;base64,' + 'A'.repeat(200);
+const app = (o = {}) => JSON.stringify({ applicantType: 'individual', name: 'Nimal Perera', nic: '199012345678', address: '12 Lake Rd, Kandy',
+  vehicleNumber: 'cab-1234', brand: 'Toyota', model: 'Axio', year: '2017', seats: '5', askingDaily: '9000',
+  photos: ['94765551234/front.jpg'], documents: { cr: '94765551234/cr.pdf' },
+  agreement: { version: 'v1', text: 'terms', name: 'Nimal Perera', signature: sig }, ...o });
+const submit = (who, o) => as(who, async () => { try { return { id: (await db.query('select submit_partner_application($1::jsonb) id', [app(o)])).rows[0].id }; } catch (e) { return { err: e.message }; } });
+let s1 = await submit('applicant');
+ok(/^PA-[0-9A-F]{6}$/.test(s1.id ?? ''), 'a verified applicant sends an application (PA- reference)');
+const row = (await db.query(`select * from partner_applications where id = $1`, [s1.id])).rows[0];
+ok(row.phone === '94765551234' && row.status === 'Pending' && row.vehicle_number === 'CAB-1234', 'phone taken from the login, status Pending, number in capitals');
+ok(row.agreement.signature === sig && row.agreement.acceptedAt, 'the signed agreement is kept with the time it was accepted');
+ok(/sign the partner agreement/.test((await submit('applicant', { agreement: { name: 'x' } })).err ?? ''), 'no signature → refused');
+ok(/price/.test((await submit('applicant', { askingDaily: '', askingMonthly: '' })).err ?? ''), 'no asking price → refused');
+ok(/Company applications/.test((await submit('applicant', { applicantType: 'company' })).err ?? ''), 'company applications are not open yet');
+ok(/photos could not be attached/.test((await submit('applicant', { photos: ['94771111111/x.jpg'] })).err ?? ''), "can't attach someone else's files");
+ok(/documents could not/.test((await submit('applicant', { documents: { cr: '../94765551234/x.pdf' } })).err ?? ''), "…or odd file paths");
+ok(/verify your phone/.test((await submit('ownerWithPhone')).err ?? ''), 'staff logins cannot apply through the website function');
+ok(!!(await as('anon', () => tryQ('select submit_partner_application($1::jsonb)', [app()]))), 'website visitors (not verified) cannot apply');
+const minePa = await as('applicant', async () => (await db.query('select * from my_partner_applications()')).rows);
+ok(minePa.length === 1 && minePa[0].vehicle === 'Toyota Axio' && !('review_notes' in minePa[0]) && !('phone' in minePa[0]), 'the applicant sees their application, without admin notes');
+ok((await as('stranger', async () => (await db.query('select * from my_partner_applications()')).rows)).length === 0, 'another number sees nothing');
+ok((await as('applicant', () => ids('select id from partner_applications'))).length === 0, 'applicants have no direct table access');
+ok((await as('A', () => ids('select id from partner_applications'))).length === 0, 'owners have no access');
+ok(!!(await as('anon', () => tryQ('select id from partner_applications'))), 'website visitors have no access');
+ok((await as('admin', () => ids('select id from partner_applications'))).length === 1, 'admin sees every application');
+ok(/not waiting for a reply/.test((await as('applicant', () => tryQ(`select reply_partner_application($1, 'here', '[]', '{}')`, [s1.id]))) ?? ''), "can't reply unless asked for more info");
+await as('admin', () => db.query(`update partner_applications set status = 'Needs info', info_request = 'Send the insurance', review_notes = 'secret' where id = $1`, [s1.id]));
+ok((await as('applicant', async () => (await db.query('select info_request from my_partner_applications()')).rows[0].info_request)) === 'Send the insurance', "the applicant sees what the admin asked for");
+ok((await as('applicant', () => tryQ(`select reply_partner_application($1, 'Attached', '[]', '{"insurance": "94765551234/ins.pdf"}')`, [s1.id]))) === null, '…and replies with the file');
+const replied = (await db.query(`select status, documents, history from partner_applications where id = $1`, [s1.id])).rows[0];
+ok(replied.status === 'Pending' && replied.documents.insurance === '94765551234/ins.pdf' && replied.documents.cr && replied.history.length === 2, 'back to Pending, file added, kept in the history');
+ok(!!(await as('stranger', () => tryQ(`select reply_partner_application($1, 'x', '[]', '{}')`, [s1.id]))), "another number can't reply to it");
+const up = (who, name) => as(who, () => tryQ(`insert into storage.objects (bucket_id, name) values ('partner-files', $1)`, [name]));
+ok((await up('applicant', '94765551234/front2.jpg')) === null, 'applicant uploads into their own folder');
+ok(!!(await up('applicant', '94771111111/x.jpg')), "…but not into someone else's");
+ok(!!(await up('anon', '94765551234/x.jpg')), 'website visitors cannot upload');
+ok((await as('applicant', () => ids(`select name from storage.objects where bucket_id = 'partner-files'`))).length === 0, "applicants can't list or open the files");
+ok((await as('A', () => ids(`select name from storage.objects where bucket_id = 'partner-files'`))).length === 0, "owners can't either");
+ok((await as('admin', () => ids(`select name from storage.objects where bucket_id = 'partner-files'`))).length === 1, 'admin opens the files');
+ok((await db.query(`select public from storage.buckets where id = 'partner-files'`)).rows[0].public === false, 'the bucket is private');
+for (let i = 0; i < 5; i++) await submit('applicant');
+ok(/Too many applications/.test((await submit('applicant')).err ?? ''), 'at most 5 applications a day per number');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`)).rows[0].n == 0, 'verify.sql still all PASS with 13');
+await db.exec(sql('security/rollback/13_rollback_partner_applications.sql'));
+ok((await db.query(`select to_regprocedure('public.submit_partner_application(jsonb)') f`)).rows[0].f === null
+   && Number((await db.query(`select count(*) n from partner_applications`)).rows[0].n) > 0, 'rollback removes the functions and keeps the applications');
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

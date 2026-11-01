@@ -137,6 +137,18 @@ ok((await ask('0771234567')).status === 200, 'second time: existing login is fin
 otpStatus = 429;
 ok((await ask('0771234567')).status === 429, 'Supabase "wait a minute" → passed on to the customer');
 otpStatus = 200;
+// "List your vehicle": a new partner has no bookings yet
+const askPartner = (phone) => login(new Request('https://x.supabase.co/functions/v1/portal-login', {
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '2.2.2.2' }, body: JSON.stringify({ phone, purpose: 'partner' }) }));
+rpcAnswer.portal_phone_status = 'unknown'; created.length = 0;
+r = await askPartner('076 555 1234');
+ok(r.status === 200 && created.at(-1)?.phone === '94765551234' && created.at(-1)?.app_metadata?.role === 'customer', 'partner sign-up: new Sri Lankan number → code sent, login role "customer"');
+created.length = 0;
+ok((await askPartner('+44 7700 900123')).status === 400 && created.length === 0, 'partner sign-up: foreign number → refused (no SMS)');
+rpcAnswer.portal_phone_status = 'limited';
+ok((await askPartner('0765551234')).status === 429, 'partner sign-up: same limits as the portal');
+rpcAnswer.portal_phone_status = 'unknown';
+ok((await ask('0765551234')).status === 404, 'without purpose "partner" an unknown number still gets no code');
 
 // ── Customer portal: portal-sms (Auth hook) ──────────────────────────────────
 console.log('\nportal-sms (Send SMS hook)');

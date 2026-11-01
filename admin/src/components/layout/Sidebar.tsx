@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { Siren,
   LayoutDashboard, Car, CalendarDays, MessageSquare,
   Percent, Users, Receipt, UserCheck, Bell, Settings, ShieldCheck, Truck, Contact, HandCoins, CreditCard, AlertTriangle, Globe,
-  ChevronsLeft, ChevronDown, MessageCircle, Smartphone, MessageSquareHeart, LucideIcon,
+  ChevronsLeft, ChevronDown, MessageCircle, Smartphone, MessageSquareHeart, Handshake, LucideIcon,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
@@ -33,6 +33,7 @@ const groups: { title: string; links: Link[] }[] = [
   ] },
   { title: 'People', links: [
     { to: '/owners',        icon: Users,           label: 'Owners'      },
+    { to: '/partners',      icon: Handshake,       label: 'Partner applications' },
     { to: '/drivers',       icon: UserCheck,       label: 'Drivers'     },
     { to: '/customers',     icon: Contact,         label: 'Customers'   },
   ] },
@@ -44,16 +45,7 @@ const groups: { title: string; links: Link[] }[] = [
   ] },
 ];
 
-const ADMIN_ONLY = ['/breakdowns', '/owners', '/credit', '/website', '/feedback', '/permissions', '/whatsapp-setup'];
-
-/* 5 primary links shown in the mobile pill */
-const mobileNav = [
-  { to: '/',              icon: LayoutDashboard },
-  { to: '/bookings',      icon: CalendarDays    },
-  { to: '/vehicles',      icon: Car             },
-  { to: '/notifications', icon: Bell            },
-  { to: '/commissions',   icon: Percent         },
-];
+const ADMIN_ONLY = ['/breakdowns', '/owners', '/partners', '/credit', '/website', '/feedback', '/permissions', '/whatsapp-setup'];
 
 const WIDTH_COLLAPSED = 72;
 const WIDTH_EXPANDED  = 256;
@@ -149,6 +141,15 @@ export default function Sidebar() {
   const visibleGroups = groups
     .map((g) => ({ ...g, links: g.links.filter((l) => canSee(l.to)) }))
     .filter((g) => g.links.length > 0);
+
+  // Mobile: every page the user can open, in one sideways-scrolling bar
+  const mobileLinks = [...visibleGroups.flatMap((g) => g.links), { to: '/settings', icon: Settings, label: 'Settings' }];
+  const mobileRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // centre the current page in the bar (scrollLeft only, so the page itself never jumps)
+    const bar = mobileRef.current, item = bar?.querySelector<HTMLElement>('[data-active]');
+    if (bar && item) bar.scrollTo({ left: item.offsetLeft - (bar.clientWidth - item.offsetWidth) / 2, behavior: 'smooth' });
+  }, [location.pathname]);
 
   const showTip = (label: string) => (e: React.SyntheticEvent<HTMLElement>) => {
     if (expanded) return;
@@ -285,29 +286,34 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* ── Mobile floating pill nav ── */}
-      <nav className="flex md:hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-50">
+      {/* ── Mobile floating bar: every page, scrolls sideways ── */}
+      <nav className="flex md:hidden fixed bottom-4 inset-x-3 z-50 justify-center">
         <div
-          className="flex items-center gap-0.5 rounded-full px-2 py-2"
+          ref={mobileRef}
+          className="mobile-nav no-scrollbar relative flex items-center gap-0.5 rounded-[22px] px-1.5 py-1.5 max-w-full overflow-x-auto overscroll-x-contain snap-x"
           style={{
             background: '#0B0B0D',
             boxShadow: '0 8px 32px rgba(0,0,0,0.40), 0 2px 8px rgba(0,0,0,0.25)',
           }}
         >
-          {mobileNav.map(({ to, icon: Icon }) => {
-            const active  = isActive(to, location.pathname);
-            const isNotif = to === '/notifications';
+          {mobileLinks.map(({ to, icon: Icon, label }) => {
+            const active = isActive(to, location.pathname);
+            const count  = to === '/notifications' ? unread : to === '/incomplete' ? draftCount : to === '/messages' ? waUnread : 0;
             return (
-              <NavLink key={to} to={to}>
-                <div className={clsx(
-                  'w-11 h-11 flex items-center justify-center rounded-full transition-all relative',
-                  active ? 'bg-brand-500 shadow-brand' : 'hover:bg-white/[0.08]'
-                )}>
-                  <Icon size={20} className={active ? 'text-white' : 'text-white/45'} />
-                  {isNotif && unread > 0 && (
-                    <span className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full" />
-                  )}
-                </div>
+              <NavLink key={to} to={to} aria-label={label} data-active={active || undefined}
+                       className={clsx(
+                         'snap-center flex-shrink-0 w-[60px] h-[52px] flex flex-col items-center justify-center gap-1 rounded-2xl transition-all relative',
+                         active ? 'bg-brand-500 shadow-brand' : 'active:bg-white/[0.08]',
+                       )}>
+                <Icon size={19} className={active ? 'text-white' : 'text-white/50'} />
+                <span className={clsx('text-[9px] font-semibold leading-none truncate max-w-[54px]', active ? 'text-white' : 'text-white/45')}>
+                  {label.replace('Partner applications', 'Partners').replace('WhatsApp setup', 'WhatsApp')}
+                </span>
+                {count > 0 && (
+                  <span className="absolute top-1 right-2 min-w-[14px] h-3.5 px-1 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center">
+                    {count > 9 ? '9+' : count}
+                  </span>
+                )}
               </NavLink>
             );
           })}

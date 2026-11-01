@@ -97,7 +97,7 @@ export const VEHICLE_TYPES = ['Any type', 'Economy', 'Sedan', 'Hybrid', 'SUV', '
 export const FOOTER_COLUMNS = [
   { title: 'Company', links: [['About Us', '#'], ['How It Works', '#how'], ['Careers', '#'], ['Contact', '#']] },
   { title: 'Renters', links: [['Browse Vehicles', '/vehicles'], ['Airport Rentals', '#locations'], ['With Driver', '#categories'], ['FAQs', '#faq']] },
-  { title: 'Vehicle Owners', links: [['List Your Vehicle', '#'], ['Owner Portal', '#'], ['Owner Help', '#'], ['Insurance Requirements', '#']] },
+  { title: 'Vehicle Owners', links: [['List Your Vehicle', '/list-your-vehicle'], ['Owner Portal', '#'], ['Owner Help', '#'], ['Insurance Requirements', '#']] },
   { title: 'Support', links: [['Help Centre', '#faq'], ['Leave Feedback', '/feedback'], ['Emergency Support', '#'], ['Terms', '#'], ['Privacy', '#']] },
 ];
 

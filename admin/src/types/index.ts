@@ -90,6 +90,65 @@ export interface Owner {
   createdAt: string;
 }
 
+/** A vehicle owner's application from the website ("List your vehicle") — table partner_applications */
+export type PartnerAppStatus = 'Pending' | 'Under review' | 'Needs info' | 'Approved' | 'Rejected' | 'Withdrawn';
+export type PartnerDocKind = 'cr' | 'revenueLicence' | 'insurance' | 'nicFront' | 'nicBack';
+export type InspectionMethod = 'Physical' | 'Video call' | 'Photos & documents' | 'Other';
+export interface PartnerInspection {
+  method: InspectionMethod;
+  date?: string;
+  status: 'Planned' | 'Done';
+  result?: 'Passed' | 'Failed' | 'Needs work';
+  notes?: string;
+  by?: string;
+}
+export interface PartnerApplication {
+  id: string;                 // PA-XXXXXX
+  applicantType: 'individual' | 'company';
+  status: PartnerAppStatus;
+  phone: string;              // verified, 94XXXXXXXXX
+  name: string;
+  email?: string;
+  nic: string;
+  address: string;
+  city?: string;
+  vehicleNumber: string;
+  brand: string;
+  model: string;
+  year?: number;
+  category?: string;
+  color?: string;
+  seats?: number;
+  transmission?: string;
+  fuelType?: string;
+  mileage?: number;
+  askingDaily?: number;
+  askingMonthly?: number;
+  priceNotes?: string;
+  availableFrom?: string;
+  notes?: string;
+  photos: string[];           // paths in the private partner-files bucket
+  documents: Partial<Record<PartnerDocKind, string>>;
+  agreement: { version: string; text: string; name: string; signature: string; acceptedAt: string };
+  infoRequest?: string;
+  applicantReply?: string;
+  reviewNotes?: string;
+  inspection?: PartnerInspection;
+  /** the owner check call — questions and answers (lib/partnerVerification.ts) */
+  verification?: import('../lib/partnerVerification').Verification;
+  agreedDaily?: number;
+  agreedMonthly?: number;
+  commissionRate?: number;
+  decisionReason?: string;
+  ownerId?: string;
+  vehicleId?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  history: { at: string; by: string; text: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BookingQuotation {
   startLocation: string;
   endLocation: string;

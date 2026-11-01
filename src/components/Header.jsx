@@ -77,7 +77,7 @@ export default function Header() {
           <div className="header__actions">
             <CurrencySelect />
             <a href="/my-bookings" className="btn btn--ghost btn--sm hide-sm">My Bookings</a>
-            <a href="#" className="btn btn--red btn--sm hide-md">List Your Vehicle</a>
+            <a href="/list-your-vehicle" className="btn btn--red btn--sm hide-md">List Your Vehicle</a>
             <button
               className="burger"
               aria-label="Open menu"
@@ -109,7 +109,7 @@ export default function Header() {
           </nav>
           <div className="drawer__foot">
             <a href="/my-bookings" className="btn btn--ghost btn--block">My Bookings</a>
-            <a href="#" className="btn btn--red btn--block">List Your Vehicle</a>
+            <a href="/list-your-vehicle" className="btn btn--red btn--block">List Your Vehicle</a>
           </div>
         </div>
       </div>

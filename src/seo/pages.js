@@ -20,6 +20,10 @@ export const PAGES = {
     title: 'Share Your Feedback | Ceylon Rent A Cars',
     description: 'Rented a vehicle from Ceylon Rent A Cars? Tell us about the vehicle and our service — your feedback helps other travellers in Sri Lanka.',
   },
+  '/list-your-vehicle': {
+    title: 'List Your Vehicle — Earn With Your Car in Sri Lanka | Ceylon Rent A Cars',
+    description: 'Own a car, SUV or van in Sri Lanka? Become a Ceylon Rent A Cars partner: we find verified customers, handle bookings and handovers, and pay you for every rental. Apply online.',
+  },
   // Personal pages (opened from a link with booking details) — never indexed
   '/book': {
     title: 'Send Your Booking Inquiry | Ceylon Rent A Cars',

@@ -20,6 +20,7 @@ import WhatsAppSetup from './pages/WhatsAppSetup';
 import WhatsAppTemplates from './pages/WhatsAppTemplates';
 import Commissions from './pages/Commissions';
 import Owners from './pages/Owners';
+import PartnerApplications from './pages/PartnerApplications';
 import Expenses from './pages/Expenses';
 import Drivers from './pages/Drivers';
 import Notifications from './pages/Notifications';
@@ -114,7 +115,7 @@ export default function App() {
     <Toaster />
     <div className="flex min-h-screen bg-bg">
       <Sidebar />
-      <main className="flex-1 min-w-0 md:ml-[var(--sidebar-w)] md:transition-[margin-left] md:duration-300 md:ease-[cubic-bezier(.16,1,.3,1)] p-4 md:p-6 overflow-auto pb-[72px] md:pb-6">
+      <main className="flex-1 min-w-0 md:ml-[var(--sidebar-w)] md:transition-[margin-left] md:duration-300 md:ease-[cubic-bezier(.16,1,.3,1)] p-4 md:p-6 overflow-auto pb-28 md:pb-6">
         <Routes>
           <Route path="/"              element={<Dashboard />}     />
           <Route path="/vehicles"      element={<Vehicles />}      />
@@ -137,6 +138,7 @@ export default function App() {
           <Route path="/incomplete" element={isAdmin() || can('canViewIncomplete')  ? <Incomplete /> : <Navigate to="/" replace />} />
           {/* Admin-only pages */}
           <Route path="/owners"      element={isAdmin() ? <Owners />           : <Navigate to="/" replace />} />
+          <Route path="/partners"    element={isAdmin() ? <PartnerApplications /> : <Navigate to="/" replace />} />
           <Route path="/permissions" element={isAdmin() ? <Permissions />      : <Navigate to="/" replace />} />
           <Route path="/settings"    element={isAdmin() || currentUser?.role === 'owner' ? <Settings /> : <Navigate to="/" replace />} />
           <Route path="/credit"      element={isAdmin() ? <CreditManagement /> : <Navigate to="/" replace />} />

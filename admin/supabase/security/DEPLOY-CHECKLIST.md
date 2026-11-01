@@ -328,3 +328,29 @@ ODO / Trip A / B / C picker; km are only worked out between readings of the same
       `checklists` and need nothing.
 - [ ] Check: the CBU-0745 booking (breakdown BD-261016-6A16) → Extra mileage → phase 3 "Correct" → booked car back to the customer
       559 with **Trip B** → saves; the return reading is then entered from Trip B as well.
+
+## Part 11 — partner applications: "List your vehicle" (after Part 3 / 05)
+
+Vehicle owners apply on the website (`/list-your-vehicle`): they verify their phone by SMS code,
+then send their details, the vehicle, their asking price, photos, documents and the signed partner
+agreement. The admin reviews them on **Partner applications** (sidebar → People): inspection, notes,
+ask for more info, decline, or approve with the agreed price + commission (creates the owner, the
+vehicle — not on the website yet — and the owner's login). Only individuals for now; companies are
+sent to WhatsApp.
+
+- [ ] SQL Editor → run `13_partner_applications.sql` (undo: `rollback/13_rollback_partner_applications.sql` —
+      keeps the applications and files). Adds `partner_applications`, the private `partner-files` bucket
+      (10 MB, photos/PDF) and the applicant functions. **If 01 is ever re-run, run 13 again** (01 drops
+      every storage rule).
+- [ ] **Already ran 13 before the owner check call was added?** Run it again — it adds the
+      `verification` column (the call's answers). Without it, saving the call fails.
+- [ ] Run `verify.sql` → still 0 FAIL.
+- [ ] Redeploy the sign-in function (new numbers may get a code for partner sign-up, Sri Lankan only):
+      `npx supabase functions deploy portal-login --no-verify-jwt`
+- [ ] Push the website and the admin.
+- [ ] Check: website → List Your Vehicle → An individual → your phone → code → fill the form with 3
+      photos + CR + NIC → sign → Send. Admin → Partner applications shows it; photos and documents open;
+      Agreement prints with the signature. Try "Ask for more info" → the website shows the question and
+      the reply comes back as Pending.
+- [ ] Have the partner agreement wording reviewed (`src/data/partnerAgreement.js`; change
+      `AGREEMENT_VERSION` when the text changes — each application keeps the text it was signed with).
