@@ -1,6 +1,7 @@
 {
   "rewrites": [
     { "source": "/vehicles", "destination": "/vehicles/index.html" },
+    { "source": "/wedding-cars", "destination": "/wedding-cars/index.html" },
     { "source": "/feedback", "destination": "/feedback/index.html" },
     { "source": "/book", "destination": "/book/index.html" },
     { "source": "/alternatives", "destination": "/alternatives/index.html" },

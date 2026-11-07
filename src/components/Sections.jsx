@@ -39,6 +39,24 @@ export function Categories() {
   );
 }
 
+export function WeddingCars() {
+  return (
+    <section className="section section--tight" id="wedding">
+      <div className="container">
+        <div className="promo wed-teaser" data-reveal>
+          <img src="/img/eclass.jpg" alt="" className="promo__bg" loading="lazy" />
+          <div className="promo__content">
+            <span className="pill pill--light"><Icon name="heart" size="sm" />Wedding Cars</span>
+            <h2>Arrive Beautifully on Your Big Day</h2>
+            <p>A decorated car and a professional driver for your wedding, homecoming or photoshoot, anywhere in Sri Lanka.</p>
+            <a href="/wedding-cars" className="btn btn--white btn--lg">See Wedding Cars <Icon name="arrow" /></a>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function Locations() {
   return (
     <section className="section" id="locations">

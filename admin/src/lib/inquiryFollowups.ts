@@ -94,12 +94,15 @@ export function parseRequest(notes?: string) {
   notes.split('\n').forEach((line) => {
     const ref = line.match(/Website booking request (CRC-[A-Z0-9]+)/);
     if (ref) { reference = ref[1]; return; }
-    const m = line.match(/^(Type|Pickup|Return|Days|Email|Country|Message): (.*)$/);
+    const m = line.match(/^(Type|Event|Pickup|Return|Days|Hours|Decoration|Availability|Email|Country|Message): (.*)$/);
     if (m) out[m[1]] = m[2];
     else if (line.trim()) other.push(line);
   });
   return { fields: out, reference, other: other.join('\n') };
 }
+
+/** A request from the website's Wedding Cars page */
+export const isWeddingRequest = (notes?: string) => /^Wedding car/.test(parseRequest(notes).fields.Type ?? '');
 
 /** International digits for wa.me / tel: (Sri Lankan 07x… → 947x…) */
 export const intlDigits = (phone: string) => {

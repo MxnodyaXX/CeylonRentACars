@@ -156,6 +156,21 @@ export function useCatalog() {
   return { ...state, retry: () => fleetEnabled && load() };
 }
 
+/** Wedding Cars page: the cars ticked on the admin's Website page (wedding_vehicles view, no prices). */
+export function useWeddingCars() {
+  const [state, setState] = useState(() =>
+    fleetEnabled ? { vehicles: [], status: 'loading' } : { vehicles: [], status: 'offline' });
+  useEffect(() => {
+    if (!fleetEnabled) return undefined;
+    let live = true;
+    fetchView('wedding_vehicles', 'brand.asc,model.asc')
+      .then(list => live && setState({ vehicles: list, status: 'ready' }))
+      .catch(() => live && setState({ vehicles: [], status: 'error' }));
+    return () => { live = false; };
+  }, []);
+  return state;
+}
+
 export function usePopular() {
   const [state, setState] = useState(() =>
     fleetEnabled ? { vehicles: [], status: 'loading' } : { vehicles: [], status: 'offline' });
@@ -415,6 +430,22 @@ export async function submitBookingRequest(d) {
   const body = await res.json().catch(() => null);
   if (!res.ok) throw new Error(body?.message || `Could not send your request (HTTP ${res.status})`);
   return body; // reference, e.g. "CRC-4F9A2C"
+}
+
+/** Send a wedding car quote request (becomes a Pending inquiry in the admin). Returns the reference number. */
+export async function submitWeddingRequest(d) {
+  if (!fleetEnabled) throw new Error('Online requests are not available right now — please call us.');
+  const res = await fetch(`${URL}/rest/v1/rpc/submit_wedding_request`, {
+    method: 'POST',
+    headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ p: {
+      name: d.name, phone: d.phone, email: d.email || null, event: d.event, date: d.date, time: d.time || null,
+      venue: d.venue, hours: d.hours, decoration: d.decoration, vehicleId: d.vehicleId || null, message: d.message || null,
+    } }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.message || `Could not send your request (HTTP ${res.status})`);
+  return body;
 }
 
 /** Customer picks one of the offered alternatives — reuses the original request's details. Returns the new reference. */

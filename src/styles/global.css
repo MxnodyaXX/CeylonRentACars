@@ -133,7 +133,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .logo__full { height: 150px; }
 
 .nav { display: flex; gap: 4px; margin: 0 auto; padding: 5px; border-radius: 14px; background: rgba(255,255,255,.03); border: 1px solid var(--line); }
-.nav a { padding: 8px 14px; border-radius: 10px; font-size: 14px; font-weight: 600; color: var(--muted); transition: color .2s, background .2s; }
+.nav a { padding: 8px 14px; border-radius: 10px; font-size: 14px; white-space: nowrap; font-weight: 600; color: var(--muted); transition: color .2s, background .2s; }
 .nav a:hover { color: var(--text); }
 .nav a.is-active { color: var(--text); background: rgba(255,255,255,.08); }
 
@@ -2241,3 +2241,110 @@ a.pt-stat:hover { border-color: var(--line-2); }
 .pa-typed span { font-style: italic; font-size: clamp(28px, 5vw, 40px); color: #111114; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .pa-sign-switch { font-size: 13px; font-weight: 700; color: var(--text); text-decoration: underline; }
 .fb-field > .pa-sign-switch { align-self: flex-start; }
+
+/* ---------- Wedding cars ---------- */
+.wed-teaser::before { background: linear-gradient(90deg, rgba(7,7,8,.96) 0%, rgba(7,7,8,.82) 42%, rgba(7,7,8,.2) 78%, rgba(7,7,8,.08) 100%); }
+.wed-hero { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; min-height: 480px; padding: 72px 0; }
+.wed-hero__bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 40%; z-index: -2; }
+.wed-hero::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(0deg, var(--bg) 0%, transparent 30%), linear-gradient(90deg, rgba(7,7,8,.95) 0%, rgba(7,7,8,.72) 48%, rgba(7,7,8,.2) 100%); }
+.wed-hero__inner { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 18px; }
+.wed-hero h1 { font-size: clamp(36px, 5.2vw, 66px); font-weight: 800; letter-spacing: -.03em; line-height: 1.04; max-width: 13em; }
+.wed-hero p { font-size: 18px; color: rgba(255,255,255,.85); max-width: 34em; }
+.wed-perks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.wed-perks li { display: flex; gap: 14px; padding: 20px; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); }
+.wed-perks__ic { flex: none; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; color: var(--red-hi); background: rgba(225,29,42,.12); }
+.wed-perks h2 { font-size: 15px; margin: 0 0 4px; }
+.wed-perks p { font-size: 13px; color: var(--muted); margin: 0; }
+.wed-section { padding-top: 64px; }
+.wed-section > h2 { font-size: clamp(26px, 3vw, 38px); letter-spacing: -.02em; margin: 8px 0 22px; }
+.wed-note { color: var(--muted); }
+.wed-note a { color: var(--text); font-weight: 700; }
+.wed-section--centre { text-align: center; }
+.wed-section--centre .eyebrow { justify-content: center; }
+.wed-show { --gold: #d9b779; --arch-w: min(600px, 70vw); --arch-h: calc(var(--arch-w) * .8); --step: calc(var(--arch-w) * .62); position: relative; isolation: isolate; margin-top: 8px; padding-top: 28px; }
+/* a soft glow behind the middle arch */
+.wed-show::before { content: ""; position: absolute; left: 50%; top: 0; width: min(1000px, 130vw); height: calc(var(--arch-h) + 90px); transform: translateX(-50%); z-index: -2; pointer-events: none; background: radial-gradient(50% 50% at 50% 55%, rgba(217,183,121,.2), rgba(225,29,42,.06) 58%, transparent 74%); }
+
+/* petals falling over the arches */
+.wed-petals { position: absolute; left: 50%; top: -20px; width: 100vw; height: calc(var(--arch-h) + 120px); transform: translateX(-50%); overflow: hidden; pointer-events: none; z-index: 20; -webkit-mask-image: linear-gradient(180deg, transparent, #000 12%, #000 80%, transparent); mask-image: linear-gradient(180deg, transparent, #000 12%, #000 80%, transparent); }
+.wed-petals i { position: absolute; top: -24px; border-radius: 80% 10% 80% 10%; background: linear-gradient(135deg, #f7dfe0, #e8a9b0); opacity: 0; animation: wed-petal linear infinite; }
+@keyframes wed-petal {
+  0% { transform: translate(0, 0) rotate(0); opacity: 0; }
+  10% { opacity: .75; }
+  85% { opacity: .55; }
+  100% { transform: translate(var(--drift), 640px) rotate(420deg); opacity: 0; }
+}
+
+/* the row of arches */
+.wed-stage { position: relative; height: calc(var(--arch-h) + 26px); touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; }
+.wed-stage:active { cursor: grabbing; }
+.wed-arch { position: absolute; left: 50%; bottom: 26px; width: var(--arch-w); height: var(--arch-h); margin-left: calc(var(--arch-w) / -2); padding: 7px; border-radius: 50% 50% 8px 8px / 62% 62% 8px 8px; border: 1px solid rgba(217,183,121,.55); background: rgba(10,10,12,.7); transform-origin: 50% 100%; transform: translateX(calc(var(--off) * var(--step))) scale(calc(1 - var(--abs) * .24)); opacity: calc(1 - var(--abs) * .3); transition: transform .8s var(--ease), opacity .8s var(--ease), border-color .5s, box-shadow .8s; cursor: pointer; }
+.wed-arch.is-far { opacity: 0; pointer-events: none; }
+.wed-arch.is-centre { cursor: inherit; border-color: var(--gold); box-shadow: 0 34px 80px -34px rgba(217,183,121,.55); }
+.wed-arch:not(.is-centre):hover { opacity: calc(1.15 - var(--abs) * .3); border-color: var(--gold); }
+.wed-arch:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+/* the keystone: a small gold mark at the top of each arch */
+.wed-arch::before { content: ""; position: absolute; left: 50%; top: -6px; width: 10px; height: 10px; margin-left: -5px; transform: rotate(45deg); background: var(--gold); z-index: 2; }
+.wed-arch__pic { display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; color: var(--muted); border-radius: inherit; border: 1px solid rgba(217,183,121,.22); background: radial-gradient(70% 70% at 50% 70%, #2a2420, #0d0d0f); }
+.wed-arch__pic img { width: 100%; height: 100%; object-fit: cover; object-position: center 62%; pointer-events: none; transition: filter .8s, transform 6s ease-out; filter: brightness(.55) saturate(.8); }
+.wed-arch.is-centre .wed-arch__pic img { filter: none; transform: scale(1.03); }
+.wed-arch__pic.is-cutout img { object-fit: contain; object-position: center 80%; padding: 8% 6% 4%; }
+.wed-floor { position: absolute; left: 50%; bottom: 0; width: min(1100px, 140vw); height: 44px; transform: translateX(-50%); z-index: 11; pointer-events: none; background: radial-gradient(50% 100% at 50% 0%, rgba(217,183,121,.34), transparent 70%); border-top: 1px solid rgba(217,183,121,.28); -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent); mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent); }
+
+/* the car's name */
+.wed-cap { padding-top: 26px; animation: wed-cap-in .7s var(--ease) both; }
+@keyframes wed-cap-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.wed-cap__no { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .22em; color: var(--gold); }
+.wed-cap__no span { color: var(--muted); font-weight: 500; }
+.wed-cap h3 { margin: 6px 0 12px; font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif; font-size: clamp(36px, 5vw, 60px); font-weight: 600; line-height: 1.05; letter-spacing: -.01em; }
+.wed-cap ul { list-style: none; margin: 0 0 20px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 20px; font-size: 14px; color: var(--muted); }
+.wed-cap li { display: flex; align-items: center; gap: 6px; }
+
+/* arrows and markers */
+.wed-nav { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 24px; }
+.wed-nav > button { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--text); border: 1px solid rgba(217,183,121,.45); transition: background .2s, color .2s; }
+.wed-nav > button:hover { background: var(--gold); color: var(--ink); }
+.wed-nav__dots { display: flex; flex-wrap: wrap; justify-content: center; }
+.wed-nav__dots button { position: relative; width: 24px; height: 44px; }
+.wed-nav__dots button::after { content: ""; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; transform: rotate(45deg); background: rgba(255,255,255,.25); transition: background .3s, transform .3s; }
+.wed-nav__dots button.is-on::after { background: var(--gold); transform: rotate(45deg) scale(1.4); }
+.wed-nav button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (max-width: 720px) {
+  .wed-show { --arch-w: 76vw; --step: 62vw; }
+  .wed-arch { padding: 5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wed-petals { display: none; }
+  .wed-arch, .wed-arch__pic img { transition-duration: .01s; }
+  .wed-cap { animation: none; }
+}
+.wed-form { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; padding: 56px 0 72px; scroll-margin-top: calc(var(--header-h) + 16px); }
+.wed-form .fb-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.wed-form .fb-field { min-width: 0; }
+.wed-span { grid-column: 1 / -1; }
+.wed-form .wed-chips { align-self: flex-start; flex-wrap: wrap; overflow: visible; }
+.wed-chips .chip { padding: 7px 14px; font-size: 13px; }
+.wed-pick { margin: 0; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 14px; }
+.wed-pick b { color: var(--text); }
+.wed-pick button { color: var(--red-hi); font-size: 13px; font-weight: 700; }
+.wed-form .btn--block { margin-top: 16px; }
+.wed-trust { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; font-size: 13px; color: var(--muted); }
+.wed-trust .ic { flex: none; }
+@media (max-width: 1000px) {
+  .wed-perks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wed-form { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .wed-hero { min-height: 420px; padding: 48px 0 56px; }
+  .wed-hero::before { background: linear-gradient(0deg, var(--bg) 0%, rgba(7,7,8,.78) 45%, rgba(7,7,8,.6) 100%); }
+  .wed-teaser::before { background: linear-gradient(0deg, rgba(7,7,8,.94) 0%, rgba(7,7,8,.78) 60%, rgba(7,7,8,.5) 100%); }
+  .wed-form .fb-grid { grid-template-columns: minmax(0, 1fr); }
+  .wed-hero p { font-size: 16px; }
+  .wed-perks { grid-template-columns: minmax(0, 1fr); }
+  .wed-section { padding-top: 44px; }
+  .wed-form { padding: 40px 0 56px; }
+}
+
+/* Header with the Weddings link: tighter links, then the menu button before anything is squeezed */
+@media (max-width: 1400px) { .nav a { padding: 8px 10px; font-size: 13.5px; } }
+@media (max-width: 1290px) { .nav { display: none; } .burger { display: grid; } .header__actions { margin-left: auto; } }

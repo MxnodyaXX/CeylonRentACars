@@ -46,7 +46,7 @@ export default function Header() {
   const activeId = useActiveSection(SECTION_IDS);
   const { path } = useRoute();
   // On the fleet page the Vehicles link is active; on home, whichever section is in view
-  const activeHref = path === '/vehicles' ? '/vehicles' : activeId === 'hero' ? '#top' : `#${activeId}`;
+  const activeHref = path === '/vehicles' || path === '/wedding-cars' ? path : activeId === 'hero' ? '#top' : `#${activeId}`;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);

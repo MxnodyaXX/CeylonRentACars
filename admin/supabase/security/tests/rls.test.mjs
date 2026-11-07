@@ -593,5 +593,58 @@ ok((await db.query(`select count(*) n from security_check where result = 'FAIL'`
 await db.exec(sql('security/rollback/13_rollback_partner_applications.sql'));
 ok((await db.query(`select to_regprocedure('public.submit_partner_application(jsonb)') f`)).rows[0].f === null
    && Number((await db.query(`select count(*) n from partner_applications`)).rows[0].n) > 0, 'rollback removes the functions and keeps the applications');
+console.log('\nWEDDING CARS (14)');
+await db.exec(sql('security/14_wedding_cars.sql'));
+await db.exec(sql('security/14_wedding_cars.sql'));   // safe to re-run
+await db.exec("update vehicles set web_wedding = true where id = 'vA'");
+const weddingRow = (await as('anon', async () => (await db.query('select * from wedding_vehicles')).rows));
+ok(weddingRow.length === 1 && weddingRow[0].id === 'vA', 'visitors see only the ticked cars');
+ok(!['daily_rent', 'web_price', 'vehicle_number', 'owner_id', 'revenue'].some((c) => c in weddingRow[0]), 'the view has no price, plate, owner or revenue');
+const wedding = (o = {}, ip = '7.7.7.1') => as('anon', async () =>
+  (await db.query('select submit_wedding_request($1::jsonb) ref', [JSON.stringify({
+    name: 'Bride Family', phone: '0771110001', event: 'Wedding', date: soon(90), time: '09:30', venue: 'Galle Face Hotel',
+    hours: 'Full day', decoration: 'Yes', vehicleId: 'vA', ...o,
+  })])).rows[0].ref, ip);
+const wedRef = await wedding();
+ok(/^CRC-[A-F0-9]{6}$/.test(wedRef), 'a visitor can send a wedding request and gets a reference');
+const wedInq = (await db.query("select * from inquiries where id = $1", ['web_' + wedRef.slice(4).toLowerCase()])).rows[0];
+ok(wedInq?.status === 'Pending' && wedInq.referral === 'Website' && wedInq.vehicle_id === 'vA', 'it arrives as a Pending website inquiry for that car');
+ok(wedInq.start_date === soon(90) && wedInq.end_date === soon(90), 'the event date is both inquiry dates');
+ok(/Type: Wedding car/.test(wedInq.notes) && /Event: Wedding/.test(wedInq.notes) && /Pickup: Galle Face Hotel · .* 09:30/.test(wedInq.notes) && /Decoration: Yes/.test(wedInq.notes), 'event, venue, time and decoration are in the notes');
+ok(!/Estimate/.test(wedInq.notes), 'no price estimate: the team quotes');
+const wedAny = await wedding({ vehicleId: '', phone: '0771110002' }, '7.7.7.2');
+const wedAnyRow = (await db.query("select * from inquiries where id = $1", ['web_' + wedAny.slice(4).toLowerCase()])).rows[0];
+ok(wedAnyRow.vehicle_id === null && /help me choose/.test(wedAnyRow.requested_vehicle), 'no car chosen: the team is asked to suggest one');
+const wedFails = async (o, re, msg) => {
+  const e = await wedding({ phone: '0771110003', ...o }, '7.7.7.3').then(() => '', (x) => x.message);
+  ok(re.test(e), msg);
+};
+await wedFails({ vehicleId: 'vB' }, /isn.t available for weddings/, 'a car that is not ticked is refused');
+await wedFails({ vehicleId: 'nope' }, /isn.t available for weddings/, 'an unknown car is refused');
+await wedFails({ date: '2020-01-01' }, /past/, 'a past date is refused');
+await wedFails({ date: '2027-02-31' }, /choose the date/, 'an impossible date gets a clear message');
+await wedFails({ date: 'soon' }, /choose the date/, 'a date that is not a date is refused');
+await wedFails({ date: soon(800) }, /two years/, 'a date too far ahead is refused');
+await wedFails({ event: 'Party' }, /type of event/, 'an unknown event type is refused');
+await wedFails({ venue: '' }, /venue/, 'a missing venue is refused');
+await wedFails({ name: 'x' }, /full name/, 'a missing name is refused');
+await wedFails({ phone: '12' }, /valid phone/, 'a bad phone is refused');
+const wedLimit = await wedding({ phone: '0771110004' }, '7.7.7.4').then(() => 'sent', (x) => x.message);
+ok(wedLimit === 'sent', 'mistakes do not use up the visitor\'s tries');
+for (let i = 0; i < 2; i++) await wedding({ phone: '0771110005' }, '7.7.7.' + (10 + i));
+const wedThird = await wedding({ phone: '0771110005' }, '7.7.7.12').then(() => '', () => '');
+const wedFourth = await wedding({ phone: '0771110005' }, '7.7.7.13').then(() => '', (x) => x.message);
+ok(wedThird === '' && /recent requests/.test(wedFourth), 'one number can send 3 requests a day');
+await db.exec("update bookings set status = 'Confirmed', start_date = '" + soon(200) + "', end_date = '" + soon(202) + "' where id = 'bA'");
+const wedBusyRef = await wedding({ phone: '0771110006', date: soon(201) }, '7.7.7.20');
+ok(/already has a booking/.test((await db.query('select notes from inquiries where id = $1', ['web_' + wedBusyRef.slice(4).toLowerCase()])).rows[0].notes), 'a date the car is already booked is flagged for the team');
+ok(!!(await as('anon', () => tryQ("update vehicles set web_wedding = true where id = 'vB'"))), 'visitors cannot tick cars');
+ok(!!(await as('anon', () => tryQ("select web_wedding from vehicles"))), 'visitors still cannot read the vehicles table');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query("select count(*) n from security_check where result = 'FAIL'")).rows[0].n == 0, 'verify.sql still all PASS with 14');
+await db.exec(sql('security/rollback/14_rollback_wedding_cars.sql'));
+ok((await db.query("select to_regprocedure('public.submit_wedding_request(jsonb)') f, to_regclass('public.wedding_vehicles') v")).rows[0].f === null, 'rollback removes the function and view');
+ok(Number((await db.query("select count(*) n from vehicles where web_wedding")).rows[0].n) === 1, 'rollback keeps the ticks');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

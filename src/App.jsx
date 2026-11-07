@@ -4,7 +4,7 @@ import PageLoader from './components/PageLoader';
 import Header from './components/Header';
 import Hero from './components/Hero';
 import PopularVehicles from './components/PopularVehicles';
-import { Categories, Faq, HowItWorks, Locations, Promo, Reviews, WhyUs } from './components/Sections';
+import { Categories, Faq, HowItWorks, Locations, Promo, Reviews, WeddingCars, WhyUs } from './components/Sections';
 import Footer from './components/Footer';
 import { useApp } from './context/AppContext';
 import { useScrollReveal } from './hooks/useMotion';
@@ -17,6 +17,7 @@ import BookingPage from './components/BookingPage';
 import AlternativesPage from './components/AlternativesPage';
 import PortalPage from './components/PortalPage';
 import PartnerPage from './components/PartnerPage';
+import WeddingPage from './components/WeddingPage';
 import AssistantChat from './components/AssistantChat';
 import { useLinkInterception, useRoute } from './lib/router';
 import { usePageSeo } from './lib/seo';
@@ -69,11 +70,14 @@ export default function App() {
         <PortalPage search={search} />
       ) : path === '/list-your-vehicle' ? (
         <PartnerPage />
+      ) : path === '/wedding-cars' ? (
+        <WeddingPage />
       ) : (
         <main>
           <Hero revealed={revealed} />
           <PopularVehicles />
           <Categories />
+          <WeddingCars />
           <Locations />
           <HowItWorks />
           <WhyUs />

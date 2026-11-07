@@ -379,6 +379,8 @@ export default function InquiryPage() {
                 </p>
               ))}
               {(email || req.fields.Country) && <p className="flex gap-2 text-navy-700"><Globe size={15} className="mt-0.5 text-navy-400 flex-shrink-0" />{[email, req.fields.Country].filter(Boolean).join(' · ')}</p>}
+              {req.fields.Event && <p className="text-navy-700"><b>Event:</b> {[req.fields.Event, req.fields.Hours, req.fields.Decoration && `Decoration: ${req.fields.Decoration}`].filter(Boolean).join(' · ')}</p>}
+              {req.fields.Availability && <p className="text-amber-700 font-semibold">{req.fields.Availability}</p>}
               {req.fields.Message && <p className="text-navy-700 bg-white rounded-lg p-3 border border-navy-100">“{req.fields.Message}”</p>}
               {!req.reference && inq.notes && <p className="text-navy-600 whitespace-pre-line">{inq.notes}</p>}
             </div>

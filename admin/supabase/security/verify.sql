@@ -30,7 +30,7 @@ begin
             case when has_table_privilege('anon', format('public.%I', t.relname), 'SELECT,INSERT,UPDATE,DELETE') then 'FAIL' else 'PASS' end, null);
   end loop;
 
-  foreach v in array array['website_vehicles', 'popular_vehicles', 'catalog_vehicles', 'vehicle_busy_dates', 'public_reviews', 'public_service_reviews', 'feedback_vehicles'] loop
+  foreach v in array array['website_vehicles', 'popular_vehicles', 'catalog_vehicles', 'vehicle_busy_dates', 'public_reviews', 'public_service_reviews', 'feedback_vehicles', 'wedding_vehicles'] loop
     if to_regclass('public.' || v) is not null then
       insert into security_check (area, check_name, result, detail)
       values ('anon', 'website view readable: ' || v, case when has_table_privilege('anon', 'public.' || v, 'SELECT') then 'PASS' else 'FAIL' end, null);
@@ -39,7 +39,7 @@ begin
 
   for rec in select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
              where n.nspname = 'public' loop
-    if rec.proname in ('submit_booking_request', 'submit_feedback', 'choose_alternative') then
+    if rec.proname in ('submit_booking_request', 'submit_feedback', 'choose_alternative', 'submit_wedding_request') then
       insert into security_check (area, check_name, result, detail)
       values ('anon', 'may call ' || rec.sig, case when has_function_privilege('anon', rec.sig, 'EXECUTE') then 'PASS' else 'FAIL' end, null);
     elsif has_function_privilege('anon', rec.sig, 'EXECUTE') then

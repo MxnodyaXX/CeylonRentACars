@@ -557,7 +557,7 @@ export default function Bookings() {
 
       {/* Tabs + view toggle + Add */}
       <div className="flex flex-col min-[1500px]:flex-row min-[1500px]:items-center justify-between mb-5 gap-3">
-        <div className="flex gap-2 overflow-x-auto no-scrollbar">
+        <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 py-1 -my-1 md:mx-0 md:px-0">
           {STATUS_TABS.map((s) => (
             <button
               key={s}
@@ -574,7 +574,7 @@ export default function Bookings() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 py-1 -my-1 [&>*]:flex-shrink-0 md:mx-0 md:px-0 md:flex-wrap md:overflow-visible [&>button]:whitespace-nowrap">
           {/* View toggle */}
           <div className="flex bg-navy-50 rounded-xl p-0.5 gap-0.5">
             <button
@@ -648,7 +648,7 @@ export default function Bookings() {
       </div>
 
       {/* ── Date period filter ── */}
-      <div className="flex items-center gap-2 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 py-1 -my-1 [&>*]:flex-shrink-0 md:mx-0 md:px-0 md:flex-wrap md:overflow-visible mb-5">
         <span className="text-xs text-navy-400 font-medium flex items-center gap-1 flex-shrink-0">
           <CalendarDays size={13} /> Period:
         </span>
@@ -656,7 +656,7 @@ export default function Bookings() {
           <button
             key={key}
             onClick={() => setDatePreset(key)}
-            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ${
+            className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors flex-shrink-0 whitespace-nowrap ${
               datePreset === key ? 'bg-navy-700 text-white' : 'bg-white text-navy-500 hover:bg-navy-50 shadow-card'
             }`}
           >
@@ -704,7 +704,7 @@ export default function Bookings() {
         )}
 
         {datePreset !== 'all' && (
-          <span className="text-xs text-navy-400 flex-shrink-0 ml-auto">
+          <span className="text-xs text-navy-400 flex-shrink-0 ml-auto whitespace-nowrap">
             {filtered.length} {filtered.length === 1 ? 'booking' : 'bookings'}
             {dateWindow?.from && dateWindow?.to && (
               <span className="text-navy-300"> · {dateWindow.from} → {dateWindow.to}</span>
@@ -714,11 +714,12 @@ export default function Bookings() {
       </div>
 
       {/* ── Filters + group by ── */}
-      <div className="flex flex-wrap items-center gap-2 mb-5">
+      <div className="flex flex-col gap-2 mb-5 md:flex-row md:flex-wrap md:items-center">
+        <div className="flex items-center gap-2 md:contents">
         <span className="text-xs text-navy-400 font-medium flex items-center gap-1 flex-shrink-0">
           <SlidersHorizontal size={13} /> Filter:
         </span>
-        <div className="w-full sm:w-60">
+        <div className="flex-1 min-w-0 md:flex-none md:w-60">
           <Select searchable searchPlaceholder="Search model or number…" value={vehicleFilter} onChange={setVehicleFilter} placeholder="All vehicles" nullable className="[&>button]:!py-1.5 [&>button]:text-xs"
             options={bookableVehicles
               .map((v) => ({ v, n: visibleBookings.filter((b) => b.vehicleId === v.id).length }))
@@ -726,6 +727,8 @@ export default function Bookings() {
               .sort((a, b) => `${a.v.brand} ${a.v.model}`.localeCompare(`${b.v.brand} ${b.v.model}`))
               .map(({ v, n }) => ({ value: v.id, label: `${v.brand} ${v.model}`, sub: `${v.vehicleNumber} · ${n} booking${n === 1 ? '' : 's'}` }))} />
         </div>
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 py-1 -my-1 [&>*]:flex-shrink-0 md:contents">
         <select className="input !py-1.5 !w-auto text-xs" value={yearFilter} onChange={(e) => setYearFilter(e.target.value)} aria-label="Year">
           <option value="">All years</option>
           {bookingYears.map((y) => <option key={y} value={y}>{y}</option>)}
@@ -747,8 +750,8 @@ export default function Bookings() {
           </button>
         )}
 
-        <div className="flex items-center gap-2 sm:ml-auto">
-          <span className="text-xs text-navy-400 font-medium flex items-center gap-1"><Layers size={13} /> Group by:</span>
+        <div className="flex items-center gap-2 md:ml-auto">
+          <span className="text-xs text-navy-400 font-medium flex items-center gap-1 whitespace-nowrap"><Layers size={13} /> Group by:</span>
           <div className="flex bg-navy-50 rounded-xl p-0.5 gap-0.5">
             {GROUP_OPTIONS.map(({ key, label }) => (
               <button key={key} onClick={() => setGroupBy(key)}
@@ -757,6 +760,7 @@ export default function Bookings() {
               </button>
             ))}
           </div>
+        </div>
         </div>
       </div>
 

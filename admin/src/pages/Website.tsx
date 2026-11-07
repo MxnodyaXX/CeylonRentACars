@@ -5,7 +5,7 @@ import Header from '../components/layout/Header';
 import { Vehicle } from '../types';
 import { VEHICLE_CATEGORIES as CATEGORIES, guessCategory } from '../lib/vehicleCategory';
 import {
-  Globe, Plus, X, ArrowUp, ArrowDown, Search, ExternalLink, ImageOff, AlertTriangle, Car,
+  Globe, Plus, X, ArrowUp, ArrowDown, Search, ExternalLink, ImageOff, AlertTriangle, Car, Heart, Check,
 } from 'lucide-react';
 
 const BADGES = ['', 'Most booked', 'Premium', 'New', 'Best value', 'Family pick'];
@@ -98,6 +98,56 @@ function ListedRow({
         </label>
       </div>
     </div>
+  );
+}
+
+/* Which cars show on the website's Wedding Cars page. Any car in the fleet, listed above or not. */
+function WeddingCars({ vehicles, onToggle }: { vehicles: Vehicle[]; onToggle: (v: Vehicle) => void }) {
+  const [query, setQuery] = useState('');
+  const picked = vehicles.filter((v) => v.webWedding).length;
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return vehicles
+      .filter((v) => !q || `${name(v)} ${v.vehicleNumber}`.toLowerCase().includes(q))
+      .sort((a, b) => Number(!!b.webWedding) - Number(!!a.webWedding) || name(a).localeCompare(name(b)));
+  }, [vehicles, query]);
+
+  return (
+    <section className="card !p-4 mt-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 className="font-semibold text-navy-800 flex items-center gap-2">
+            <Heart size={18} /> Wedding cars <span className="text-navy-400 font-normal">({picked})</span>
+          </h2>
+          <p className="text-xs text-navy-400 mt-0.5">Tick the cars to show on the Wedding Cars page. No price is shown there: customers ask for a quote, and requests arrive in Inquiries.</p>
+        </div>
+        <a href={`${WEBSITE_URL}/wedding-cars`} target="_blank" rel="noreferrer"
+           className="text-sm text-navy-500 hover:text-navy-700 flex items-center gap-1">
+          View page <ExternalLink size={14} />
+        </a>
+      </div>
+      <div className="flex items-center gap-2 bg-navy-50 rounded-xl px-3 py-2 mb-3">
+        <Search size={16} className="text-navy-400" />
+        <input className="bg-transparent outline-none text-sm flex-1" placeholder="Search by name or number" aria-label="Search wedding cars"
+               value={query} onChange={(e) => setQuery(e.target.value)} />
+      </div>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[420px] overflow-auto">
+        {shown.map((v) => (
+          <button key={v.id} type="button" aria-pressed={!!v.webWedding} onClick={() => onToggle(v)}
+                  className={`flex items-center gap-3 rounded-xl border p-2 text-left transition-colors ${v.webWedding ? 'border-brand-300 bg-brand-50' : 'border-navy-100 hover:bg-navy-50'}`}>
+            <Thumb v={v} />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold text-navy-800 truncate">{name(v)}</span>
+              <span className="block text-xs text-navy-400 truncate">{v.vehicleNumber} · {v.seats ?? '—'} seats</span>
+            </span>
+            <span className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${v.webWedding ? 'bg-brand-500 text-white' : 'border border-navy-200 text-transparent'}`}>
+              <Check size={14} />
+            </span>
+          </button>
+        ))}
+        {shown.length === 0 && <p className="text-sm text-navy-400 py-6 text-center col-span-full">No cars found.</p>}
+      </div>
+    </section>
   );
 }
 
@@ -226,6 +276,8 @@ export default function Website() {
           </div>
         </section>
       </div>
+
+      <WeddingCars vehicles={vehicles} onToggle={(v) => updateWebsiteListing(v.id, { webWedding: !v.webWedding })} />
     </div>
   );
 }

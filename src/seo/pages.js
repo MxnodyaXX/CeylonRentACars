@@ -16,6 +16,10 @@ export const PAGES = {
     title: 'Rental Cars, SUVs & Vans in Sri Lanka | Ceylon Rent A Cars',
     description: 'Browse cars, SUVs, vans and premium vehicles for rent in Sri Lanka. Compare daily rates, choose self drive or a driver, and send your inquiry online.',
   },
+  '/wedding-cars': {
+    title: 'Wedding Cars for Hire in Sri Lanka | Ceylon Rent A Cars',
+    description: 'Hire a wedding car with a professional driver and decoration, anywhere in Sri Lanka. For weddings, homecomings and photoshoots. Send your date for a quote.',
+  },
   '/feedback': {
     title: 'Share Your Feedback | Ceylon Rent A Cars',
     description: 'Rented a vehicle from Ceylon Rent A Cars? Tell us about the vehicle and our service — your feedback helps other travellers in Sri Lanka.',

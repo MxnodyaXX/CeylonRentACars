@@ -7,8 +7,8 @@ import { stageInfo } from '../lib/consultation';
 import Modal from '../components/ui/Modal';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
-import { Plus, MessageSquare, AlertTriangle, Phone, MessageCircle, CalendarClock, Clock, Car, Calendar, Check, X } from 'lucide-react';
-import { FollowUp, loadFollowUps, stageOf, intlDigits, parseRequest } from '../lib/inquiryFollowups';
+import { Plus, MessageSquare, AlertTriangle, Phone, MessageCircle, CalendarClock, Clock, Car, Calendar, Check, Heart, X } from 'lucide-react';
+import { FollowUp, loadFollowUps, stageOf, intlDigits, isWeddingRequest, parseRequest } from '../lib/inquiryFollowups';
 import { temperatureOf, responseInfo } from '../lib/inquiryReview';
 import { LOST_REASONS as REASONS } from './InquiryPage';
 import { Inquiry } from '../types';
@@ -28,8 +28,8 @@ const REFERRAL_SOURCES = [
 ];
 
 type IStatus = 'Pending' | 'Converted' | 'Lost';
-type Tab = 'All' | IStatus | 'Follow-up due';
-const TABS: Tab[] = ['All', 'Pending', 'Follow-up due', 'Converted', 'Lost'];
+type Tab = 'All' | IStatus | 'Follow-up due' | 'Wedding';
+const TABS: Tab[] = ['All', 'Pending', 'Follow-up due', 'Wedding', 'Converted', 'Lost'];
 const STAGE_STYLE = { New: 'bg-brand-500 text-white', Contacted: 'bg-navy-100 text-navy-600', 'Follow-up due': 'bg-amber-100 text-amber-800' };
 
 const LOST_REASONS = REASONS;
@@ -80,6 +80,7 @@ export default function Inquiries() {
   const filtered =
     tab === 'All' ? inquiries :
     tab === 'Follow-up due' ? inquiries.filter((i) => i.status === 'Pending' && stage(i).stage === 'Follow-up due') :
+    tab === 'Wedding' ? inquiries.filter((i) => isWeddingRequest(i.notes)) :
     inquiries.filter((i) => i.status === tab);
   const sorted = [...filtered].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
@@ -152,7 +153,7 @@ export default function Inquiries() {
               }`}
             >
               {t}
-              {t !== 'All' && <span className="ml-1.5 opacity-70">{t === 'Follow-up due' ? dueCount : inquiries.filter((i) => i.status === t).length}</span>}
+              {t !== 'All' && <span className="ml-1.5 opacity-70">{t === 'Follow-up due' ? dueCount : t === 'Wedding' ? inquiries.filter((i) => isWeddingRequest(i.notes)).length : inquiries.filter((i) => i.status === t).length}</span>}
             </button>
           ))}
         </div>
@@ -219,6 +220,7 @@ export default function Inquiries() {
               </div>
               <div className="flex flex-col items-end gap-1 flex-shrink-0">
                 <StatusBadge status={inq.status} />
+                {isWeddingRequest(inq.notes) && <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-pink-50 text-pink-700 flex items-center gap-1"><Heart size={10} /> Wedding</span>}
                 {inq.status === 'Pending' && (() => {
                   const st = stage(inq);
                   const mine = followUps.filter((x) => x.inquiryId === inq.id);

@@ -4,6 +4,7 @@
 export const NAV_LINKS = [
   { href: '#top', label: 'Home' },
   { href: '/vehicles', label: 'Vehicles' },
+  { href: '/wedding-cars', label: 'Weddings' },
   { href: '#how', label: 'How It Works' },
   { href: '#why', label: 'Why Us' },
   { href: '#deals', label: 'Deals' },
@@ -96,7 +97,7 @@ export const VEHICLE_TYPES = ['Any type', 'Economy', 'Sedan', 'Hybrid', 'SUV', '
 
 export const FOOTER_COLUMNS = [
   { title: 'Company', links: [['About Us', '#'], ['How It Works', '#how'], ['Careers', '#'], ['Contact', '#']] },
-  { title: 'Renters', links: [['Browse Vehicles', '/vehicles'], ['Airport Rentals', '#locations'], ['With Driver', '#categories'], ['FAQs', '#faq']] },
+  { title: 'Renters', links: [['Browse Vehicles', '/vehicles'], ['Wedding Cars', '/wedding-cars'], ['Airport Rentals', '#locations'], ['With Driver', '#categories'], ['FAQs', '#faq']] },
   { title: 'Vehicle Owners', links: [['List Your Vehicle', '/list-your-vehicle'], ['Owner Portal', '#'], ['Owner Help', '#'], ['Insurance Requirements', '#']] },
   { title: 'Support', links: [['Help Centre', '#faq'], ['Leave Feedback', '/feedback'], ['Emergency Support', '#'], ['Terms', '#'], ['Privacy', '#']] },
 ];

@@ -354,3 +354,14 @@ sent to WhatsApp.
       the reply comes back as Pending.
 - [ ] Have the partner agreement wording reviewed (`src/data/partnerAgreement.js`; change
       `AGREEMENT_VERSION` when the text changes — each application keeps the text it was signed with).
+
+## Part 12 — wedding cars (after Part 1 / 02)
+
+Adds the website's **Wedding Cars** page (`/wedding-cars`). Staff tick the cars on the admin's **Website**
+page. Customers see no price: they send a quote request, which arrives in **Inquiries** under the **Wedding** tab.
+
+- [ ] Supabase → SQL Editor: run `security/14_wedding_cars.sql` (undo: `rollback/14_rollback_wedding_cars.sql`)
+- [ ] Run `security/verify.sql`: no FAIL
+- [ ] Push, so the website and the admin deploy
+- [ ] Admin → Website → **Wedding cars**: tick your cars. Open `/wedding-cars`: they appear, with no prices
+- [ ] Send a test request. Admin → Inquiries → **Wedding**: it shows the event, venue, hours and decoration

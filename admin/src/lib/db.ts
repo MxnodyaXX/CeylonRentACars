@@ -43,6 +43,7 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
     webBadge: (r.web_badge as string) ?? undefined,
     webLocation: (r.web_location as string) ?? undefined,
     webPrice: numOpt(r.web_price),
+    webWedding: r.web_wedding === true,
   }
 }
 
@@ -475,6 +476,7 @@ export const db = {
     if ('webBadge' in u) row.web_badge = u.webBadge || null
     if ('webLocation' in u) row.web_location = u.webLocation || null
     if ('webPrice' in u) row.web_price = u.webPrice ?? null
+    if (u.webWedding !== undefined) row.web_wedding = u.webWedding
     return inOrder(`vehicles:${id}`, () => supabase.from('vehicles').update(row).eq('id', id))
   },
   deleteVehicle: (id: string) => supabase.from('vehicles').delete().eq('id', id),

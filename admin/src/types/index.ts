@@ -57,6 +57,7 @@ export interface Vehicle {
   webBadge?: string;
   webLocation?: string;
   webPrice?: number;
+  webWedding?: boolean;             // shown on the website's Wedding Cars page
 }
 
 /** Customer review of a vehicle, recorded in the admin and shown on the website when published */

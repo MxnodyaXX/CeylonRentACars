@@ -12,7 +12,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { toast } from '../store/useToast';
 import StartInquiryModal from '../components/ui/StartInquiryModal';
 import BookingDecision from '../components/ui/BookingDecision';
-import { addFollowUp, intlDigits, parseRequest } from '../lib/inquiryFollowups';
+import { addFollowUp, intlDigits, isWeddingRequest, parseRequest } from '../lib/inquiryFollowups';
 import { alternativesFor, alternativesLink, newAltToken, placeIn, prettyDate, rs, vehicleLink } from '../lib/inquiryReview';
 import {
   LEAD_QUALITY, LOST_REASONS, NEXT_ACTIONS, PRIORITIES, SPECIAL, STAGES, Suitability, advance, buildSummary,
@@ -178,7 +178,11 @@ export default function InquiryConsultation() {
   const staff = useAuthStore((s) => s.currentUser?.name) ?? 'Staff';
   const inq = inquiries.find((i) => i.id === id);
 
-  const [c, setC] = useState<Consultation>(() => inq?.consultation ?? emptyConsultation(staff));
+  const [c, setC] = useState<Consultation>(() => inq?.consultation ?? {
+    ...emptyConsultation(staff),
+    // wedding requests start with what the customer already told us
+    ...(isWeddingRequest(inq?.notes) ? { purpose: 'Wedding / event' as const, mode: 'With driver' as const } : {}),
+  });
   const [stage, setStage] = useState<InquiryStage>(() => (inq ? stageOf(inq) : 'NEW'));
   const [lostReason, setLostReason] = useState(LOST_REASONS[0]);
   const [attemptOpen, setAttemptOpen] = useState(false);

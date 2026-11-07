@@ -242,7 +242,7 @@ do $$
 declare f record;
 begin
   for f in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-           where n.nspname = 'public' and p.proname in ('submit_booking_request', 'submit_feedback', 'choose_alternative') loop
+           where n.nspname = 'public' and p.proname in ('submit_booking_request', 'submit_feedback', 'choose_alternative', 'submit_wedding_request') loop
     execute format('grant execute on function %s to anon, authenticated', f.sig);
   end loop;
 end $$;
@@ -253,7 +253,7 @@ do $$
 declare v text;
 begin
   foreach v in array array['website_vehicles', 'popular_vehicles', 'catalog_vehicles', 'vehicle_busy_dates',
-                           'public_reviews', 'public_service_reviews', 'feedback_vehicles'] loop
+                           'public_reviews', 'public_service_reviews', 'feedback_vehicles', 'wedding_vehicles'] loop
     if to_regclass('public.' || v) is not null then
       execute format('grant select on public.%I to anon, authenticated', v);
     end if;
