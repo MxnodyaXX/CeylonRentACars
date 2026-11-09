@@ -285,7 +285,7 @@ export default function Handovers() {
                     ) : (
                       <div>
                         <p className="text-xs text-navy-400 mb-3">Not recorded yet</p>
-                        {(isAdmin() || can('canBook')) && (
+                        {(isAdmin() || (currentUser?.role === 'owner' && can('canBook'))) && (
                           <button
                             onClick={() => openDelivery(b)}
                             className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-navy-700 text-white hover:bg-navy-800 transition-colors"
@@ -334,7 +334,7 @@ export default function Handovers() {
                     ) : delivery ? (
                       <div>
                         <p className="text-xs text-navy-400 mb-3">Awaiting customer return</p>
-                        {(isAdmin() || can('canBook')) && (
+                        {(isAdmin() || (currentUser?.role === 'owner' && can('canBook'))) && (
                           <button
                             onClick={() => openReturn(b)}
                             className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500 text-white hover:bg-amber-600 transition-colors"

@@ -1,4 +1,12 @@
-export type UserRole = 'admin' | 'owner';
+/** admin = Brian / IT (everything) · staff = a team member with a job and abilities · owner = vehicle owner */
+export type UserRole = 'admin' | 'staff' | 'owner';
+export type StaffJob = 'operations' | 'finance' | 'fleet';
+
+/** What a team member may do — the database checks the same names (security/16_staff_roles.sql) */
+export type StaffAbility =
+  | 'canBook' | 'canChangeStatus' | 'canViewHandovers' | 'canTakePayments' | 'canViewFinance'
+  | 'canViewExpenses' | 'canAddExpenses' | 'canEditVehicle' | 'canViewCustomers' | 'canViewInquiries'
+  | 'canViewDrivers' | 'canManageBreakdowns' | 'canViewOwners' | 'canViewFeedback' | 'canViewReferrals' | 'canViewIncomplete';
 
 export interface AppUser {
   id: string;
@@ -8,10 +16,12 @@ export interface AppUser {
   name: string;
   role: UserRole;
   ownerId?: string; // only when role === 'owner'
+  /** only when role === 'staff' */
+  job?: StaffJob;
   nic?: string;
   email?: string;
   /** Owner permissions as saved on the login (server-side app_metadata) */
-  permissions?: Partial<OwnerPermissions>;
+  permissions?: Partial<OwnerPermissions> & Partial<Record<StaffAbility, boolean>>;
   /** Login switched off by the admin */
   disabled?: boolean;
   lastSignIn?: string;
@@ -64,5 +74,13 @@ export interface AuthState {
   changePassword: (currentPassword: string, newPassword: string) => Promise<string | null>;
   isAdmin: () => boolean;
   isOwner: () => boolean;
-  can: (perm: keyof Omit<OwnerPermissions, 'disabled'>) => boolean;
+  /** a team member (Operations / Finance / Fleet) */
+  isStaff: () => boolean;
+  /** admin or team: works with the whole company's data (owners only see their own) */
+  seesAll: () => boolean;
+  can: (perm: keyof Omit<OwnerPermissions, 'disabled'> | StaffAbility) => boolean;
+  /** Team logins (admin): create — returns the username and a temporary password shown once */
+  createTeamLogin: (p: { username: string; name: string; job: StaffJob; permissions: Partial<Record<StaffAbility, boolean>> }) => Promise<{ username: string; password: string } | string>;
+  /** Team logins (admin): change job / abilities / name / disabled */
+  updateTeamLogin: (id: string, p: { name?: string; job?: StaffJob; permissions?: Partial<Record<StaffAbility, boolean>>; disabled?: boolean }) => Promise<string | null>;
 }

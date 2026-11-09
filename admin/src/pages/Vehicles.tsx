@@ -80,7 +80,11 @@ export default function Vehicles() {
   const cropSlotRef      = useRef<ImageSlot>('photos');
 
   const isOwnerRole = !isAdmin() && currentUser?.role === 'owner';
-  const canActOn    = (v: Vehicle) => isAdmin() || v.ownerId === currentUser?.ownerId;
+  // team members work on every car (what they may change is set by their abilities); owners on their own
+  const teamLogin   = currentUser?.role === 'staff';
+  const canActOn    = (v: Vehicle) => isAdmin() || teamLogin || v.ownerId === currentUser?.ownerId;
+  // the owner, rent and km terms are Brian's — shown to the team, not editable (the database keeps them too)
+  const termsLocked = teamLogin;
 
   const filtered = filter === 'All' ? vehicles : vehicles.filter((v) => v.status === filter);
 
@@ -315,7 +319,9 @@ export default function Vehicles() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm('Delete this vehicle?')) deleteVehicle(id);
+    const active = bookings.some((b) => b.vehicleId === id && (b.status === 'Confirmed' || b.status === 'Ongoing'));
+    // with an active booking the store refuses and explains why — no point asking first
+    if (active || confirm('Delete this vehicle?')) deleteVehicle(id);
   };
 
   const set    = (field: string, value: unknown) => setForm((f) => ({ ...f, [field]: value }));
@@ -560,7 +566,7 @@ export default function Vehicles() {
             </button>
           ))}
         </div>
-        {(isAdmin() || can('canEditVehicle')) && (
+        {(isAdmin() || (isOwnerRole && can('canEditVehicle'))) && (
           <button onClick={openAdd} className="btn-primary flex items-center gap-2 flex-shrink-0">
             <Plus size={15} /> Add Vehicle
           </button>
@@ -657,7 +663,7 @@ export default function Vehicles() {
           <Section icon={<UserRound size={16} />} title="Owner & availability" hint="Who the car belongs to and whether it can be booked.">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Owner">
-                <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable searchable
+                <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable searchable disabled={termsLocked}
                   options={owners.map((o) => ({ value: o.id, label: o.name }))} />
               </Field>
               <Field label="Status">
@@ -672,21 +678,21 @@ export default function Vehicles() {
           </Section>
 
           {/* ── 3 · Pricing & km terms ── */}
-          <Section icon={<TrendingUp size={16} />} title="Rent & mileage terms" hint="Used to price every booking and the extra-km charge at return.">
+          <Section icon={<TrendingUp size={16} />} title="Rent & mileage terms" hint={termsLocked ? 'Set by the Managing Director — ask Brian to change the owner, rent or km terms.' : 'Used to price every booking and the extra-km charge at return.'}>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Field label="Daily rent">
                 <Affix prefix="Rs">
-                  <input className="input pl-10" type="number" min="0" value={form.dailyRent} onChange={(e) => set('dailyRent', +e.target.value)} />
+                  <input className="input pl-10" type="number" min="0" value={form.dailyRent} disabled={termsLocked} onChange={(e) => set('dailyRent', +e.target.value)} />
                 </Affix>
               </Field>
               <Field label="Included km">
                 <Affix suffix="km / day">
-                  <input className="input pr-20" type="number" min="0" value={form.includedKmPerDay ?? 100} onChange={(e) => set('includedKmPerDay', +e.target.value)} placeholder="100" />
+                  <input className="input pr-20" type="number" min="0" value={form.includedKmPerDay ?? 100} disabled={termsLocked} onChange={(e) => set('includedKmPerDay', +e.target.value)} placeholder="100" />
                 </Affix>
               </Field>
               <Field label="Extra km rate">
                 <Affix prefix="Rs" suffix="/ km">
-                  <input className="input pl-10 pr-12" type="number" min="0" value={form.extraKmRate ?? 50} onChange={(e) => set('extraKmRate', +e.target.value)} placeholder="50" />
+                  <input className="input pl-10 pr-12" type="number" min="0" value={form.extraKmRate ?? 50} disabled={termsLocked} onChange={(e) => set('extraKmRate', +e.target.value)} placeholder="50" />
                 </Affix>
               </Field>
               <Field label="Hill country">
@@ -807,14 +813,14 @@ export default function Vehicles() {
           const owner = owners.find((o) => o.id === selected.ownerId);
           return (
             <div className="space-y-4">
-              {isAdmin() && (
+              {(isAdmin() || teamLogin) && (
                 <div className="flex gap-1 bg-navy-50 rounded-xl p-1 text-sm font-semibold">
                   {([['details', 'Details'], ['breakdowns', `Breakdown history (${breakdowns.incidents.filter((x) => x.vehicleId === selected.id).length})`]] as const).map(([k, label]) => (
                     <button key={k} type="button" onClick={() => setViewTab(k)} className={`flex-1 rounded-lg py-1.5 ${viewTab === k ? 'bg-white text-navy-900 shadow-sm' : 'text-navy-500'}`}>{label}</button>
                   ))}
                 </div>
               )}
-              {viewTab === 'breakdowns' && isAdmin() ? (
+              {viewTab === 'breakdowns' && (isAdmin() || teamLogin) ? (
                 <VehicleBreakdownHistory vehicleId={selected.id} onOpen={() => setModal(null)} />
               ) : (<>
               {(() => {
@@ -932,7 +938,7 @@ export default function Vehicles() {
               </div>
 
               {/* Customer reviews — shown on the website's vehicle details when published */}
-              <VehicleReviews vehicleId={selected.id} canEdit={isAdmin() || canActOn(selected)} />
+              <VehicleReviews vehicleId={selected.id} canEdit={isAdmin() || (teamLogin ? can('canViewFeedback') : canActOn(selected))} />
 
               <div className="flex gap-3">
                 {canActOn(selected) && can('canEditVehicle') && (

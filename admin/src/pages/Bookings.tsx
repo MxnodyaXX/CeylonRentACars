@@ -160,8 +160,16 @@ const GROUP_OPTIONS: { key: GroupBy; label: string }[] = [
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export default function Bookings() {
-  const { vehicles, bookings, drivers, owners, customers, addBooking, isVehicleAvailable } = useStore();
+  const { vehicles, bookings, drivers, owners, customers, addBooking, isVehicleAvailable, deleteBooking } = useStore();
+  // A booking whose vehicle was deleted can't be started or completed — the admin can delete it instead
+  const removeOrphan = (b: Booking) => {
+    if (confirm(`Delete ${b.customerName}'s booking for good? Its vehicle no longer exists. This can't be undone.`)) deleteBooking(b.id);
+  };
   const { currentUser, isAdmin, can } = useAuthStore();
+  // team members: only what their abilities cover (owners and admins as before)
+  const staffLogin = currentUser?.role === 'staff';
+  const mayHandover = !staffLogin || can('canViewHandovers');
+  const mayBook = !staffLogin || can('canBook');
   const location = useLocation();
 
   const [tab,               setTab]               = useState<BookingStatus | 'All'>('All');
@@ -830,7 +838,7 @@ export default function Bookings() {
             onSelectEvent={(ev) => {
               const r = (ev as typeof calEvents[0]).resource;
               if (!isSwap(r)) { setSelected(r); setModal('view'); return; }
-              if (isAdmin()) { navigate(`/breakdowns/${r.incidentId}`); return; }
+              if (isAdmin() || (staffLogin && can('canManageBreakdowns'))) { navigate(`/breakdowns/${r.incidentId}`); return; }
               const car = swapCar(r);
               const days = r.days ? `${r.days} day${r.days === 1 ? '' : 's'}` : 'still out';
               toast.info(`${car?.vehicleNumber ?? 'Your car'} — breakdown replacement`,
@@ -855,9 +863,10 @@ export default function Bookings() {
             vehicle,
             owner: owners.find((o) => o.id === vehicle?.ownerId),
             onOpen: () => { setSelected(b); setModal('view'); },
-            onStart: () => setHandover({ booking: b, kind: 'pickup' }),
-            onComplete: () => setHandover({ booking: b, kind: 'return' }),
-            onCancel: () => setCancelling(b),
+            onStart: mayHandover ? () => setHandover({ booking: b, kind: 'pickup' }) : undefined,
+            onComplete: mayHandover ? () => setHandover({ booking: b, kind: 'return' }) : undefined,
+            onCancel: mayBook ? () => setCancelling(b) : undefined,
+            onRemove: isAdmin() ? () => removeOrphan(b) : undefined,
           };
         };
         const renderGridCard = (b: Booking) => <BookingCard key={b.id} {...cardProps(b)} />;

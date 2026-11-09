@@ -173,5 +173,28 @@ ok(carol && carol.password !== '111111' && carol.password === mig.body.moved[0].
 ok(carol.app_metadata.role === 'owner' && carol.app_metadata.owner_id === 'oC' && carol.app_metadata.must_change_password === true, 'moved login: owner role, right owner, must change password');
 ok(!world.authUsers.some((u) => u.email.startsWith('mallory')), 'no login created for the legacy admin row');
 
+console.log('\nTEAM (STAFF) LOGINS');
+ok((await call('tok-A', { action: 'create', username: 'thisaga', name: 'Thisaga', job: 'fleet' })).status === 403, 'an owner cannot create team logins');
+ok((await call('tok-admin', { action: 'create', username: 'thisaga', name: 'Thisaga', job: 'boss' })).status === 400, 'an unknown job is refused');
+ok((await call('tok-admin', { action: 'create', username: 'thisaga', name: '', job: 'fleet' })).status === 400, 'a name is required');
+ok((await call('tok-admin', { action: 'create', username: 'alice', name: 'Xavier', job: 'fleet' })).status === 409, 'a taken username is refused');
+const team = await call('tok-admin', { action: 'create', username: 'thisaga', name: 'Thisaga', job: 'fleet', role: 'admin',
+  permissions: { canViewHandovers: true, canChangeStatus: true, evil: true, canBook: 'yes' } });
+const th = world.authUsers.find((u) => u.email === 'thisaga@staff.ceylonrentacars.com');
+ok(team.status === 200 && th.app_metadata.role === 'staff' && th.app_metadata.job === 'fleet', 'admin creates a Fleet login (role "admin" in the request is ignored)');
+ok(JSON.stringify(th.app_metadata.permissions) === JSON.stringify({ canViewHandovers: true, canChangeStatus: true }), 'only real true/false abilities are kept');
+ok(/^[A-Za-z0-9]{12}$/.test(team.body.tempPassword) && th.app_metadata.must_change_password === true, 'temporary password, must change at first sign-in');
+world.tokens['tok-T'] = th.id;
+ok((await call('tok-T', { action: 'list' })).status === 403, 'a team member cannot list or manage logins');
+ok((await call('tok-T', { action: 'update', id: th.id, permissions: { canViewFinance: true } })).status === 403, '…nor give themselves abilities');
+const moved = await call('tok-admin', { action: 'update', id: th.id, job: 'operations', permissions: { canBook: true } });
+ok(moved.status === 200 && th.app_metadata.job === 'operations' && th.app_metadata.permissions.canBook === true && th.app_metadata.role === 'staff', 'admin changes the job and abilities');
+ok((await call('tok-admin', { action: 'update', id: bob.id, job: 'fleet' })).status === 400, 'an owner login cannot be given a job');
+ok((await call('tok-admin', { action: 'update', id: th.id, disabled: true })).status === 200 && th.banned_until, 'admin disables a team login');
+ok((await call('tok-admin', { action: 'reset-password', id: th.id })).status === 200, 'admin resets a team password');
+const listed = (await call('tok-admin', { action: 'list' })).body.users.find((u) => u.username === 'thisaga');
+ok(listed?.role === 'staff' && listed.job === 'operations', 'team logins appear in the list with their job');
+ok((await call('tok-admin', { action: 'delete', id: th.id })).status === 200 && !world.authUsers.some((u) => u.id === th.id), 'admin deletes a team login');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

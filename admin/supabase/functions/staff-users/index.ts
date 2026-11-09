@@ -3,7 +3,9 @@
 // or logs them; it only returns a NEW temporary password once, to the admin who created/reset it.
 //
 // Each login = Auth user <username>@staff.ceylonrentacars.com with app_metadata
-//   { role: 'admin' | 'owner', owner_id?, username, name, permissions?, must_change_password? }
+//   { role: 'admin' | 'staff' | 'owner', owner_id?, job?, username, name, permissions?, must_change_password? }
+//   staff = a team member (Operations / Finance / Fleet) whose abilities are the permissions
+//   (supabase/security/16_staff_roles.sql enforces them in the database).
 // app_metadata is only writable with the service-role key (here), so nobody can promote themselves.
 // ADMIN logins are never created here — only in the Supabase dashboard (DEPLOY-CHECKLIST.md).
 //
@@ -12,10 +14,11 @@
 // POST { action, ... }
 //   list                                    admin  → staff logins
 //   create          { username, name, ownerId, password? }   admin → owner login (temp password if none)
-//   update          { id, name?, permissions?, disabled? }    admin → owner logins only
-//   reset-password  { id }                  admin  → owner login: new temp password, must change at sign-in
+//   create          { username, name, job, permissions }      admin → team member login (temp password)
+//   update          { id, name?, job?, permissions?, disabled? }  admin → owner / team logins (never admins)
+//   reset-password  { id }                  admin  → owner / team login: new temp password, must change at sign-in
 //   change-password { currentPassword, newPassword }          any staff → own password
-//   delete          { id }                  admin  → owner logins only
+//   delete          { id }                  admin  → owner / team logins (never admins)
 //   migrate-preview                         admin  → what migrate-legacy would do (changes nothing)
 //   migrate-legacy                          admin  → move valid old logins (public.users) — new temp passwords
 
@@ -34,6 +37,10 @@ const json = (body: unknown, status = 200) =>
 
 const STAFF_DOMAIN = "staff.ceylonrentacars.com";
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const JOBS = ["operations", "finance", "fleet"];
+// only true/false abilities named can… are kept
+// deno-lint-ignore no-explicit-any
+const cleanPerms = (p: any) => Object.fromEntries(Object.entries(p ?? {}).filter(([k, v]) => /^can[A-Z]\w+$/.test(k) && typeof v === "boolean"));
 const emailOf = (username: string) => `${username}@${STAFF_DOMAIN}`;
 const normalUsername = (u: unknown) => String(u ?? "").trim().toLowerCase();
 
@@ -44,6 +51,7 @@ const toStaff = (u: any) => ({
   name: u.app_metadata?.name ?? "",
   role: u.app_metadata?.role,
   ownerId: u.app_metadata?.owner_id ?? undefined,
+  job: u.app_metadata?.job ?? undefined,
   permissions: u.app_metadata?.permissions ?? undefined,
   mustChangePassword: !!u.app_metadata?.must_change_password,
   contactEmail: u.user_metadata?.contact_email ?? undefined,
@@ -79,12 +87,12 @@ serve(async (req) => {
     }
     return out;
   };
-  const staffOnly = (users: { app_metadata?: { role?: string } }[]) => users.filter((u) => ["admin", "owner"].includes(u.app_metadata?.role ?? ""));
-  // Owner logins only — admin logins can't be changed through this function
+  const staffOnly = (users: { app_metadata?: { role?: string } }[]) => users.filter((u) => ["admin", "staff", "owner"].includes(u.app_metadata?.role ?? ""));
+  // Owner and team logins only — admin logins can't be changed through this function
   const ownerLogin = async (id: string) => {
     const { data, error } = await db.auth.admin.getUserById(String(id ?? ""));
     if (error || !data?.user) return null;
-    return data.user.app_metadata?.role === "owner" ? data.user : null;
+    return ["owner", "staff"].includes(data.user.app_metadata?.role) ? data.user : null;
   };
   const ownerExists = async (ownerId: string) =>
     !!ownerId && !!(await db.from("owners").select("id").eq("id", ownerId).maybeSingle()).data;
@@ -98,6 +106,24 @@ serve(async (req) => {
 
       case "create": {
         if (!isAdmin) return adminOnly();
+        if (body.job !== undefined) {
+          // a team member: Operations / Finance / Fleet, with the abilities the admin ticked
+          const username = normalUsername(body.username);
+          const job = String(body.job);
+          const name = String(body.name ?? "").trim().slice(0, 80);
+          if (!USERNAME_RE.test(username)) return json({ ok: false, error: "Username: 3–32 characters — lowercase letters, numbers, . _ -" }, 400);
+          if (!JOBS.includes(job)) return json({ ok: false, error: "Choose Operations, Finance or Fleet." }, 400);
+          if (name.length < 2) return json({ ok: false, error: "Enter the person's name." }, 400);
+          if ((await listAll()).some((u) => String(u.email).toLowerCase() === emailOf(username))) return json({ ok: false, error: "That username is already taken — choose another." }, 409);
+          const password = tempPassword();
+          const { data, error } = await db.auth.admin.createUser({
+            email: emailOf(username), password, email_confirm: true,
+            app_metadata: { role: "staff", job, username, name, permissions: cleanPerms(body.permissions), must_change_password: true },
+            user_metadata: { contact_email: body.contactEmail ? String(body.contactEmail).slice(0, 120) : undefined },
+          });
+          if (error) return json({ ok: false, error: error.message }, 400);
+          return json({ ok: true, user: toStaff(data.user), tempPassword: password });
+        }
         const username = normalUsername(body.username);
         const ownerId = String(body.ownerId ?? "");
         if (!USERNAME_RE.test(username)) return json({ ok: false, error: "Username: 3–32 characters — lowercase letters, numbers, . _ -" }, 400);
@@ -120,14 +146,18 @@ serve(async (req) => {
       case "update": {
         if (!isAdmin) return adminOnly();
         const target = await ownerLogin(body.id);
-        if (!target) return json({ ok: false, error: "Owner login not found." }, 404);
+        if (!target) return json({ ok: false, error: "Login not found." }, 404);
+        if (body.job !== undefined && (target.app_metadata?.role !== "staff" || !JOBS.includes(String(body.job)))) {
+          return json({ ok: false, error: "Choose Operations, Finance or Fleet." }, 400);
+        }
         // deno-lint-ignore no-explicit-any
         const patch: any = {};
-        if (body.name !== undefined || body.permissions !== undefined) {
+        if (body.name !== undefined || body.permissions !== undefined || body.job !== undefined) {
           patch.app_metadata = {
             ...target.app_metadata,
             ...(body.name !== undefined ? { name: String(body.name).slice(0, 80) } : {}),
-            ...(body.permissions !== undefined ? { permissions: Object.fromEntries(Object.entries(body.permissions ?? {}).filter(([k, v]) => /^can[A-Z]\w+$/.test(k) && typeof v === "boolean")) } : {}),
+            ...(body.job !== undefined ? { job: String(body.job) } : {}),
+            ...(body.permissions !== undefined ? { permissions: cleanPerms(body.permissions) } : {}),
           };
         }
         if (body.disabled !== undefined) patch.ban_duration = body.disabled ? "876000h" : "none";
@@ -139,7 +169,7 @@ serve(async (req) => {
       case "reset-password": {
         if (!isAdmin) return adminOnly();
         const target = await ownerLogin(body.id);
-        if (!target) return json({ ok: false, error: "Owner login not found." }, 404);
+        if (!target) return json({ ok: false, error: "Login not found." }, 404);
         const password = tempPassword();
         const { data, error } = await db.auth.admin.updateUserById(target.id, {
           password, app_metadata: { ...target.app_metadata, must_change_password: true },
@@ -168,7 +198,7 @@ serve(async (req) => {
       case "delete": {
         if (!isAdmin) return adminOnly();
         const target = await ownerLogin(body.id);
-        if (!target) return json({ ok: false, error: "Owner login not found." }, 404);
+        if (!target) return json({ ok: false, error: "Login not found." }, 404);
         const { error } = await db.auth.admin.deleteUser(target.id);
         if (error) return json({ ok: false, error: error.message }, 400);
         return json({ ok: true });

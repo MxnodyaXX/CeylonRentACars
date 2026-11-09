@@ -171,12 +171,12 @@ export default function Expenses() {
                   <td className="py-3 text-sm text-navy-700">{e.description}</td>
                   <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {e.amount.toLocaleString()}</td>
                   <td className="py-3 text-right">
-                    <button
+                    {currentUser?.role !== 'staff' && <button
                       onClick={() => { if (confirm('Delete this expense?')) deleteExpense(e.id); }}
                       className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-navy-300 hover:text-red-500 transition-colors ml-auto"
                     >
                       <Trash2 size={13} />
-                    </button>
+                    </button>}
                   </td>
                 </tr>
               );

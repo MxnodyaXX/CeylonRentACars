@@ -36,11 +36,11 @@ import ChangePasswordScreen from './pages/ChangePasswordScreen';
 import Incomplete from './pages/Incomplete';
 import Website from './pages/Website';
 import Feedback from './pages/Feedback';
+import { canOpen } from './lib/access';
 
 export default function App() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const isAdmin     = useAuthStore((s) => s.isAdmin);
-  const can         = useAuthStore((s) => s.can);
   const initAuth    = useAuthStore((s) => s.initAuth);
   const authReady   = useAuthStore((s) => s.ready);
   const loadAll     = useStore((s) => s.loadAll);
@@ -110,6 +110,8 @@ export default function App() {
     );
   }
 
+  const allow = (path: string, page: JSX.Element) => (canOpen(path) ? page : <Navigate to="/" replace />);
+
   return (
     <>
     <Toaster />
@@ -117,35 +119,34 @@ export default function App() {
       <Sidebar />
       <main className="flex-1 min-w-0 md:ml-[var(--sidebar-w)] md:transition-[margin-left] md:duration-300 md:ease-[cubic-bezier(.16,1,.3,1)] p-4 md:p-6 overflow-auto pb-28 md:pb-6">
         <Routes>
+          {/* Who may open which page: src/lib/access.ts (the database enforces the same rules) */}
           <Route path="/"              element={<Dashboard />}     />
           <Route path="/vehicles"      element={<Vehicles />}      />
           <Route path="/bookings"      element={<Bookings />}      />
           <Route path="/bookings/:id"  element={<BookingPage />}   />
-          <Route path="/commissions"   element={<Commissions />}   />
           <Route path="/notifications" element={<Notifications />} />
-          {/* Permission-gated pages — redirect to home if not allowed */}
-          <Route path="/inquiries"  element={isAdmin() || can('canViewInquiries')   ? <Inquiries />  : <Navigate to="/" replace />} />
-          <Route path="/inquiries/:id" element={isAdmin() || can('canViewInquiries') ? <InquiryPage /> : <Navigate to="/" replace />} />
-          <Route path="/inquiries/:id/consultation" element={isAdmin() || can('canViewInquiries') ? <InquiryConsultation /> : <Navigate to="/" replace />} />
+          <Route path="/commissions"   element={allow('/commissions', <Commissions />)} />
+          <Route path="/inquiries"     element={allow('/inquiries', <Inquiries />)} />
+          <Route path="/inquiries/:id" element={allow('/inquiries', <InquiryPage />)} />
+          <Route path="/inquiries/:id/consultation" element={allow('/inquiries', <InquiryConsultation />)} />
           <Route path="/whatsapp-templates" element={isAdmin() ? <WhatsAppTemplates /> : <Navigate to="/messages" replace />} />
-          <Route path="/whatsapp-setup" element={isAdmin() ? <WhatsAppSetup /> : <Navigate to="/" replace />} />
-          <Route path="/messages" element={isAdmin() || can('canViewInquiries') ? <Messages /> : <Navigate to="/" replace />} />
-          <Route path="/expenses"   element={isAdmin() || can('canViewExpenses')    ? <Expenses />   : <Navigate to="/" replace />} />
-          <Route path="/drivers"    element={isAdmin() || can('canViewDrivers')     ? <Drivers />    : <Navigate to="/" replace />} />
-          <Route path="/handovers"  element={isAdmin() || can('canViewHandovers')   ? <Handovers />  : <Navigate to="/" replace />} />
-          <Route path="/customers"  element={isAdmin() || can('canViewCustomers')   ? <Customers />  : <Navigate to="/" replace />} />
-          <Route path="/referrals"  element={isAdmin() || can('canViewReferrals')   ? <Referrals />  : <Navigate to="/" replace />} />
-          <Route path="/incomplete" element={isAdmin() || can('canViewIncomplete')  ? <Incomplete /> : <Navigate to="/" replace />} />
-          {/* Admin-only pages */}
-          <Route path="/owners"      element={isAdmin() ? <Owners />           : <Navigate to="/" replace />} />
-          <Route path="/partners"    element={isAdmin() ? <PartnerApplications /> : <Navigate to="/" replace />} />
-          <Route path="/permissions" element={isAdmin() ? <Permissions />      : <Navigate to="/" replace />} />
-          <Route path="/settings"    element={isAdmin() || currentUser?.role === 'owner' ? <Settings /> : <Navigate to="/" replace />} />
-          <Route path="/credit"      element={isAdmin() ? <CreditManagement /> : <Navigate to="/" replace />} />
-          <Route path="/breakdowns"     element={isAdmin() ? <Breakdowns /> : <Navigate to="/" replace />} />
-          <Route path="/breakdowns/:id" element={isAdmin() ? <BreakdownIncident /> : <Navigate to="/" replace />} />
-          <Route path="/website"     element={isAdmin() ? <Website />          : <Navigate to="/" replace />} />
-          <Route path="/feedback"    element={isAdmin() ? <Feedback />         : <Navigate to="/" replace />} />
+          <Route path="/whatsapp-setup" element={allow('/whatsapp-setup', <WhatsAppSetup />)} />
+          <Route path="/messages"      element={allow('/messages', <Messages />)} />
+          <Route path="/expenses"      element={allow('/expenses', <Expenses />)} />
+          <Route path="/drivers"       element={allow('/drivers', <Drivers />)} />
+          <Route path="/handovers"     element={allow('/handovers', <Handovers />)} />
+          <Route path="/customers"     element={allow('/customers', <Customers />)} />
+          <Route path="/referrals"     element={allow('/referrals', <Referrals />)} />
+          <Route path="/incomplete"    element={allow('/incomplete', <Incomplete />)} />
+          <Route path="/owners"        element={allow('/owners', <Owners />)} />
+          <Route path="/partners"      element={allow('/partners', <PartnerApplications />)} />
+          <Route path="/permissions"   element={allow('/permissions', <Permissions />)} />
+          <Route path="/settings"      element={allow('/settings', <Settings />)} />
+          <Route path="/credit"        element={allow('/credit', <CreditManagement />)} />
+          <Route path="/breakdowns"    element={allow('/breakdowns', <Breakdowns />)} />
+          <Route path="/breakdowns/:id" element={allow('/breakdowns', <BreakdownIncident />)} />
+          <Route path="/website"       element={allow('/website', <Website />)} />
+          <Route path="/feedback"      element={allow('/feedback', <Feedback />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

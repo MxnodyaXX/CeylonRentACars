@@ -26,13 +26,13 @@ const emptyForm = (): Omit<Driver, 'id' | 'joinedAt' | 'totalEarnings'> => ({
 
 export default function Drivers() {
   const { drivers, bookings, vehicles, addDriver, updateDriver } = useStore();
-  const { isAdmin } = useAuthStore();
+  const { isAdmin, currentUser, can } = useAuthStore();
 
   const [modal, setModal]       = useState<'add' | 'edit' | null>(null);
   const [selected, setSelected] = useState<Driver | null>(null);
   const [form, setForm]         = useState(emptyForm());
 
-  const readOnly = !isAdmin();
+  const readOnly = !(isAdmin() || (currentUser?.role === 'staff' && can('canViewDrivers')));
 
   const set = (field: string, value: unknown) => setForm((f) => ({ ...f, [field]: value }));
 

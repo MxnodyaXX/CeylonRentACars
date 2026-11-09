@@ -238,10 +238,25 @@ export const useStore = create<AppState>()(
         });
       },
 
+      // A vehicle with a confirmed or ongoing booking can't be deleted — the booking would lose its car.
+      // (The database refuses it too, see security/15_vehicle_delete_guard.sql.)
       deleteVehicle: (id) => {
+        const vehicle = get().vehicles.find((v) => v.id === id);
+        if (!vehicle) return false;
+        const active = get().bookings.filter((b) => b.vehicleId === id && (b.status === 'Confirmed' || b.status === 'Ongoing'));
+        if (active.length > 0) {
+          toast.error('Vehicle has bookings', `${vehicle.brand} ${vehicle.model} has ${active.length} confirmed or ongoing booking${active.length > 1 ? 's' : ''}. Complete or cancel ${active.length > 1 ? 'them' : 'it'} first.`);
+          return false;
+        }
         set((s) => ({ vehicles: s.vehicles.filter((v) => v.id !== id) }));
-        sync(() => db.deleteVehicle(id));
         toast.warning('Vehicle removed', 'The vehicle has been deleted from the fleet.');
+        if (supabaseEnabled) {
+          Promise.resolve(db.deleteVehicle(id)).then(ok).catch((err) => {
+            set((s) => (s.vehicles.some((v) => v.id === id) ? s : { vehicles: [...s.vehicles, vehicle] }));
+            reportDbError(err, 'The vehicle was not deleted.');
+          });
+        }
+        return true;
       },
 
       // ── Owners ────────────────────────────────────────────────────────────
@@ -495,6 +510,19 @@ export const useStore = create<AppState>()(
           sync(() => db.updateVehicle(booking.vehicleId, { status: afterCancel }));
         }
         toast.warning('Booking cancelled', booking ? `${booking.customerName}'s booking was cancelled${why ? ` — ${why.reason.toLowerCase()}` : ''}.` : 'The booking was cancelled.');
+      },
+
+      deleteBooking: (id) => {
+        const booking = get().bookings.find((b) => b.id === id);
+        if (!booking) return;
+        set((s) => ({ bookings: s.bookings.filter((b) => b.id !== id) }));
+        toast.warning('Booking removed', `${booking.customerName}'s booking was deleted.`);
+        if (supabaseEnabled) {
+          Promise.resolve(db.deleteBooking(id)).then(ok).catch((err) => {
+            set((s) => (s.bookings.some((b) => b.id === id) ? s : { bookings: [...s.bookings, booking] }));
+            reportDbError(err, 'The booking was not deleted (it may have a breakdown or swap on record).');
+          });
+        }
       },
 
       // ── Inquiries ─────────────────────────────────────────────────────────

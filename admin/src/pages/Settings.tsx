@@ -360,14 +360,14 @@ export default function Settings() {
     <div>
       <Header
         title="Settings"
-        subtitle={admin ? 'System configuration and user management' : 'Record past bookings for your vehicles'}
+        subtitle={admin ? 'System configuration and user management' : useAuthStore.getState().currentUser?.role === 'staff' ? 'Your password and past booking records' : 'Record past bookings for your vehicles'}
       />
 
       {/* ── Data Management ── */}
       <section className="mb-10">
         <p className="text-xs font-semibold text-navy-400 uppercase tracking-wider mb-3">Data Management</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <button
+          {(useAuthStore.getState().currentUser?.role !== 'staff' || useAuthStore.getState().can('canBook')) && <button
             onClick={() => setManualOpen(true)}
             className="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-card border border-gray-100 hover:border-navy-200 hover:shadow-md text-left transition-all"
           >
@@ -378,7 +378,7 @@ export default function Settings() {
               <p className="font-semibold text-navy-800 text-sm">Add Manual Booking</p>
               <p className="text-xs text-navy-400 mt-1 leading-relaxed">Record a past booking that was missed. Updates vehicle stats, customer profile, commissions, and referral earnings.</p>
             </div>
-          </button>
+          </button>}
 
           {admin && (
             <button

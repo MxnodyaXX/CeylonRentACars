@@ -365,3 +365,45 @@ page. Customers see no price: they send a quote request, which arrives in **Inqu
 - [ ] Push, so the website and the admin deploy
 - [ ] Admin → Website → **Wedding cars**: tick your cars. Open `/wedding-cars`: they appear, with no prices
 - [ ] Send a test request. Admin → Inquiries → **Wedding**: it shows the event, venue, hours and decoration
+
+## Part 13 — vehicles with active bookings can't be deleted (after Part 1 / 01)
+
+Deleting a car used to leave its confirmed/ongoing bookings with no vehicle ("Vehicle removed").
+The admin now refuses, and so does the database.
+
+- [ ] SQL Editor → run `security/15_vehicle_delete_guard.sql` (undo: `rollback/15_rollback_vehicle_delete_guard.sql`)
+- [ ] Run `security/verify.sql`: still no FAIL
+- [ ] Push the admin
+- [ ] Check: Vehicles → delete a car with a confirmed booking → refused with a message
+- [ ] Bookings → any "Vehicle removed" card → **Remove** (or open it → **Delete booking**). A booking with a
+      breakdown or swap on record can't be deleted; cancel it instead.
+
+## Part 14 — one login per team member: Operations / Finance / Fleet (after Part 13)
+
+Everyone used to share the admin login. Now Brian and IT each have their own **admin** login, and
+Buddhi, Dinithi and Thisaga each get a **team** login whose job decides what they can do. The database
+enforces it (`16_staff_roles.sql`). Hiding buttons is not the only protection.
+
+- [ ] SQL Editor → run `security/16_staff_roles.sql` (undo: `rollback/16_rollback_staff_roles.sql`).
+      **If 01 is ever re-run, run 16 again** (01 removes every rule, including the team ones).
+- [ ] Run `security/verify.sql`: still no FAIL
+- [ ] Redeploy the login function (it can now make team logins): `npx supabase functions deploy staff-users --no-verify-jwt`
+- [ ] Also redeploy the functions that check who is calling, so team logins can send SMS / WhatsApp:
+      `npx supabase functions deploy send-sms --no-verify-jwt` (and `whatsapp-send`, `whatsapp-templates`, `whatsapp-onboard` when WhatsApp is live)
+- [ ] Push the admin
+- [ ] Separate **admin** logins for Brian and IT (Supabase dashboard, like Part 1 step 1). Example for Brian:
+      Authentication → Users → Add user → `brian@staff.ceylonrentacars.com`, strong password, Auto Confirm, then:
+  ```sql
+  update auth.users set raw_app_meta_data = raw_app_meta_data
+    || '{"role": "admin", "username": "brian", "name": "Brian"}'::jsonb
+  where email = 'brian@staff.ceylonrentacars.com';
+  ```
+- [ ] Admin → **Permissions → Team → Add a team member**: Buddhi (Operations Manager), Dinithi (Finance &
+      Administration), Thisaga (Fleet Operations & Maintenance). Give each one their username and temporary
+      password in person. They choose their own password at first sign-in.
+- [ ] Check with each login: the menu shows only their pages. Fleet's "Complete rental" has no payment part.
+      Finance can record payments but has no Start/Complete. Nobody on the team sees Permissions or Website.
+- [ ] Once everyone signs in with their own login: **change the old shared `admin` password** (Supabase →
+      Authentication → Users → admin → Reset password / set a new one) and keep it only for emergencies,
+      or switch it off. Until then anyone with the old password still has full access.
+- [ ] Changing someone's job or switches takes effect when they next sign in (or within an hour).

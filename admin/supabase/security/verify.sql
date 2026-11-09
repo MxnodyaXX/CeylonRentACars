@@ -109,9 +109,12 @@ begin
     values ('owner ' || rec.owner_id, 'notifications: only own', case when bad = 0 then 'PASS' else 'FAIL' end, bad || ' other');
 
     execute 'set local role authenticated';
+    -- explained: on one of my cars, on a booking I can see, or my own payout line
+    -- (a payout stays the owner's even after the car is deleted or the booking moves to another car)
     select count(*) into bad from public.commissions c
       where not exists (select 1 from public.vehicles v where v.id = c.vehicle_id)
-        and not exists (select 1 from public.bookings b where b.id = c.booking_id);
+        and not exists (select 1 from public.bookings b where b.id = c.booking_id)
+        and c.owner_id is distinct from rec.owner_id;
     select count(*) into seen from public.customers;
     execute 'reset role';
     insert into security_check (area, check_name, result, detail)

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
+import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import Modal from '../components/ui/Modal';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -40,6 +41,8 @@ function initials(name: string) {
 
 export default function Customers() {
   const { customers, bookings, vehicles, owners, addCustomer, updateCustomer, deleteCustomer } = useStore();
+  // deleting a customer is an admin correction — team members edit, never delete (history is kept)
+  const mayDelete = useAuthStore((s) => s.currentUser?.role !== 'staff');
 
   const [search,     setSearch]     = useState('');
   const [modal,      setModal]      = useState<'add' | 'edit' | 'delete' | null>(null);
@@ -229,13 +232,13 @@ export default function Customers() {
                       >
                         <Edit2 size={14} />
                       </button>
-                      <button
+                      {mayDelete && <button
                         onClick={() => openDelete(c)}
                         className="w-8 h-8 rounded-lg flex items-center justify-center text-navy-400 hover:bg-red-50 hover:text-red-600 transition-colors"
                         title="Delete"
                       >
                         <Trash2 size={14} />
-                      </button>
+                      </button>}
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="text-right">

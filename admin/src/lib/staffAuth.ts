@@ -1,6 +1,6 @@
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import type { AppUser, OwnerPermissions } from '../types/auth';
+import type { AppUser, OwnerPermissions, StaffAbility, StaffJob } from '../types/auth';
 // Same rules the server applies (one copy, shared with the Edge Function)
 export { passwordProblem, tempPassword } from '../../supabase/functions/_shared/password';
 
@@ -17,16 +17,17 @@ export const staffEmail = (username: string) => `${cleanUsername(username)}@${ST
 /** The app's user from a Supabase login — null when it isn't a staff login */
 export function userFromAuth(u: User | null | undefined): AppUser | null {
   const m = u?.app_metadata ?? {};
-  if (!u || (m.role !== 'admin' && m.role !== 'owner')) return null;
+  if (!u || (m.role !== 'admin' && m.role !== 'staff' && m.role !== 'owner')) return null;
   return {
     id: u.id,
     username: m.username ?? String(u.email ?? '').split('@')[0],
     name: m.name ?? m.username ?? 'Staff',
     role: m.role,
     ownerId: m.owner_id ?? undefined,
+    job: m.role === 'staff' ? m.job : undefined,
     email: u.user_metadata?.contact_email ?? undefined,
     nic: u.user_metadata?.nic ?? undefined,
-    permissions: m.permissions as Partial<OwnerPermissions> | undefined,
+    permissions: m.permissions as AppUser['permissions'],
     mustChangePassword: !!m.must_change_password,
   };
 }
@@ -61,7 +62,10 @@ export const listStaff = () => call<{ users: StaffLogin[] }>({ action: 'list' })
  *  makes a temporary one, returns it once, and the owner must change it on first sign-in. */
 export const createStaff = (p: { username: string; password?: string; name: string; ownerId?: string; contactEmail?: string; nic?: string }) =>
   call<{ user: StaffLogin; tempPassword?: string }>({ action: 'create', ...p });
-export const updateStaff = (id: string, p: { name?: string; permissions?: Partial<OwnerPermissions>; disabled?: boolean }) =>
+/** A team member's login (Operations / Finance / Fleet) — the server makes a temporary password */
+export const createTeamStaff = (p: { username: string; name: string; job: StaffJob; permissions: Partial<Record<StaffAbility, boolean>> }) =>
+  call<{ user: StaffLogin; tempPassword: string }>({ action: 'create', ...p });
+export const updateStaff = (id: string, p: { name?: string; job?: StaffJob; permissions?: Partial<OwnerPermissions> | Partial<Record<StaffAbility, boolean>>; disabled?: boolean }) =>
   call<{ user: StaffLogin }>({ action: 'update', id, ...p }).then((r) => r.user);
 /** New temporary password for an owner login (shown to the admin once) */
 export const resetStaffPassword = (id: string) =>

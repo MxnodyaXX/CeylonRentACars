@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { differenceInCalendarDays, format, parseISO } from 'date-fns';
 import {
-  AlertTriangle, CalendarClock, CalendarDays, CalendarRange, CheckCircle, ChevronRight, ClipboardEdit, MapPin, Phone, PlayCircle, Users,
+  AlertTriangle, CalendarClock, CalendarDays, CalendarRange, CheckCircle, ChevronRight, ClipboardEdit, MapPin, Phone, PlayCircle, Trash2, Users,
 } from 'lucide-react';
 import VehicleImage from './VehicleImage';
 import { vehicleBodyColor } from './CarSVG';
@@ -178,12 +178,13 @@ function Tags({ b, owner }: { b: Booking; owner?: Owner }) {
   );
 }
 
-function Action({ b, onStart, onComplete }: { b: Booking; onStart: () => void; onComplete: () => void }) {
+/** Start / Complete — left out (just "Details") when the login may not hand cars over */
+function Action({ b, onStart, onComplete }: { b: Booking; onStart?: () => void; onComplete?: () => void }) {
   const btn = 'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold transition-colors flex-shrink-0';
-  if (b.status === 'Confirmed') {
+  if (b.status === 'Confirmed' && onStart) {
     return <button type="button" onClick={(e) => { e.stopPropagation(); onStart(); }} className={`${btn} bg-navy-800 text-white hover:bg-navy-700`}><PlayCircle size={13} /> Start</button>;
   }
-  if (b.status === 'Ongoing') {
+  if (b.status === 'Ongoing' && onComplete) {
     return <button type="button" onClick={(e) => { e.stopPropagation(); onComplete(); }} className={`${btn} bg-emerald-600 text-white hover:bg-emerald-700`}><CheckCircle size={13} /> Complete</button>;
   }
   return <span className={`${btn} text-navy-400 group-hover:text-navy-700`}>Details <ChevronRight size={13} /></span>;
@@ -215,9 +216,12 @@ interface CardProps {
   vehicle?: Vehicle;
   owner?: Owner;
   onOpen: () => void;
-  onStart: () => void;
-  onComplete: () => void;
-  onCancel: () => void;
+  /** left out when the login may not do it */
+  onStart?: () => void;
+  onComplete?: () => void;
+  onCancel?: () => void;
+  /** Shown in place of the usual action when the booking's vehicle was deleted */
+  onRemove?: () => void;
 }
 
 const shell = (b: Booking) =>
@@ -254,7 +258,17 @@ function PeriodLine({ b }: { b: Booking }) {
 }
 
 /** Grid card — compact: vehicle, customer, period and payment in a few lines */
-export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onComplete, onCancel }: CardProps) {
+/** Delete a booking whose vehicle is gone — it can't be started or completed any more */
+function RemoveButton({ onRemove }: { onRemove: () => void }) {
+  return (
+    <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 flex-shrink-0">
+      <Trash2 size={13} />Remove
+    </button>
+  );
+}
+
+export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onComplete, onCancel, onRemove }: CardProps) {
   const t = bookingTiming(b);
   const tone = TONE[t.tone];
   const due = bookingDue(b);
@@ -298,13 +312,13 @@ export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onCom
             </span>
           )}
         </div>
-        <Action b={b} onStart={onStart} onComplete={onComplete} />
+        {!vehicle && onRemove ? <RemoveButton onRemove={onRemove} /> : <Action b={b} onStart={onStart} onComplete={onComplete} />}
       </div>
 
       {/* tags */}
       <div className="flex items-center justify-between gap-2">
         <Tags b={b} owner={owner} />
-        {b.status === 'Confirmed' && (
+        {b.status === 'Confirmed' && onCancel && (
           <button type="button" onClick={(e) => { e.stopPropagation(); onCancel(); }} className="text-[10px] font-medium text-navy-400 hover:text-red-600 flex-shrink-0">Cancel</button>
         )}
       </div>
@@ -313,7 +327,7 @@ export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onCom
 }
 
 /** Full-width row — the same information laid out across the page */
-export function BookingRow({ booking: b, vehicle, owner, onOpen, onStart, onComplete, onCancel }: CardProps) {
+export function BookingRow({ booking: b, vehicle, owner, onOpen, onStart, onComplete, onCancel, onRemove }: CardProps) {
   return (
     <Frame b={b} onOpen={onOpen} className="p-4">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,15rem)_minmax(0,12rem)_minmax(0,1fr)_minmax(0,11rem)_auto] lg:items-center">
@@ -342,8 +356,8 @@ export function BookingRow({ booking: b, vehicle, owner, onOpen, onStart, onComp
         <Money b={b} align="right" />
 
         <div className="flex lg:flex-col items-center lg:items-end justify-between gap-2">
-          <Action b={b} onStart={onStart} onComplete={onComplete} />
-          {b.status === 'Confirmed' && (
+          {!vehicle && onRemove ? <RemoveButton onRemove={onRemove} /> : <Action b={b} onStart={onStart} onComplete={onComplete} />}
+          {b.status === 'Confirmed' && onCancel && (
             <button type="button" onClick={(e) => { e.stopPropagation(); onCancel(); }} className="text-[11px] font-medium text-navy-400 hover:text-red-600">Cancel</button>
           )}
         </div>

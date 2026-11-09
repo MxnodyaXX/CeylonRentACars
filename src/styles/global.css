@@ -2255,69 +2255,119 @@ a.pt-stat:hover { border-color: var(--line-2); }
 .wed-perks__ic { flex: none; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; color: var(--red-hi); background: rgba(225,29,42,.12); }
 .wed-perks h2 { font-size: 15px; margin: 0 0 4px; }
 .wed-perks p { font-size: 13px; color: var(--muted); margin: 0; }
-.wed-section { padding-top: 64px; }
-.wed-section > h2 { font-size: clamp(26px, 3vw, 38px); letter-spacing: -.02em; margin: 8px 0 22px; }
+.wed-section { padding-top: 40px; }
+.wed-section > h2 { font-size: clamp(26px, 3vw, 38px); letter-spacing: -.02em; margin: 6px 0 14px; }
 .wed-note { color: var(--muted); }
 .wed-note a { color: var(--text); font-weight: 700; }
 .wed-section--centre { text-align: center; }
 .wed-section--centre .eyebrow { justify-content: center; }
-.wed-show { --gold: #d9b779; --arch-w: min(600px, 70vw); --arch-h: calc(var(--arch-w) * .8); --step: calc(var(--arch-w) * .62); position: relative; isolation: isolate; margin-top: 8px; padding-top: 28px; }
-/* a soft glow behind the middle arch */
-.wed-show::before { content: ""; position: absolute; left: 50%; top: 0; width: min(1000px, 130vw); height: calc(var(--arch-h) + 90px); transform: translateX(-50%); z-index: -2; pointer-events: none; background: radial-gradient(50% 50% at 50% 55%, rgba(217,183,121,.2), rgba(225,29,42,.06) 58%, transparent 74%); }
+.wedding-page { overflow-x: clip; }
+.wed-show { --gold: #d9b779; --stage-h: clamp(240px, calc(100vh - 404px), 820px); position: relative; margin-top: 0; }
+@supports (height: 100svh) { .wed-show { --stage-h: clamp(240px, calc(100svh - 404px), 820px); } }
+/* the stage picture, full width; on narrow screens it is cropped at the sides, never squashed */
+.wed-stage { position: relative; width: 100vw; margin-left: calc(50% - 50vw); height: var(--stage-h); touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 9%, #000 90%, transparent 100%); mask-image: linear-gradient(180deg, transparent 0, #000 9%, #000 90%, transparent 100%); }
+.wed-stage:active { cursor: grabbing; }
+.wed-frame { position: absolute; left: 50%; bottom: 0; width: max(calc(var(--stage-h) * 1672 / 941), min(100%, calc(var(--stage-h) * 2.3))); aspect-ratio: 1672 / 941;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); transform: translateX(-50%); perspective: 1600px; perspective-origin: 50% 60%; }
+.wed-frame__bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+/* the scene's origin is the middle of the podium's top */
+.wed-scene { position: absolute; left: calc(var(--podium-x) * 100%); top: calc(var(--podium-y) * 100%); width: 0; height: 0; transform-style: preserve-3d; transform: translateZ(calc(var(--ring-r) * -1)); }
 
-/* petals falling over the arches */
-.wed-petals { position: absolute; left: 50%; top: -20px; width: 100vw; height: calc(var(--arch-h) + 120px); transform: translateX(-50%); overflow: hidden; pointer-events: none; z-index: 20; -webkit-mask-image: linear-gradient(180deg, transparent, #000 12%, #000 80%, transparent); mask-image: linear-gradient(180deg, transparent, #000 12%, #000 80%, transparent); }
-.wed-petals i { position: absolute; top: -24px; border-radius: 80% 10% 80% 10%; background: linear-gradient(135deg, #f7dfe0, #e8a9b0); opacity: 0; animation: wed-petal linear infinite; }
-@keyframes wed-petal {
-  0% { transform: translate(0, 0) rotate(0); opacity: 0; }
-  10% { opacity: .75; }
-  85% { opacity: .55; }
-  100% { transform: translate(var(--drift), 640px) rotate(420deg); opacity: 0; }
+/* the cars: just the car, standing on the podium; the ones round the side wait in the dark */
+.wed-car { --depth: 1; position: absolute; left: calc(var(--car-w) / -2); bottom: -2px; width: var(--car-w); display: flex; justify-content: center; align-items: flex-end; transform-origin: 50% 100%;
+  opacity: clamp(0, calc((var(--depth) - .18) * 2.4), 1);
+  filter: brightness(calc(.12 + var(--depth) * var(--depth) * .88)) drop-shadow(0 14px 14px rgba(0,0,0,.55)) blur(calc(var(--speed, 0) * 2.4px)); }
+.wed-car img { display: block; width: 100%; height: auto; max-height: calc(var(--car-w) * .72); object-fit: contain; object-position: 50% 100%; pointer-events: none;
+  -webkit-box-reflect: below -2px linear-gradient(transparent 72%, rgba(255,255,255,.16)); }
+/* a photo with its own background: fade its edges into the stage */
+.wed-car img.is-photo { aspect-ratio: 16 / 10; object-fit: cover; border-radius: 50% / 40%;
+  -webkit-mask-image: radial-gradient(closest-side, #000 62%, transparent); mask-image: radial-gradient(closest-side, #000 62%, transparent); -webkit-box-reflect: none; }
+.wed-car > .ic { width: 30%; height: auto; color: var(--muted); }
+@media (max-width: 640px) {
+  .wed-show { --stage-h: 92vw; }
+  .wed-frame { width: max(100%, calc(92vw * 1672 / 941)); -webkit-mask-image: none; mask-image: none; }
 }
 
-/* the row of arches */
-.wed-stage { position: relative; height: calc(var(--arch-h) + 26px); touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; }
-.wed-stage:active { cursor: grabbing; }
-.wed-arch { position: absolute; left: 50%; bottom: 26px; width: var(--arch-w); height: var(--arch-h); margin-left: calc(var(--arch-w) / -2); padding: 7px; border-radius: 50% 50% 8px 8px / 62% 62% 8px 8px; border: 1px solid rgba(217,183,121,.55); background: rgba(10,10,12,.7); transform-origin: 50% 100%; transform: translateX(calc(var(--off) * var(--step))) scale(calc(1 - var(--abs) * .24)); opacity: calc(1 - var(--abs) * .3); transition: transform .8s var(--ease), opacity .8s var(--ease), border-color .5s, box-shadow .8s; cursor: pointer; }
-.wed-arch.is-far { opacity: 0; pointer-events: none; }
-.wed-arch.is-centre { cursor: inherit; border-color: var(--gold); box-shadow: 0 34px 80px -34px rgba(217,183,121,.55); }
-.wed-arch:not(.is-centre):hover { opacity: calc(1.15 - var(--abs) * .3); border-color: var(--gold); }
-.wed-arch:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
-/* the keystone: a small gold mark at the top of each arch */
-.wed-arch::before { content: ""; position: absolute; left: 50%; top: -6px; width: 10px; height: 10px; margin-left: -5px; transform: rotate(45deg); background: var(--gold); z-index: 2; }
-.wed-arch__pic { display: grid; place-items: center; width: 100%; height: 100%; overflow: hidden; color: var(--muted); border-radius: inherit; border: 1px solid rgba(217,183,121,.22); background: radial-gradient(70% 70% at 50% 70%, #2a2420, #0d0d0f); }
-.wed-arch__pic img { width: 100%; height: 100%; object-fit: cover; object-position: center 62%; pointer-events: none; transition: filter .8s, transform 6s ease-out; filter: brightness(.55) saturate(.8); }
-.wed-arch.is-centre .wed-arch__pic img { filter: none; transform: scale(1.03); }
-.wed-arch__pic.is-cutout img { object-fit: contain; object-position: center 80%; padding: 8% 6% 4%; }
-.wed-floor { position: absolute; left: 50%; bottom: 0; width: min(1100px, 140vw); height: 44px; transform: translateX(-50%); z-index: 11; pointer-events: none; background: radial-gradient(50% 100% at 50% 0%, rgba(217,183,121,.34), transparent 70%); border-top: 1px solid rgba(217,183,121,.28); -webkit-mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent); mask-image: linear-gradient(90deg, transparent, #000 22%, #000 78%, transparent); }
+/* a car lands on the podium: a band of light runs over the bodywork (masked to the car's own shape),
+   a gold ring ripples out across the podium and a thin flare streaks through the stage */
+.wed-car__shine { position: absolute; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: screen;
+  background: linear-gradient(105deg, transparent 38%, rgba(255,255,255,.9) 48%, rgba(255,232,196,.55) 53%, transparent 62%) 160% 0 / 260% 100% no-repeat;
+  -webkit-mask: var(--src) 50% 100% / contain no-repeat; mask: var(--src) 50% 100% / contain no-repeat; }
+.wed-car__shine.is-landing { animation: wed-shine 1.15s cubic-bezier(.3,.1,.2,1) .05s; }
+@keyframes wed-shine { 0% { opacity: 1; background-position: 160% 0; } 80% { opacity: 1; } 100% { opacity: 0; background-position: -60% 0; } }
+.wed-land { position: absolute; left: calc(var(--podium-x) * 100%); top: calc(var(--podium-y) * 100%); width: calc(var(--car-w) * 1.55); height: calc(var(--car-w) * .16); transform: translate(-50%, -50%); pointer-events: none; }
+.wed-land i { position: absolute; inset: 0; border-radius: 50%; opacity: 0; border: 2px solid rgba(232,200,140,.95); box-shadow: 0 0 18px rgba(232,200,140,.7), inset 0 0 14px rgba(232,200,140,.45); }
+.wed-land b { position: absolute; left: 50%; top: calc(var(--car-w) * -.14); width: 190%; height: 2px; border-radius: 2px; opacity: 0; transform: translateX(-50%) scaleX(0);
+  background: linear-gradient(90deg, transparent, rgba(255,214,170,.5) 30%, #fff 50%, rgba(255,214,170,.5) 70%, transparent); box-shadow: 0 0 14px 3px rgba(255,190,140,.55); }
+.wed-land.is-landing i { animation: wed-ring 1.2s cubic-bezier(.2,.7,.3,1) both; }
+.wed-land.is-landing i + i { animation-delay: .2s; }
+.wed-land.is-landing b { animation: wed-streak 1s cubic-bezier(.2,.7,.3,1) .08s both; }
+@keyframes wed-ring { 0% { opacity: 0; transform: scale(.35); } 18% { opacity: 1; } 100% { opacity: 0; transform: scale(1.25); } }
+@keyframes wed-streak { 0% { opacity: 0; transform: translateX(-50%) scaleX(0); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) scaleX(1); } }
 
-/* the car's name */
-.wed-cap { padding-top: 26px; animation: wed-cap-in .7s var(--ease) both; }
+/* the car's name rises in letter by letter out of a soft blur */
+.wed-word { display: inline-block; white-space: nowrap; }
+.wed-char { display: inline-block; animation: wed-char .75s cubic-bezier(.2,.8,.2,1) calc(var(--i) * 30ms) both; }
+@keyframes wed-char { from { opacity: 0; transform: translateY(.42em); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .wed-car__shine.is-landing, .wed-land.is-landing i, .wed-land.is-landing b { animation: none; }
+  .wed-char { animation: wed-fade .5s ease both; }
+}
+
+/* the curtains: closed over the stage, they gather to the sides when it scrolls into view */
+/* two fold patterns of different widths on top of each other, so the velvet doesn't look machine-made */
+.wed-curtain { --velvet: repeating-linear-gradient(90deg, transparent 0, rgba(0,0,0,.34) 1.9%, transparent 4.3%), repeating-linear-gradient(90deg, #56000a 0, #9e0f1d 2.2%, #dd2538 3.2%, #b3122a 4.3%, #66000c 6.2%);
+  position: absolute; left: 50%; top: 0; width: 100vw; height: var(--stage-h); transform: translateX(-50%); z-index: 6; pointer-events: none; overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, #000 88%, transparent); mask-image: linear-gradient(180deg, #000 88%, transparent); }
+.wed-curtain i { position: absolute; top: 0; bottom: 0; width: 50.5%; background: linear-gradient(180deg, rgba(0,0,0,.5), transparent 20%, rgba(255,120,120,.06) 50%, transparent 72%, rgba(0,0,0,.65)), var(--velvet);
+  transition: transform 2.2s cubic-bezier(.65,0,.25,1) .25s, filter 2.2s ease .25s, opacity .45s ease 2.1s; will-change: transform; }
+.wed-curtain__l { left: 0; transform-origin: 0 50%; box-shadow: inset -26px 0 30px -12px rgba(0,0,0,.75); }
+.wed-curtain__r { right: 0; transform-origin: 100% 50%; box-shadow: inset 26px 0 30px -12px rgba(0,0,0,.75); }
+/* the drape along the top, scalloped, with a gold fringe */
+.wed-curtain__top { position: absolute; left: -2%; right: -2%; top: 0; height: 13%; z-index: 1;
+  background: linear-gradient(180deg, rgba(0,0,0,.5), transparent 60%), var(--velvet);
+  -webkit-mask: radial-gradient(60px 22% at 50% 70%, #000 98%, transparent) 0 0 / 120px 100% repeat-x, linear-gradient(#000, #000) 0 0 / 100% 70% no-repeat;
+          mask: radial-gradient(60px 22% at 50% 70%, #000 98%, transparent) 0 0 / 120px 100% repeat-x, linear-gradient(#000, #000) 0 0 / 100% 70% no-repeat;
+  filter: drop-shadow(0 3px 0 #d9b779) drop-shadow(0 8px 10px rgba(0,0,0,.6));
+  transition: transform 1.2s cubic-bezier(.65,0,.25,1) 1.3s; }
+.wed-show[data-curtain="opening"] .wed-curtain__l,
+.wed-show[data-curtain="opening"] .wed-curtain__r { transform: scaleX(.07); filter: brightness(.6); opacity: 0; }
+.wed-show[data-curtain="opening"] .wed-curtain__top { transform: translateY(-105%); }
+/* while closed, the car's name waits; as they open, the podium lights up and the name rises in */
+.wed-show[data-curtain="closed"] .wed-cap { opacity: 0; transform: translateY(14px); animation: none; }
+.wed-show[data-curtain="opening"] .wed-cap { animation: wed-cap-in .9s var(--ease) 1.4s both; }
+.wed-show[data-curtain="closed"] .wed-nav { opacity: 0; }
+.wed-nav { transition: opacity .6s ease; }
+.wed-flare { position: absolute; left: 50%; bottom: 8%; width: min(900px, 70vw); height: 45%; transform: translateX(-50%); border-radius: 50%; pointer-events: none; z-index: 3; mix-blend-mode: screen; opacity: 0;
+  background: radial-gradient(closest-side, rgba(255,226,170,.55), rgba(255,140,120,.15) 55%, transparent); }
+.wed-show[data-curtain="opening"] .wed-flare { animation: wed-flare 2.2s ease-out 1s both; }
+@keyframes wed-flare { 0% { opacity: 0; transform: translateX(-50%) scale(.6); } 35% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) scale(1.15); } }
+
+/* the front car's name */
+.wed-cap { position: relative; z-index: 4; margin-top: 4px; animation: wed-cap-in .7s var(--ease) both; }
 @keyframes wed-cap-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 .wed-cap__no { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .22em; color: var(--gold); }
 .wed-cap__no span { color: var(--muted); font-weight: 500; }
-.wed-cap h3 { margin: 6px 0 12px; font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif; font-size: clamp(36px, 5vw, 60px); font-weight: 600; line-height: 1.05; letter-spacing: -.01em; }
-.wed-cap ul { list-style: none; margin: 0 0 20px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 20px; font-size: 14px; color: var(--muted); }
+.wed-cap h3 { margin: 2px 0 8px; font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif; font-size: clamp(32px, 4vw, 52px); font-weight: 600; line-height: 1.05; letter-spacing: -.01em; }
+.wed-cap ul { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 20px; font-size: 14px; color: var(--muted); }
 .wed-cap li { display: flex; align-items: center; gap: 6px; }
 
-/* arrows and markers */
-.wed-nav { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 24px; }
-.wed-nav > button { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--text); border: 1px solid rgba(217,183,121,.45); transition: background .2s, color .2s; }
-.wed-nav > button:hover { background: var(--gold); color: var(--ink); }
-.wed-nav__dots { display: flex; flex-wrap: wrap; justify-content: center; }
-.wed-nav__dots button { position: relative; width: 24px; height: 44px; }
-.wed-nav__dots button::after { content: ""; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; transform: rotate(45deg); background: rgba(255,255,255,.25); transition: background .3s, transform .3s; }
-.wed-nav__dots button.is-on::after { background: var(--gold); transform: rotate(45deg) scale(1.4); }
-.wed-nav button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-@media (max-width: 720px) {
-  .wed-show { --arch-w: 76vw; --step: 62vw; }
-  .wed-arch { padding: 5px; }
-}
+.wed-nav { position: absolute; left: 50%; top: 0; width: min(100vw, calc(var(--stage-h) * 2.1)); transform: translateX(-50%); height: var(--stage-h); display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(4px, 3vw, 48px); pointer-events: none; z-index: 5; }
+.wed-nav > button { pointer-events: auto; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; color: var(--text); background: rgba(7,7,8,.55); border: 1px solid rgba(217,183,121,.5); backdrop-filter: blur(6px); transition: background .2s, color .2s, transform .2s; }
+.wed-nav > button:hover { background: var(--gold); color: var(--ink); transform: scale(1.06); }
+.wed-nav > button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (max-width: 640px) { .wed-nav > button { width: 42px; height: 42px; } }
 @media (prefers-reduced-motion: reduce) {
-  .wed-petals { display: none; }
-  .wed-arch, .wed-arch__pic img { transition-duration: .01s; }
   .wed-cap { animation: none; }
+  /* no sweeping: the curtains and drape simply fade away, and the name fades in */
+  .wed-show[data-curtain="opening"] .wed-curtain__l,
+  .wed-show[data-curtain="opening"] .wed-curtain__r,
+  .wed-show[data-curtain="opening"] .wed-curtain__top { transform: none; filter: none; opacity: 0; transition: opacity 1.2s ease .2s; }
+  .wed-show[data-curtain="opening"] .wed-cap { animation: wed-fade .8s ease .8s both; }
+  .wed-show[data-curtain="opening"] .wed-flare { animation: none; }
 }
+@keyframes wed-fade { from { opacity: 0; } to { opacity: 1; } }
 .wed-form { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; padding: 56px 0 72px; scroll-margin-top: calc(var(--header-h) + 16px); }
 .wed-form .fb-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .wed-form .fb-field { min-width: 0; }

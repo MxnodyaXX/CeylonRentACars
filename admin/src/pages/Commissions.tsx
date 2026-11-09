@@ -4,7 +4,8 @@ import AdminView from './commissions/AdminView';
 import OwnerView from './commissions/OwnerView';
 
 export default function Commissions() {
-  const { isAdmin } = useAuthStore();
+  const { seesAll } = useAuthStore();
+  const isAdmin = seesAll;   // admin or team: the company view
   return (
     <div>
       <Header

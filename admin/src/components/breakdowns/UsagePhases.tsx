@@ -25,7 +25,7 @@ const ROLE: Record<KmLeg['role'], string> = { booked: 'Booked car', replacement:
 export default function UsagePhases({ trip, includedKm, kmRate, editable = true, bookingId }: { trip: TripKm; includedKm?: number; kmRate?: number; editable?: boolean; bookingId?: string }) {
   const swaps = useBreakdownStore((s) => s.swaps);
   const booking = useStore((s) => s.bookings.find((x) => x.id === bookingId));
-  const isAdmin = useAuthStore((s) => s.isAdmin());
+  const isAdmin = useAuthStore((s) => s.isAdmin() || (s.currentUser?.role === 'staff' && s.can('canManageBreakdowns')));
   const [editing, setEditing] = useState<string | null>(null);
   const extra = trip.total != null && includedKm != null ? Math.max(0, trip.total - includedKm) : undefined;
   return (
@@ -99,7 +99,7 @@ function PhaseRow({ l, canEdit, open, onEdit, children }: { l: KmLeg; canEdit: b
 function ReadingsEditor({ w, withOriginal, onDone }: { w: BdSwap; withOriginal: boolean; onDone: () => void }) {
   const store = useBreakdownStore();
   const by = useAuthStore((s) => s.currentUser?.name) ?? 'Admin';
-  const isAdmin = useAuthStore((s) => s.isAdmin());
+  const isAdmin = useAuthStore((s) => s.isAdmin() || (s.currentUser?.role === 'staff' && s.can('canManageBreakdowns')));
   const fields: [SwapField, string][] = [
     ...(withOriginal ? [['originalOdometer', 'Booked car at the breakdown'] as [SwapField, string]] : []),
     ['replacementOdometerOut', 'Replacement handed over'],

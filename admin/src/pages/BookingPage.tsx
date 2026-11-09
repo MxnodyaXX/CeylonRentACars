@@ -13,7 +13,8 @@ export default function BookingPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const b = useStore((s) => s.bookings.find((x) => x.id === id));
-  const isAdmin = useAuthStore((s) => s.isAdmin)();
+  // editing a booking: admins, and team members who create & edit bookings (the details view only shows the button to them)
+  const mayEdit = useAuthStore((s) => s.isAdmin() || (s.currentUser?.role === 'staff' && s.can('canBook')));
   const [editing, setEditing] = useState<Booking | null>(null);
   const [cancelling, setCancelling] = useState<Booking | null>(null);
 
@@ -38,7 +39,7 @@ export default function BookingPage() {
   return (
     <>
       <BookingDetailsModal page bookingId={b.id} onClose={() => navigate('/bookings')}
-        onEdit={(x) => isAdmin && setEditing(x)} onCancel={(x) => setCancelling(x)} />
+        onEdit={(x) => mayEdit && setEditing(x)} onCancel={(x) => setCancelling(x)} />
       {editing && <EditBookingModal booking={editing} onClose={() => setEditing(null)} />}
       {cancelling && <CancelBookingModal booking={cancelling} onClose={() => setCancelling(null)} />}
     </>

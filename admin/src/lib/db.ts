@@ -480,6 +480,7 @@ export const db = {
     return inOrder(`vehicles:${id}`, () => supabase.from('vehicles').update(row).eq('id', id))
   },
   deleteVehicle: (id: string) => supabase.from('vehicles').delete().eq('id', id),
+  deleteBooking: (id: string) => supabase.from('bookings').delete().eq('id', id),
 
   // ── Owners ────────────────────────────────────────────────────────────────
   insertOwner: (o: Owner) => supabase.from('owners').insert(oToDb(o)),

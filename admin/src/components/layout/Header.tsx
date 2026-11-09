@@ -1,3 +1,4 @@
+import { jobLabel } from '../../lib/staffRoles';
 import { Search, SlidersHorizontal, Bell, LogOut } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -14,7 +15,7 @@ export default function Header({ title, subtitle }: Props) {
   const initials = currentUser?.name
     .split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() ?? 'CR';
 
-  const roleColor = currentUser?.role === 'admin'
+  const roleColor = currentUser?.role === 'admin' || currentUser?.role === 'staff'
     ? 'bg-brand-500 text-white'
     : 'bg-emerald-100 text-emerald-700';
 
@@ -57,7 +58,7 @@ export default function Header({ title, subtitle }: Props) {
         <div className="hidden sm:flex flex-col items-end">
           <span className="text-xs font-semibold text-navy-800 leading-none">{currentUser?.name}</span>
           <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full mt-0.5 ${roleColor}`}>
-            {currentUser?.role === 'admin' ? 'Admin' : 'Owner'}
+            {currentUser?.role === 'admin' ? 'Admin' : currentUser?.role === 'staff' ? jobLabel(currentUser.job) : 'Owner'}
           </span>
         </div>
 

@@ -38,6 +38,9 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const { vehicles, commissions, recordHandover, addCharge, recordPayment, settleDeposit, updateVehicle, editBooking, updateCommission, addSwapPayout } = useStore();
   const by = useAuthStore((s) => s.currentUser?.name) ?? 'Staff';
   const isAdmin = useAuthStore((s) => s.isAdmin());
+  // A team member without "Payments & deposits" (Fleet) records the return itself — km, fuel, condition —
+  // and Finance completes the bill from the booking's Payments tab. Admins and owners: unchanged.
+  const canPay = useAuthStore((s) => s.currentUser?.role !== 'staff' || s.can('canTakePayments'));
   const vehicle = vehicles.find((v) => v.id === b.vehicleId);
   const pickup = b.checklists?.pickup;
   const [at, setAt] = useState(localNow());
@@ -139,9 +142,9 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const [collect, setCollect] = useState<string | null>(recover ? '0' : null);   // null = follow the balance
   const [method, setMethod] = useState('Cash');
   const [receiptNo, setReceiptNo] = useState('');
-  const [invoice, setInvoice] = useState(true);
+  const [invoice, setInvoice] = useState(canPay);
   const rate = Math.max(0, Number(kmRate) || 0);
-  const kmCharge = isReturn && chargeKm && !kmAlreadyCharged ? Math.round(extraKm * rate) : 0;
+  const kmCharge = isReturn && canPay && chargeKm && !kmAlreadyCharged ? Math.round(extraKm * rate) : 0;
   const extrasTotal = extras.reduce((s, x) => s + Math.max(0, Number(x.amount) || 0), 0);
   // deductions: the customer paid for something the car needed (e.g. new tyres) — off the bill, and by default off the owner's payout
   const [deds, setDeds] = useState<{ kind: DeductionKind; amount: string; note: string; owner: boolean }[]>([]);
@@ -157,8 +160,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const [chargeUsedOnly, setChargeUsedOnly] = useState(true);
   const [chargeLate, setChargeLate] = useState(true);
   const usedValue = early ? Math.round((b.totalAmount * usedDays) / b.totalDays) : b.totalAmount;
-  const earlyCut = early && chargeUsedOnly ? b.totalAmount - usedValue : 0;
-  const lateCharge = late && chargeLate ? (usedDays - b.totalDays) * dayRate : 0;
+  const earlyCut = early && chargeUsedOnly && canPay ? b.totalAmount - usedValue : 0;
+  const lateCharge = late && chargeLate && canPay ? (usedDays - b.totalDays) * dayRate : 0;
   // Recovery: why, and the rent the customer owes for the time they had the car (any rental type)
   const [rcReason, setRcReason] = useState<RecoveryReason | ''>('');
   const [rcDetails, setRcDetails] = useState('');
@@ -186,7 +189,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const dueNow = Math.max(0, newBill - price.paid);
   const refundDue = Math.max(0, price.paid - newBill);
   const [refundNow, setRefundNow] = useState(true);
-  const collectAmt = collect === null ? dueNow : Math.max(0, Number(collect) || 0);
+  const collectAmt = !canPay ? 0 : collect === null ? dueNow : Math.max(0, Number(collect) || 0);
   const remaining = Math.max(0, newBill - price.paid - collectAmt);
   // Recovered with money still owed: keep it as the customer's credit (followed up on the Credit page),
   // or write it off as bad debt — all of it, or part with the rest kept as credit
@@ -228,7 +231,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
       photos: photos.length ? photos : undefined, signature,
       ...(recover && rcReason ? { recovery: { reason: rcReason, details: rcDetails.trim(), policeRef: rcPolice.trim() || undefined, customerFlagged: rcFlag || undefined } } : {}),
     };
-    if (isReturn && settleDep && keep > 0 && !depNote.trim()) return setError('Say why part of the deposit is kept.');
+    if (isReturn && canPay && settleDep && keep > 0 && !depNote.trim()) return setError('Say why part of the deposit is kept.');
     if (isReturn && extras.some((x) => (Number(x.amount) || 0) > 0 && x.kind === 'Other' && !x.note.trim())) return setError('Describe each "Other" charge.');
     if (isReturn && deds.some((x) => (Number(x.amount) || 0) > 0 && !x.note.trim())) return setError('Say what each deduction is for (e.g. 2 rear tyres, receipt from the shop).');
     if (isReturn && newBill < 0) return setError('The deductions are more than the bill.');
@@ -286,7 +289,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
           checklists: { ...(done.checklists ?? {}), pickup: { at: b.pickupAt ?? new Date(`${b.startDate}T${b.startTime ?? '09:00'}`).toISOString(), by, odometer: startKm, ...(pickupMeterIn !== 'odo' ? { meter: pickupMeterIn } : {}), fuel: '—', items: {}, notes: 'Entered at return from the agreement' } },
         });
       }
-      if (saveRate && vehicle && rate !== (vehicle.extraKmRate ?? 50)) updateVehicle(vehicle.id, { extraKmRate: rate });
+      if (canPay && saveRate && vehicle && rate !== (vehicle.extraKmRate ?? 50)) updateVehicle(vehicle.id, { extraKmRate: rate });
       if (lateCharge > 0) addCharge(b.id, { kind: 'Late return', amount: lateCharge, date: today(), note: `${usedDays - b.totalDays} extra day${usedDays - b.totalDays === 1 ? '' : 's'} × Rs ${dayRate.toLocaleString('en-LK')} (booked until ${b.endDate})`, by });
       if (kmCharge > 0) addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${extraKm.toLocaleString()} km × Rs ${rate.toLocaleString()}${carsUsed.length > 1 ? ` (${driven!.toLocaleString()} km driven in ${carsUsed.join(' + ')})` : ''}`, by });
       extras.forEach((x) => {
@@ -306,8 +309,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
           ...(o?.adjustmentId ? { ownerAdjustmentId: o.adjustmentId } : {}), ...(o?.owedId ? { ownerOwedId: o.owedId } : {}) });
       });
       if (collectAmt > 0) recordPayment(b.id, { kind: 'Payment', amount: collectAmt, method, receiptNo: receiptNo.trim() || undefined, note: recover ? 'Collected at recovery' : 'Collected at return', by });
-      if (refundDue > 0 && refundNow) recordPayment(b.id, { kind: 'Refund', amount: refundDue, method, receiptNo: receiptNo.trim() || undefined, note: 'Overpayment refunded at return', by });
-      if (settleDep && held > 0) settleDeposit(b.id, { returned: held - keep, deduction: keep, method, notes: depNote.trim() || undefined }, by);
+      if (canPay && refundDue > 0 && refundNow) recordPayment(b.id, { kind: 'Refund', amount: refundDue, method, receiptNo: receiptNo.trim() || undefined, note: 'Overpayment refunded at return', by });
+      if (canPay && settleDep && held > 0) settleDeposit(b.id, { returned: held - keep, deduction: keep, method, notes: depNote.trim() || undefined }, by);
       // what's still owed after a recovery: the customer's credit, and/or written off as bad debt
       if (recover && owedAs && remaining > 0) {
         const st = useStore.getState();
@@ -449,10 +452,14 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
 
         {isReturn && (
           <section className="rounded-2xl border border-navy-100 p-4 space-y-3 min-w-0 self-start">
-            <p className="label !mb-0 !text-sm flex items-center gap-1.5"><Receipt size={16} /> Payment &amp; settlement</p>
+            <p className="label !mb-0 !text-sm flex items-center gap-1.5"><Receipt size={16} /> {canPay ? <>Payment &amp; settlement</> : 'Mileage'}</p>
+            {!canPay && (
+              <p className="rounded-xl bg-sky-50 px-3 py-2 text-xs text-sky-900 flex gap-1.5"><Info size={13} className="mt-0.5 flex-shrink-0" />
+                Record the readings and the car's condition. Finance completes the bill (extra km, late days, charges, payment and deposit) from the booking.</p>
+            )}
 
             {/* returned early / late */}
-            {(early || late) && (
+            {canPay && (early || late) && (
               <div className={`rounded-xl p-3 space-y-2.5 ${early ? 'bg-sky-50 text-sky-900' : 'bg-amber-50 text-amber-900'}`}>
                 <p className="text-sm font-semibold">
                   {early ? `Returned ${b.totalDays - usedDays} day${b.totalDays - usedDays === 1 ? '' : 's'} early — ${usedDays} of ${b.totalDays} days used`
@@ -548,7 +555,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
             )}
 
             {/* rent so far */}
-            <div className="text-sm">
+            {canPay && <div className="text-sm">
               {price.lines.map((l, i) => recover && rentChange !== 0 && i === 0 ? (
                 // recovered: the booked rent is replaced by the rent for the time used (below)
                 <div key={i} className="flex justify-between gap-3 py-0.5 text-navy-400"><span><span className="line-through">{l.label}</span> · booked, not charged</span><span className="line-through">{rs(l.amount)}</span></div>
@@ -565,10 +572,10 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               {lateCharge > 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Late return — {usedDays - b.totalDays} extra day{usedDays - b.totalDays === 1 ? '' : 's'}</span><span className="text-navy-800">{rs(lateCharge)}</span></div>}
               <div className="flex justify-between gap-3 py-0.5 border-t border-navy-50 mt-1"><span className="text-navy-500">Bill</span><b>{rs(price.bill - earlyCut + lateCharge + rentChange)}</b></div>
               <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-500">Already paid</span><span className="text-emerald-700">{rs(price.paid)}</span></div>
-            </div>
+            </div>}
 
             {/* breakdown replacements: billed to the customer as part of the booking; here only the owner's payout status */}
-            {bookingSwaps.length > 0 && (
+            {canPay && bookingSwaps.length > 0 && (
               <div className="rounded-xl bg-navy-50/60 p-3 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-navy-700 flex items-center gap-1.5"><Repeat size={15} /> Breakdown replacements</p>
@@ -683,6 +690,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                 <p className="text-sm text-red-600">A reading is lower than the one before it ({trip.legs.filter((l) => l.wrong).map((l) => `${l.car}: ${l.part}`).join('; ')}) — check the numbers.</p>
               ) : driven === undefined ? (
                 <p className="text-sm text-navy-500">{swapGaps.length ? 'The km can be worked out when the missing readings are entered.' : `Enter the odometer reading${!pickup ? 's' : ' above'} to work it out.`}</p>
+              ) : !canPay ? (
+                <p className="text-sm text-navy-700">Driven <b>{driven.toLocaleString()} km</b> · included {includedKm.toLocaleString()} km · <b>{extraKm.toLocaleString()} extra km</b>{extraKm > 0 ? ' — Finance adds the charge' : ''}</p>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
                   <div className="text-sm text-navy-500">Extra km<p className="text-sm font-semibold text-navy-800 mt-1">{extraKm.toLocaleString()} km</p></div>
@@ -693,12 +702,13 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                   <label className="text-sm text-navy-700 flex items-center gap-1.5 pb-2"><input type="checkbox" checked={chargeKm} onChange={(e) => setChargeKm(e.target.checked)} /> Charge it</label>
                 </div>
               )}
-              {vehicle && rate !== (vehicle.extraKmRate ?? 50) && (
+              {canPay && vehicle && rate !== (vehicle.extraKmRate ?? 50) && (
                 <label className="text-sm text-navy-700 flex items-center gap-1.5"><input type="checkbox" checked={saveRate} onChange={(e) => setSaveRate(e.target.checked)} />
                   Save Rs {rate.toLocaleString()}/km as {vehicle.vehicleNumber}'s extra km rate (now Rs {(vehicle.extraKmRate ?? 50).toLocaleString()})</label>
               )}
             </div>
 
+            {canPay && <>
             {/* other charges collected at return */}
             <div className="space-y-2">
               <p className="text-sm font-semibold text-navy-700">Other charges</p>
@@ -781,6 +791,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                 <b className={remaining > 0 ? 'text-amber-300' : 'text-emerald-300'}>{remaining > 0 ? rs(remaining) : 'Paid in full'}</b>
               </div>
             </div>
+            </>}
 
             {/* recovered with money still owed: credit or bad debt */}
             {recover && remaining > 0 && (
@@ -815,7 +826,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
 
         {/* always visible, however long the form is */}
         <div className="sticky bottom-0 -mx-5 -mb-5 px-5 py-3 bg-white/95 backdrop-blur border-t border-navy-100 flex flex-wrap items-center justify-end gap-2">
-          {isReturn && <label className="text-xs text-navy-700 flex items-center gap-1.5 mr-auto"><input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)} /> {recover ? 'Open the statement of what is owed (print or save as PDF)' : 'Open the invoice after completing (print or save as PDF)'}</label>}
+          {isReturn && canPay && <label className="text-xs text-navy-700 flex items-center gap-1.5 mr-auto"><input type="checkbox" checked={invoice} onChange={(e) => setInvoice(e.target.checked)} /> {recover ? 'Open the statement of what is owed (print or save as PDF)' : 'Open the invoice after completing (print or save as PDF)'}</label>}
           <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
           <button type="button" onClick={save} disabled={uploading}
                   className={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${kind === 'pickup' ? 'bg-navy-800 hover:bg-navy-700' : recover ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}>

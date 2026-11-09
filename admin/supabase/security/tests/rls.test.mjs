@@ -646,5 +646,98 @@ await db.exec(sql('security/rollback/14_rollback_wedding_cars.sql'));
 ok((await db.query("select to_regprocedure('public.submit_wedding_request(jsonb)') f, to_regclass('public.wedding_vehicles') v")).rows[0].f === null, 'rollback removes the function and view');
 ok(Number((await db.query("select count(*) n from vehicles where web_wedding")).rows[0].n) === 1, 'rollback keeps the ticks');
 
+console.log('\nVEHICLE DELETE GUARD (15)');
+await db.exec(sql('security/15_vehicle_delete_guard.sql'));
+await db.exec(sql('security/15_vehicle_delete_guard.sql'));   // safe to re-run
+await db.exec(`insert into vehicles (id, vehicle_number, brand, model, year, owner_id, daily_rent, status, created_at) values ('vDel', 'CDD-0001', 'Suzuki', 'Alto', 2015, 'oA', 4000, 'Available', '${now}');
+  insert into bookings (id, vehicle_id, customer_id, customer_name, customer_phone, start_date, end_date, total_days, total_amount, paid_amount, status, referral, created_at)
+  values ('bDel', 'vDel', 'cA', 'Customer of A', '0711000001', '${soon(5)}', '${soon(6)}', 1, 4000, 0, 'Ongoing', 'Direct', '${now}')`);
+ok(/1 confirmed or ongoing/.test(await as('admin', () => tryQ("delete from vehicles where id = 'vDel'")) ?? ''), 'a car with an ongoing booking cannot be deleted, even by an admin');
+await db.exec("update bookings set status = 'Completed' where id = 'bDel'");
+ok((await as('admin', () => tryQ("delete from vehicles where id = 'vDel'"))) === null, 'once the booking is completed the car can be deleted');
+ok((await db.query("select vehicle_id from bookings where id = 'bDel'")).rows[0].vehicle_id === null, 'the finished booking keeps its history (car cleared)');
+await db.exec(sql('security/rollback/15_rollback_vehicle_delete_guard.sql'));
+ok((await db.query("select count(*) n from pg_trigger where tgname = 'guard_vehicle_delete'")).rows[0].n == 0, 'rollback removes the guard');
+await db.exec(sql('security/15_vehicle_delete_guard.sql'));
+
+console.log('\nSTAFF ROLES (16)');
+await db.exec(sql('security/11_vehicle_recovery.sql'));   // the recovery / write-off rule, as in production
+await db.exec(sql('security/16_staff_roles.sql'));
+await db.exec(sql('security/16_staff_roles.sql'));   // safe to re-run
+let staffN = 0;
+const staff = (perms) => ({ sub: `00000000-0000-0000-0000-0000000000f${staffN++}`, role: 'authenticated', app_metadata: { role: 'staff', permissions: perms } });
+claims.ops = staff({ canBook: true, canChangeStatus: true, canViewInquiries: true, canViewCustomers: true, canViewDrivers: true, canViewHandovers: true, canManageBreakdowns: true });
+claims.fin = staff({ canBook: true, canViewInquiries: true, canViewCustomers: true, canTakePayments: true, canViewFinance: true, canViewExpenses: true, canAddExpenses: true });
+claims.fleet = staff({ canViewHandovers: true, canChangeStatus: true, canManageBreakdowns: true });
+claims.none = staff({});
+claims.veh = staff({ canEditVehicle: true });
+await db.exec("update bookings set status = 'Confirmed', paid_amount = 0 where id = 'bA'");
+
+ok((await as('fleet', () => ids('select id from bookings'))).length >= 2, 'every staff login sees the whole booking schedule');
+ok((await as('none', () => ids('select id from customers'))).length >= 2, 'staff see customers');
+ok((await as('fleet', () => ids('select id from expenses'))).length === 0, 'Fleet cannot see expenses');
+ok((await as('fin', () => ids('select id from expenses'))).length >= 2, 'Finance sees expenses');
+ok((await as('fleet', () => ids('select id from commissions'))).length >= 2 && (await as('none', () => ids('select id from commissions'))).length === 0, 'commissions: only staff whose work touches them');
+ok((await as('fleet', () => ids('select id from inquiries'))).length === 0 && (await as('ops', () => ids('select id from inquiries'))).length >= 1, 'inquiries: Operations yes, Fleet no');
+ok((await as('fin', () => ids('select id from partner_applications'))).length === 0 && (await as('fin', () => ids('select phone from sms_opt_out'))).length === 0, 'partner applications and SMS opt-outs stay admin-only');
+ok((await as('ops', () => ids('select id from notifications'))).join() === 'nAll', 'staff see company alerts, not the ones addressed to an owner');
+
+const newBooking = (id, paid) => `insert into bookings (id, vehicle_id, customer_id, customer_name, customer_phone, start_date, end_date, total_days, total_amount, paid_amount, status, created_at) values ('${id}', 'vA', 'cA', 'x', '0711000001', '${soon(80)}', '${soon(81)}', 1, 1000, ${paid}, 'Confirmed', '${now}')`;
+ok(!!(await as('fleet', () => tryQ(newBooking('bF', 0)))) && (await as('ops', () => tryQ(newBooking('bO', 500)))) === null,
+   'Operations can create a booking (with its advance); Fleet cannot');
+await as('fleet', () => db.query(`update bookings set status = 'Ongoing', paid_amount = 99999, discount = 5000, checklists = coalesce(checklists, '{}') || '{"pickup":{"odometer":100}}' where id = 'bA'`));
+const bA = (await db.query("select * from bookings where id = 'bA'")).rows[0];
+ok(bA.status === 'Ongoing' && bA.checklists?.pickup?.odometer === 100, 'Fleet can start a rental (status + checklist)');
+ok(Number(bA.paid_amount) === 0 && bA.discount === null, '…but the payment and discount it tried to set are put back');
+await as('fin', () => db.query("update bookings set paid_amount = 6000 where id = 'bA'"));
+ok(Number((await db.query("select paid_amount from bookings where id = 'bA'")).rows[0].paid_amount) === 6000, 'Finance records the payment');
+ok(!!(await as('fin', () => tryQ("update bookings set bad_debt = 100 where id = 'bA'"))), 'writing money off stays admin-only (Brian)');
+ok((await as('none', () => db.query("update bookings set status = 'Cancelled' where id = 'bA' returning id"))).rows.length === 0, 'a login with no booking abilities changes nothing');
+ok((await as('fin', () => db.query("delete from bookings where id = 'bA' returning id"))).rows.length === 0
+   && (await as('fin', () => db.query("delete from expenses where id = 'eA' returning id"))).rows.length === 0
+   && (await as('fleet', () => db.query("delete from handovers where id = 'hA' returning id"))).rows.length === 0, 'staff cannot delete bookings, expenses or handovers');
+
+await as('fleet', () => db.query("update vehicles set status = 'Maintenance', mileage = 5000, daily_rent = 1, brand = 'Hacked', owner_id = 'oB' where id = 'vA'"));
+let vA = (await db.query("select * from vehicles where id = 'vA'")).rows[0];
+ok(vA.status === 'Maintenance' && vA.mileage === 5000, 'Fleet updates a car\'s status and mileage');
+ok(Number(vA.daily_rent) === 6000 && vA.brand === 'Toyota' && vA.owner_id === 'oA', '…but not its price, details or owner');
+await as('veh', () => db.query("update vehicles set color = 'Red', daily_rent = 1, web_featured = true where id = 'vA'"));
+vA = (await db.query("select * from vehicles where id = 'vA'")).rows[0];
+ok(vA.color === 'Red' && Number(vA.daily_rent) === 6000 && !vA.web_featured, 'vehicle editors change details, never the price or website listing');
+ok((await as('none', () => db.query("update vehicles set status = 'Available' where id = 'vA' returning id"))).rows.length === 0, 'a login without car-related abilities cannot change cars');
+
+await as('fin', () => db.query("update owners set pending_payout = 100, commission_rate = 1, bank_account = 'x', phone = '1' where id = 'oA'"));
+const oA = (await db.query("select * from owners where id = 'oA'")).rows[0];
+ok(Number(oA.pending_payout) === 100, 'Finance records an owner payout');
+ok(Number(oA.commission_rate) !== 1 && oA.bank_account !== 'x' && oA.phone !== '1', '…but not the owner\'s rate, bank account or details');
+ok((await as('ops', () => db.query("update owners set pending_payout = 0 where id = 'oA' returning id"))).rows.length === 0, 'Operations cannot change owners');
+await as('ops', () => db.query("update commissions set status = 'Paid', owner_payout = 11000 where id = 'kA'"));
+const kA = (await db.query("select * from commissions where id = 'kA'")).rows[0];
+ok(kA.status === 'Pending' && Number(kA.owner_payout) === 11000, 'Operations can adjust a commission line but not mark it paid');
+await as('fin', () => db.query("update commissions set status = 'Paid' where id = 'kA'"));
+ok((await db.query("select status from commissions where id = 'kA'")).rows[0].status === 'Paid', 'Finance marks a payout paid');
+
+await as('A', () => db.query("update owners set pending_payout = 0 where id = 'oA'"));
+ok(Number((await db.query("select pending_payout from owners where id = 'oA'")).rows[0].pending_payout) === 100, 'owners still cannot change their own payout');
+ok((await as('B', () => ids('select id from expenses'))).join() === 'eB', 'owner scoping is unchanged');
+
+ok((await as('fleet', () => ids("select name from storage.objects where bucket_id = 'booking-files'"))).length >= 2, 'staff open booking files');
+ok((await as('fleet', () => tryQ("insert into storage.objects (bucket_id, name) values ('booking-files', 'bA/return.jpg')"))) === null, 'Fleet uploads return photos');
+ok(!!(await as('fin', () => tryQ("insert into storage.objects (bucket_id, name) values ('vehicle-images', 'vA/x.jpg')"))), 'Finance cannot change vehicle photos');
+ok((await as('fleet', () => db.query("delete from storage.objects where bucket_id = 'booking-files' returning id"))).rows.length === 0, 'staff cannot delete files');
+
+ok((await as('anon', () => tryQ('select id from bookings'))) !== null, 'website visitors still cannot read bookings');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query("select count(*) n from security_check where result = 'FAIL'")).rows[0].n == 0, 'verify.sql still all PASS with 16');
+
+await db.exec(sql('security/01_scoped_access.sql'));
+ok((await as('fleet', () => ids('select id from bookings'))).length === 0, 're-running 01 removes staff access (checklist: run 16 again)');
+await db.exec(sql('security/16_staff_roles.sql'));
+ok((await as('fleet', () => ids('select id from bookings'))).length >= 2, '…and running 16 again restores it');
+await db.exec(sql('security/rollback/16_rollback_staff_roles.sql'));
+ok((await as('ops', () => ids('select id from bookings'))).length === 0 && (await as('admin', () => ids('select id from bookings'))).length >= 2, 'rollback: staff lose access, admins keep everything');
+await as('A', () => db.query("update owners set pending_payout = 0 where id = 'oA'"));
+ok(Number((await db.query("select pending_payout from owners where id = 'oA'")).rows[0].pending_payout) === 100, 'rollback keeps the owner rule');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

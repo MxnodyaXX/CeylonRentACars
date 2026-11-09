@@ -122,7 +122,8 @@ function RecordsTable({ records, action, onToggle, vehicleLabel, leadColumn }: {
 /* ── Route entry — role-branched ──────────────────────────────── */
 
 export default function Referrals() {
-  const { isAdmin } = useAuthStore();
+  const { seesAll } = useAuthStore();
+  const isAdmin = seesAll;   // admin or team: the company view
   return isAdmin() ? <AdminReferrals /> : <OwnerReferralProfile />;
 }
 

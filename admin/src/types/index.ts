@@ -683,7 +683,8 @@ export interface AppState {
   /** Status change from another workflow (breakdown swaps) — no toast; a breakdown hold keeps Maintenance */
   setVehicleStatus: (id: string, status: Vehicle['status']) => void;
   updateWebsiteListing: (id: string, updates: Partial<Vehicle>) => void;
-  deleteVehicle: (id: string) => void;
+  /** false (and nothing deleted) while the vehicle has a confirmed or ongoing booking */
+  deleteVehicle: (id: string) => boolean;
 
   addOwner: (o: Omit<Owner, 'id' | 'createdAt' | 'totalEarnings' | 'pendingPayout'>) => void;
   updateOwner: (id: string, updates: Partial<Owner>) => void;
@@ -692,6 +693,8 @@ export interface AppState {
   updateBooking: (id: string, updates: Partial<Booking>) => void;
   /** `why` is recorded in the booking notes (who, reason, optional details) */
   cancelBooking: (id: string, why?: { reason: string; details?: string; by: string }) => void;
+  /** Deletes a booking for good (admin) — used for bookings whose vehicle no longer exists */
+  deleteBooking: (id: string) => void;
   startBooking: (id: string) => void;
   completeBooking: (id: string) => void;
   markReferralPaid: (bookingId: string, paid: boolean) => void;

@@ -3,10 +3,11 @@ import { persist } from 'zustand/middleware';
 import { AuthState, AppUser, OwnerPermissions } from '../types/auth';
 import { supabase, supabaseEnabled } from '../lib/supabase';
 import {
-  changeOwnPassword, cleanUsername, createStaff, currentSession, listStaff, resetStaffPassword, signIn, signOut, tempPassword,
+  changeOwnPassword, cleanUsername, createStaff, createTeamStaff, currentSession, listStaff, resetStaffPassword, signIn, signOut, tempPassword,
   updateStaff, userFromAuth,
 } from '../lib/staffAuth';
 import { toast } from './useToast';
+import { presetFor } from '../lib/staffRoles';
 
 /*
  * Who is signed in to the admin.
@@ -27,6 +28,10 @@ export const USERS: AppUser[] = [
   { id: 'u_o3',    username: 'roshan', password: 'owner123',  name: 'Roshan Fernando',     role: 'owner', ownerId: 'o3' },
   { id: 'u_o4',    username: 'priya',  password: 'owner123',  name: 'Priya Jayawardena',   role: 'owner', ownerId: 'o4' },
   { id: 'u_o5',    username: 'ruwan',  password: 'owner123',  name: 'Ruwan Bandara',       role: 'owner', ownerId: 'o5' },
+  // team logins (demo): one per job
+  { id: 'u_s1', username: 'ops',     password: 'team123', name: 'Demo Operations', role: 'staff', job: 'operations', permissions: presetFor('operations') },
+  { id: 'u_s2', username: 'finance', password: 'team123', name: 'Demo Finance',    role: 'staff', job: 'finance',    permissions: presetFor('finance') },
+  { id: 'u_s3', username: 'fleet',   password: 'team123', name: 'Demo Fleet',      role: 'staff', job: 'fleet',      permissions: presetFor('fleet') },
 ];
 
 export const DEFAULT_PERMS: OwnerPermissions = {
@@ -210,14 +215,47 @@ export const useAuthStore = create<AuthState>()(
 
       isAdmin: () => get().currentUser?.role === 'admin',
       isOwner: () => get().currentUser?.role === 'owner',
+      isStaff: () => get().currentUser?.role === 'staff',
+      seesAll: () => ['admin', 'staff'].includes(get().currentUser?.role ?? ''),
+
+      createTeamLogin: async (p) => {
+        const username = cleanUsername(p.username);
+        if (!supabaseEnabled) {
+          const password = tempPassword();
+          if (get().users.some((u) => u.username === username)) return 'That username is already taken — choose another.';
+          set((s) => ({ users: [...s.users, { id: 'u_' + Math.random().toString(36).slice(2, 8), username, password, name: p.name, role: 'staff', job: p.job, permissions: p.permissions }] }));
+          return { username, password };
+        }
+        try {
+          const r = await createTeamStaff({ ...p, username });
+          await get().refreshUsers();
+          return { username, password: r.tempPassword };
+        } catch (e) { return (e as Error).message; }
+      },
+
+      updateTeamLogin: async (id, p) => {
+        if (!supabaseEnabled) {
+          set((s) => ({ users: s.users.map((u) => (u.id === id ? { ...u, ...p, permissions: p.permissions ?? u.permissions } : u)) }));
+          return null;
+        }
+        // show the change straight away, then save it on the server
+        set((s) => ({ users: s.users.map((u) => (u.id === id ? { ...u, ...p, permissions: p.permissions ?? u.permissions } : u)) }));
+        try { await updateStaff(id, p); await get().refreshUsers(); return null; } catch (e) {
+          await get().refreshUsers();
+          return (e as Error).message;
+        }
+      },
 
       can: (perm) => {
         const { currentUser } = get();
         if (!currentUser) return false;
         if (currentUser.role === 'admin') return true;
+        // a team member: exactly the abilities on their login (signed by the server)
+        if (currentUser.role === 'staff') return !!currentUser.permissions?.[perm];
+        if (!(perm in DEFAULT_PERMS)) return false;   // team-only abilities never apply to owners
         const perms = get().getOwnerPermissions(currentUser.ownerId ?? '');
         if (perms.disabled) return false;
-        return perms[perm];
+        return perms[perm as keyof typeof perms] as boolean;
       },
     }),
     {

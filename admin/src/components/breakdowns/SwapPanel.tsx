@@ -143,7 +143,7 @@ function SwapOut({ s, incident, by, blocked, beforeStart }: { s: BdSolution; inc
 function ActiveSwap({ w, incident, by }: { w: BdSwap; incident: BdIncident; by: string }) {
   const store = useBreakdownStore();
   const { bookings, vehicles, owners, commissions } = useStore();
-  const isAdmin = useAuthStore((st) => st.isAdmin());
+  const isAdmin = useAuthStore((st) => st.isAdmin() || (st.currentUser?.role === 'staff' && st.can('canManageBreakdowns')));
   const b = bookings.find((x) => x.id === w.bookingId);
   const car = (id?: string) => vehicles.find((v) => v.id === id);
   const original = car(w.originalVehicleId), repl = car(w.replacementVehicleId);
@@ -325,7 +325,7 @@ function ActiveSwap({ w, incident, by }: { w: BdSwap; incident: BdIncident; by: 
 /* ── Finished ────────────────────────────────────────────────────────────── */
 function SwapSummary({ w }: { w: BdSwap }) {
   const { vehicles } = useStore();
-  const isAdmin = useAuthStore((st) => st.isAdmin());
+  const isAdmin = useAuthStore((st) => st.isAdmin() || (st.currentUser?.role === 'staff' && st.can('canManageBreakdowns')));
   const [editing, setEditing] = useState(false);
   const car = (id?: string) => vehicles.find((v) => v.id === id);
   const original = car(w.originalVehicleId), repl = car(w.replacementVehicleId);
@@ -366,7 +366,7 @@ function SwapSummary({ w }: { w: BdSwap }) {
 function SwapEditForm({ w, onDone }: { w: BdSwap; onDone: () => void }) {
   const store = useBreakdownStore();
   const { bookings, vehicles, commissions } = useStore();
-  const isAdmin = useAuthStore((st) => st.isAdmin());
+  const isAdmin = useAuthStore((st) => st.isAdmin() || (st.currentUser?.role === 'staff' && st.can('canManageBreakdowns')));
   const by = useAuthStore((st) => st.currentUser?.name) ?? 'Admin';
   const b = bookings.find((x) => x.id === w.bookingId);
   const car = (id?: string) => vehicles.find((v) => v.id === id);
@@ -492,7 +492,7 @@ type SwapField = keyof typeof FIELD_KEY;
 export function SwapReadingsFix({ w }: { w: BdSwap }) {
   const store = useBreakdownStore();
   const { bookings } = useStore();
-  const isAdmin = useAuthStore((st) => st.isAdmin());
+  const isAdmin = useAuthStore((st) => st.isAdmin() || (st.currentUser?.role === 'staff' && st.can('canManageBreakdowns')));
   const by = useAuthStore((st) => st.currentUser?.name) ?? 'Admin';
   const b = bookings.find((x) => x.id === w.bookingId);
   const missing = b ? tripKmFor(b).missing.filter((m) => m.swapId === w.id && m.field in FIELD_KEY) : [];

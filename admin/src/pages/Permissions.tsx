@@ -5,6 +5,7 @@ import Header from '../components/layout/Header';
 import { ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, UserPlus, Key, RotateCcw, Copy, Loader2 } from 'lucide-react';
 import { toast } from '../store/useToast';
 import { OwnerPermissions } from '../types/auth';
+import TeamLogins from '../components/ui/TeamLogins';
 
 // ── Permission definitions ────────────────────────────────────────────────────
 
@@ -88,19 +89,29 @@ export default function Permissions() {
     setBusy(null);
   };
   const owners = useStore((s) => s.owners);
+  const [tab, setTab] = useState<'team' | 'owners'>('team');
 
   return (
     <div>
       <Header
         title="Permission Manager"
-        subtitle="Control what each owner can access and do in the system"
+        subtitle={tab === 'team' ? 'A login for each team member and what their job lets them do' : 'Control what each owner can access and do in the system'}
       />
 
-      {owners.length === 0 && (
+      <div className="flex gap-1 bg-navy-50 rounded-xl p-1 text-sm font-semibold mb-5 w-fit">
+        {([['team', 'Team'], ['owners', 'Vehicle owners']] as const).map(([k, label]) => (
+          <button key={k} type="button" onClick={() => setTab(k)}
+                  className={`rounded-lg px-4 py-1.5 ${tab === k ? 'bg-white text-navy-900 shadow-sm' : 'text-navy-500'}`}>{label}</button>
+        ))}
+      </div>
+
+      {tab === 'team' && <TeamLogins />}
+
+      {tab === 'owners' && owners.length === 0 && (
         <p className="text-sm text-navy-400 text-center py-12">No owners registered yet.</p>
       )}
 
-      <div className="space-y-6">
+      {tab === 'owners' && <div className="space-y-6">
         {owners.map((owner) => {
           const user  = users.find((u) => u.ownerId === owner.id);
           const perms = getOwnerPermissions(owner.id);
@@ -217,7 +228,7 @@ export default function Permissions() {
             </div>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 }

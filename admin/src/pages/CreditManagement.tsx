@@ -21,7 +21,7 @@ const money = (n: number) => `Rs ${n.toLocaleString()}`;
 
 export default function CreditManagement() {
   const { bookings, vehicles, owners, settleCredit } = useStore();
-  const { isAdmin, currentUser } = useAuthStore();
+  const { isAdmin, currentUser, can } = useAuthStore();
   // "Mark collected" asks how it was paid, so the payment log on the booking says it
   const [collecting, setCollecting] = useState<{ id: string; method: string } | null>(null);
 
@@ -95,7 +95,7 @@ export default function CreditManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered]);
 
-  if (!isAdmin()) {
+  if (!isAdmin() && !(currentUser?.role === 'staff' && can('canViewFinance'))) {
     return (
       <div>
         <Header title="Credit Management" subtitle="Outstanding customer credit" />

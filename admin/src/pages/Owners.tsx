@@ -27,7 +27,10 @@ const emptyOwner = (): Omit<Owner, 'id' | 'createdAt' | 'totalEarnings' | 'pendi
 
 export default function Owners() {
   const { owners, vehicles, bookings, commissions, addOwner, updateOwner } = useStore();
-  const { currentUser, isAdmin } = useAuthStore();
+  const { currentUser, isAdmin, can } = useAuthStore();
+  // team: everyone with the Owners page sees contacts; payouts and statements are Finance's; editing is Brian's
+  const team = currentUser?.role === 'staff';
+  const finance = team && can('canViewFinance');
 
   const [modal, setModal]       = useState<'add' | 'edit' | 'view' | 'statement' | null>(null);
   const [selected, setSelected] = useState<Owner | null>(null);
@@ -70,10 +73,10 @@ export default function Owners() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-bold text-navy-800 truncate">{o.name}</p>
-            <p className="text-xs text-navy-400">{isMine || isAdmin() ? o.phone : '••••••••••'}</p>
-            {(isMine || isAdmin()) && o.email && <p className="text-xs text-navy-400 truncate">{o.email}</p>}
+            <p className="text-xs text-navy-400">{isMine || isAdmin() || team ? o.phone : '••••••••••'}</p>
+            {(isMine || isAdmin() || team) && o.email && <p className="text-xs text-navy-400 truncate">{o.email}</p>}
           </div>
-          {!(isMine || isAdmin()) && (
+          {!(isMine || isAdmin() || team) && (
             <div className="flex-shrink-0">
               <Lock size={14} className="text-navy-300" />
             </div>
@@ -110,7 +113,7 @@ export default function Owners() {
         </div>
 
         {/* Pending payout */}
-        {(isMine || isAdmin()) && pendingPayout > 0 && (
+        {(isMine || isAdmin() || finance) && pendingPayout > 0 && (
           <div className="flex items-center justify-between bg-amber-50 rounded-xl px-3 py-2 mt-2">
             <span className="text-xs text-amber-700">Pending payout</span>
             <span className="text-xs font-bold text-amber-700">Rs {pendingPayout.toLocaleString()}</span>
@@ -118,14 +121,14 @@ export default function Owners() {
         )}
 
         {/* Action buttons */}
-        {(isAdmin() || isMine) && (
+        {(isAdmin() || isMine || finance) && (
           <div className="flex gap-2 mt-3">
-            <button
+            {!team && <button
               onClick={(e) => { e.stopPropagation(); openEdit(o); }}
               className="flex-1 text-xs py-2 rounded-xl bg-navy-50 text-navy-600 hover:bg-navy-100 font-medium transition-colors"
             >
               Edit Profile
-            </button>
+            </button>}
             <button
               onClick={(e) => { e.stopPropagation(); openStatement(o); }}
               className="flex items-center gap-1 text-xs py-2 px-3 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium transition-colors flex-shrink-0"
@@ -153,7 +156,7 @@ export default function Owners() {
     <div>
       <Header
         title="Owners"
-        subtitle={isAdmin() ? 'Per-owner fleet, earnings, and payout summary' : 'Your profile and fleet co-owners'}
+        subtitle={isAdmin() || team ? 'Per-owner fleet, earnings, and payout summary' : 'Your profile and fleet co-owners'}
       />
 
       {isAdmin() && (
@@ -361,7 +364,7 @@ export default function Owners() {
 
       {/* View Modal — only shown to admin or own profile */}
       <Modal open={modal === 'view'} onClose={() => setModal(null)} title="Owner Details" width="max-w-lg">
-        {selected && (isAdmin() || selected.id === myOwnerId) && (() => {
+        {selected && (isAdmin() || team || selected.id === myOwnerId) && (() => {
           const ownerVehicles = vehicles.filter((v) => v.ownerId === selected.id);
           const ownerComms    = commissions.filter((c) => c.ownerId === selected.id);
           const pendingPayout = ownerComms.filter((c) => c.status === 'Pending').reduce((s, c) => s + c.ownerPayout, 0);

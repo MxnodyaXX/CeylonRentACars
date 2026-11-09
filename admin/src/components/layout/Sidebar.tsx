@@ -9,6 +9,8 @@ import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
 import { useWhatsAppUnread } from '../../lib/whatsappInbox';
 import { useAuthStore } from '../../store/useAuthStore';
+import { canOpen } from '../../lib/access';
+import { jobLabel } from '../../lib/staffRoles';
 
 type Link = { to: string; icon: LucideIcon; label: string };
 
@@ -45,7 +47,6 @@ const groups: { title: string; links: Link[] }[] = [
   ] },
 ];
 
-const ADMIN_ONLY = ['/breakdowns', '/owners', '/partners', '/credit', '/website', '/feedback', '/permissions', '/whatsapp-setup'];
 
 const WIDTH_COLLAPSED = 72;
 const WIDTH_EXPANDED  = 256;
@@ -75,7 +76,6 @@ function readExpanded() {
 export default function Sidebar() {
   const location    = useLocation();
   const isAdmin     = useAuthStore((s) => s.isAdmin);
-  const can         = useAuthStore((s) => s.can);
   const currentUser = useAuthStore((s) => s.currentUser);
   const unread      = useStore((s) =>
     s.notifications.filter((n) =>
@@ -122,21 +122,8 @@ export default function Sidebar() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const canSee = (to: string) => {
-    if (isAdmin()) return true;
-    if (ADMIN_ONLY.includes(to)) return false;
-    // Always visible to owners
-    if (['/', '/vehicles', '/bookings', '/commissions', '/notifications'].includes(to)) return true;
-    // Permission-gated pages
-    if (to === '/expenses')    return can('canViewExpenses');
-    if (to === '/handovers')   return can('canViewHandovers');
-    if (to === '/drivers')     return can('canViewDrivers');
-    if (to === '/customers')   return can('canViewCustomers');
-    if (to === '/referrals')   return can('canViewReferrals');
-    if (to === '/inquiries' || to === '/messages') return can('canViewInquiries');
-    if (to === '/incomplete')  return can('canViewIncomplete');
-    return false;
-  };
+  // one list of who may open what (src/lib/access.ts) — the routes use it too
+  const canSee = (to: string) => canOpen(to);
 
   const visibleGroups = groups
     .map((g) => ({ ...g, links: g.links.filter((l) => canSee(l.to)) }))
@@ -267,7 +254,7 @@ export default function Sidebar() {
               </span>
               <span className="side-fade min-w-0">
                 <span className="block text-xs font-semibold text-navy-800 truncate">{currentUser.name}</span>
-                <span className="block text-[10px] text-navy-400">{currentUser.role === 'admin' ? 'Administrator' : 'Owner'}</span>
+                <span className="block text-[10px] text-navy-400">{currentUser.role === 'admin' ? 'Administrator' : currentUser.role === 'staff' ? jobLabel(currentUser.job) : 'Owner'}</span>
               </span>
             </div>
           )}

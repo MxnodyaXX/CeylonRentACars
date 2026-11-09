@@ -90,6 +90,22 @@ function StoredImage({ path, className = '' }: { path: string; className?: strin
     : <div className={`rounded-lg bg-navy-50 flex items-center justify-center ${className}`}><Loader2 size={14} className="animate-spin text-navy-300" /></div>;
 }
 
+/** What the signed-in login may do on a booking. Admins: everything. Owners: as before (their own
+ *  cars). Team members: only what their abilities cover (Permissions page → Team). */
+function useMay() {
+  const { currentUser, isAdmin, can } = useAuthStore();
+  const staff = currentUser?.role === 'staff';
+  const team = (a: Parameters<typeof can>[0]) => !staff || can(a);
+  return {
+    book: team('canBook'),
+    edit: isAdmin() || (staff && can('canBook')),
+    pay: team('canTakePayments'),
+    money: isAdmin() || (staff && can('canTakePayments')),
+    handover: team('canViewHandovers'),
+    breakdowns: isAdmin() || (staff && can('canManageBreakdowns')),
+  };
+}
+
 /* =====================================================================
    Booking details
    ===================================================================== */
@@ -105,6 +121,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const store = useStore();
   const { bookings, vehicles, owners, drivers, customers, commissions, handovers } = store;
   const { currentUser, isAdmin } = useAuthStore();
+  const may = useMay();
   const by = currentUser?.name ?? 'Staff';
   const b = bookings.find((x) => x.id === bookingId);
   const [tab, setTab] = useState<Tab>(page ? 'payments' : 'overview');
@@ -169,7 +186,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
           </p>
           <div className="flex flex-wrap gap-1.5">
             {miss.map((i) => (
-              <button key={i.label} type="button" onClick={() => (i.tab === 'edit' ? (isAdmin() ? onEdit(b) : setTab('overview')) : (page && i.tab === 'overview') ? undefined : setTab(i.tab))}
+              <button key={i.label} type="button" onClick={() => (i.tab === 'edit' ? (may.edit ? onEdit(b) : setTab('overview')) : (page && i.tab === 'overview') ? undefined : setTab(i.tab))}
                       className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${i.critical ? 'bg-white text-red-700 ring-1 ring-inset ring-red-200 hover:bg-red-100' : 'bg-white text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-100'}`}>
                 {i.label} →
               </button>
@@ -202,13 +219,13 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const tabContent = (
     <>
       {tab === 'overview' && overview}
-      {tab === 'payments' && <Payments b={b} by={by} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
-      {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} />}
+      {tab === 'payments' && <Payments b={b} by={by} canPay={may.pay} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
+      {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} canHandover={may.handover} />}
       {tab === 'documents' && <Documents b={b} by={by} canDelete={isAdmin()} onPrintAgreement={() => {
         printRentalAgreement(b, vehicle, by);
         store.logBookingActivity(b.id, { by, type: 'Agreement', text: 'Rental agreement printed' }, { agreement: { ...(b.agreement ?? {}), printedAt: new Date().toISOString() } });
       }} />}
-      {tab === 'breakdowns' && <BookingBreakdownsTab b={b} canReport={isAdmin() && (b.status === 'Ongoing' || b.status === 'Confirmed')} />}
+      {tab === 'breakdowns' && <BookingBreakdownsTab b={b} canReport={may.breakdowns && (b.status === 'Ongoing' || b.status === 'Confirmed')} />}
       {tab === 'history' && <HistoryTab b={b} by={by} legacy={handovers.filter((h) => h.bookingId === b.id)} />}
     </>
   );
@@ -218,27 +235,35 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
     <>
       <button type="button" onClick={() => printBookingConfirmation(b, vehicle, driver)} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Printer size={13} /> Receipt</button>
       <button type="button" onClick={() => { setTab('documents'); }} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><FileSignature size={13} /> Agreement</button>
-      <button type="button" onClick={() => setTab('payments')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CreditCard size={13} /> Record payment</button>
-      {isAdmin() && <button type="button" onClick={() => onEdit(b)} className={`${smallBtn} bg-amber-100 text-amber-800 hover:bg-amber-200`}><Pencil size={13} /> Edit</button>}
+      {may.pay && <button type="button" onClick={() => setTab('payments')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CreditCard size={13} /> Record payment</button>}
+      {may.edit && <button type="button" onClick={() => onEdit(b)} className={`${smallBtn} bg-amber-100 text-amber-800 hover:bg-amber-200`}><Pencil size={13} /> Edit</button>}
       <span className="flex-1" />
-      {b.status === 'Confirmed' && (
+      {/* the vehicle was deleted: nothing can be started, swapped or completed — the admin can delete the booking */}
+      {!vehicle && isAdmin() && (
+        <button type="button" onClick={() => {
+          if (!confirm(`Delete ${b.customerName}'s booking for good? Its vehicle no longer exists. This can't be undone.`)) return;
+          onClose();
+          store.deleteBooking(b.id);
+        }} className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 hover:bg-red-700 px-4 py-2 text-sm font-semibold text-white"><Trash2 size={15} /> Delete booking</button>
+      )}
+      {vehicle && may.book && b.status === 'Confirmed' && (
         <button type="button" onClick={() => setDialog('swap')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><ArrowLeftRight size={13} /> Swap vehicle</button>
       )}
-      {b.status === 'Ongoing' && (
+      {vehicle && may.book && b.status === 'Ongoing' && (
         <button type="button" onClick={() => setDialog('exchange')} className={`${smallBtn} bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200`}><ArrowLeftRight size={13} /> Exchange vehicle</button>
       )}
-      {b.status === 'Ongoing' && (
+      {vehicle && may.book && b.status === 'Ongoing' && (
         <button type="button" onClick={() => setDialog('extend')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CalendarPlus size={13} /> Extend</button>
       )}
-      {b.status === 'Confirmed' && (
+      {vehicle && b.status === 'Confirmed' && (
         <>
-          <button type="button" onClick={() => onCancel(b)} className={`${smallBtn} text-red-600 hover:bg-red-50 border border-red-200`}><XCircle size={13} /> Cancel</button>
-          <button type="button" onClick={() => setDialog('pickup')} className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><PlayCircle size={15} /> Start rental</button>
+          {may.book && <button type="button" onClick={() => onCancel(b)} className={`${smallBtn} text-red-600 hover:bg-red-50 border border-red-200`}><XCircle size={13} /> Cancel</button>}
+          {may.handover && <button type="button" onClick={() => setDialog('pickup')} className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><PlayCircle size={15} /> Start rental</button>}
         </>
       )}
-      {b.status === 'Ongoing' && (
+      {vehicle && b.status === 'Ongoing' && (
         <>{isAdmin() && <button type="button" onClick={() => setDialog('recover')} title="The company takes the vehicle back (non-payment, fraud…)" className={`${smallBtn} text-red-700 hover:bg-red-50 border border-red-200`}><ShieldAlert size={13} /> Recover vehicle</button>}
-        <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button></>
+        {may.handover && <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button>}</>
       )}
       {shownStatus(b) === 'Completed' && (
         <button type="button" onClick={() => sendWhatsApp(feedbackMessage(b.customerName.trim().split(' ')[0], vehicle ? `${vehicle.brand} ${vehicle.model}` : 'your vehicle', b.startDate, b.endDate, linkFor(b.vehicleId, b.customerName)), 'review request')}
@@ -345,7 +370,7 @@ function Overview({ b, by, price, extra, narrow }: {
   narrow?: boolean;
 }) {
   const { logBookingActivity, editBooking, clearCredit, vehicles: allVehicles } = useStore();
-  const { isAdmin } = useAuthStore();
+  const may = useMay();
   const { vehicle, owner, driver } = extra;
   const moneyIn = ledgerOf(b).filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
   const credit = bookingCredit(b);
@@ -433,7 +458,7 @@ function Overview({ b, by, price, extra, narrow }: {
             <p className="flex gap-1.5"><AlertTriangle size={14} className="flex-shrink-0 mt-px" />
               <span><b>{rs(Math.abs(price.unlisted))}</b> on this bill doesn't match any listed charge. No one added it by hand, so it is most likely left over
                 from saving the return (a sync problem, now fixed). Taking it off makes the bill {rs(price.bill - price.unlisted)}.</span></p>
-            {isAdmin() && <button type="button" onClick={fixUnlisted} className={`${smallBtn} bg-amber-600 text-white hover:bg-amber-700`}>Match the bill to its charges</button>}
+            {may.money && <button type="button" onClick={fixUnlisted} className={`${smallBtn} bg-amber-600 text-white hover:bg-amber-700`}>Match the bill to its charges</button>}
           </div>
         )}
         {staleCredit && (
@@ -442,7 +467,7 @@ function Overview({ b, by, price, extra, narrow }: {
               <span>When the booking was made, the unpaid <b>{rs(b.creditAmount ?? 0)}</b> was recorded as <b>credit</b>.
                 {credit < (b.creditAmount ?? 0) && <> Only {rs(price.due)} is owed now, so the credit counts as {rs(credit)}.</>}
                 {' '}If it was just the balance to pay at return, not an agreement to pay after the rental, remove the credit — the balance due stays exactly as it is.</span></p>
-            {isAdmin() && (
+            {may.money && (
               <div className="flex flex-wrap items-center gap-2">
                 <input className="input !py-1 !text-xs flex-1 min-w-[12rem]" value={creditWhy} onChange={(e) => setCreditWhy(e.target.value)} placeholder="Why (e.g. it was the balance paid at return)" />
                 <button type="button" disabled={!creditWhy.trim()} onClick={() => { clearCredit(b.id, by, creditWhy.trim()); setCreditWhy(''); }}
@@ -556,8 +581,8 @@ function Overview({ b, by, price, extra, narrow }: {
    Payments
    ===================================================================== */
 
-function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
-  b: Booking; by: string; price: ReturnType<typeof priceBreakdown>; commissionPayout?: number; includedKm: number; extraKmRate: number;
+function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmRate }: {
+  b: Booking; by: string; canPay: boolean; price: ReturnType<typeof priceBreakdown>; commissionPayout?: number; includedKm: number; extraKmRate: number;
 }) {
   const { recordPayment, settleDeposit, addCharge, waiveCharge, vehicles } = useStore();
   const ledger = ledgerOf(b);
@@ -612,7 +637,8 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
           </div>
         )}
 
-        <div className="mt-3 pt-3 border-t border-navy-100 grid grid-cols-2 sm:grid-cols-6 gap-2 items-end">
+        {!canPay && <p className="mt-3 pt-3 border-t border-navy-100 text-xs text-navy-400">Payments are recorded by Finance.</p>}
+        {canPay && <div className="mt-3 pt-3 border-t border-navy-100 grid grid-cols-2 sm:grid-cols-6 gap-2 items-end">
           <label className="text-[11px] text-navy-400 col-span-2 sm:col-span-1">Type
             <select className="input !py-1.5 text-sm mt-0.5" value={pay.kind} onChange={(e) => setPay((x) => ({ ...x, kind: e.target.value as PaymentKind, amount: e.target.value === 'Payment' ? price.due : e.target.value === 'Deposit returned' ? held : 0 }))}>
               {PAYMENT_KINDS.map((k) => <option key={k}>{k}</option>)}
@@ -628,12 +654,12 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
                   onClick={() => { recordPayment(b.id, { kind: pay.kind, amount: pay.amount, method: pay.method, receiptNo: pay.receiptNo.trim() || undefined, note: pay.note.trim() || undefined, by }); setPay((x) => ({ ...x, amount: 0, receiptNo: '', note: '' })); }}>
             <Plus size={14} /> Record
           </button>
-        </div>
+        </div>}
       </Card>
 
       <div className="grid gap-3 md:grid-cols-2">
         <Card title="Security deposit" icon={ShieldCheck}>
-          {!b.depositType ? <p className="text-sm text-navy-400">No deposit recorded. Use the payment form with "Deposit received" to add one.</p> : (
+          {!b.depositType ? <p className="text-sm text-navy-400">No deposit recorded.{canPay && <> Use the payment form with "Deposit received" to add one.</>}</p> : (
             <>
               <KV k="Type" v={b.depositType === 'cash' ? 'Cash' : b.depositType === 'vehicle' ? 'Vehicle' : 'Other'} />
               {b.depositType === 'cash' ? (
@@ -645,7 +671,7 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
                 </>
               ) : <KV k="Held item" v={b.depositAssetDescription} />}
               {b.depositNotes && <p className="text-xs text-navy-500 mt-1">{b.depositNotes}</p>}
-              {b.depositType === 'cash' && held > 0 && (
+              {canPay && b.depositType === 'cash' && held > 0 && (
                 <div className="mt-3 pt-3 border-t border-navy-100 space-y-2">
                   <p className="text-[11px] font-semibold text-navy-500">Settle the deposit</p>
                   <div className="grid grid-cols-3 gap-2">
@@ -676,13 +702,18 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
                   </span>
                   <span className="flex items-center gap-2 flex-shrink-0">
                     <b className={c.amount < 0 ? 'text-emerald-700' : ''}>{c.amount < 0 ? `− ${rs(-c.amount)}` : rs(c.amount)}</b>
-                    {c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">{c.amount < 0 ? 'Remove' : 'Waive'}</button>}
+                    {canPay && c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">{c.amount < 0 ? 'Remove' : 'Waive'}</button>}
                   </span>
                 </li>
               ); })}
             </ul>
           )}
-          {kmToBill > 0 && (
+          {kmToBill > 0 && !canPay && (
+            <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900">
+              The return shows <b>{kmToBill.toLocaleString()} extra km</b> not on the bill yet — Finance adds the charge.
+            </p>
+          )}
+          {kmToBill > 0 && canPay && (
             <button type="button" onClick={() => addCharge(b.id, { kind: 'Other', amount: kmToBill * extraKmRate, date: today(),
                       note: `Extra km: ${kmToBill.toLocaleString()} km × Rs ${extraKmRate}${billedKm ? ` (${trip!.total!.toLocaleString()} km over the trip, ${billedKm.toLocaleString()} extra km billed before)` : ''}`, by })}
                     className="w-full mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900 text-left">
@@ -696,7 +727,7 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
               Odometer readings of a breakdown replacement are missing, so the km of that car aren't on the bill yet — enter them on the Vehicle tab.
             </p>
           )}
-          <div className="grid grid-cols-2 gap-2">
+          {canPay && <><div className="grid grid-cols-2 gap-2">
             <select className="input !py-1.5 text-sm" value={charge.kind} onChange={(e) => setCharge((x) => ({ ...x, kind: e.target.value as ChargeKind }))}>{CHARGE_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
             <input className="input !py-1.5 text-sm" type="number" min="0" placeholder="Amount (Rs)" value={charge.amount || ''} onChange={(e) => setCharge((x) => ({ ...x, amount: Math.max(0, Number(e.target.value) || 0) }))} />
             <input className="input !py-1.5 text-sm" type="date" value={charge.date} onChange={(e) => setCharge((x) => ({ ...x, date: e.target.value }))} />
@@ -705,7 +736,7 @@ function Payments({ b, by, price, commissionPayout, includedKm, extraKmRate }: {
           <button type="button" disabled={charge.amount <= 0} className={`${smallBtn} bg-navy-800 text-white mt-2 disabled:opacity-40`}
                   onClick={() => { addCharge(b.id, { kind: charge.kind, amount: charge.amount, date: charge.date, note: charge.note.trim() || undefined, by }); setCharge((x) => ({ ...x, amount: 0, note: '' })); }}>
             <Plus size={12} /> Add to bill
-          </button>
+          </button></>}
         </Card>
       </div>
 
@@ -752,8 +783,8 @@ function ChecklistCard({ title, list, onRecord, recordLabel, canRecord }: { titl
   );
 }
 
-function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
-  b: Booking; vehicle?: import('../../types').Vehicle; legacy: import('../../types').VehicleHandover[]; onPickup: () => void; onReturn: () => void;
+function VehicleTab({ b, vehicle, legacy, onPickup, onReturn, canHandover }: {
+  b: Booking; vehicle?: import('../../types').Vehicle; legacy: import('../../types').VehicleHandover[]; onPickup: () => void; onReturn: () => void; canHandover: boolean;
 }) {
   const included = (vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1);
   const swaps = useBreakdownStore((s) => s.swaps);
@@ -765,8 +796,8 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn }: {
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
-        <ChecklistCard title="Pickup (handover)" list={b.checklists?.pickup} onRecord={onPickup} recordLabel="Hand over & start" canRecord={b.status === 'Confirmed'} />
-        <ChecklistCard title="Return" list={b.checklists?.return} onRecord={onReturn} recordLabel="Receive & complete" canRecord={b.status === 'Ongoing'} />
+        <ChecklistCard title="Pickup (handover)" list={b.checklists?.pickup} onRecord={onPickup} recordLabel="Hand over & start" canRecord={canHandover && b.status === 'Confirmed'} />
+        <ChecklistCard title="Return" list={b.checklists?.return} onRecord={onReturn} recordLabel="Receive & complete" canRecord={canHandover && b.status === 'Ongoing'} />
       </div>
       <div className={`grid gap-3 ${trip.legs.length > 1 ? "" : "md:grid-cols-2"}`}>
         <Card title="Mileage" icon={ShieldCheck}>
