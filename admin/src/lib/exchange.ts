@@ -1,11 +1,12 @@
 import type { Booking, Commission } from '../types';
 import { rentalDays } from './availability';
+import { companyShareOf, shareBaseOf } from './companyShare';
 
 /*
  * Mid-trip vehicle exchange — how a booking's money is split between the cars it used.
  *
  *   • The car that was booked earns the agreed price for the days it was used (pro rata),
- *     minus the referral fee.
+ *     minus the company's share (and an old booking's referral fee).
  *   • A replacement car earns its own daily rent × the days it was with the customer.
  *   • The customer still pays the booking price; the difference is the company's.
  *
@@ -46,7 +47,10 @@ function baseLegs(b: Booking): Leg[] {
   const ex = b.exchanges ?? [];
   const fee = b.referralFee ?? 0;
   if (!ex.length) {
-    return [{ vehicleId: b.vehicleId, days: b.totalDays, revenue: b.totalAmount, payout: Math.max(0, b.totalAmount - fee), referralFee: fee }];
+    // with a company commission the owner's share is taken from the final bill (rent + charges − discount);
+    // older bookings without one keep their share of the rent, as before
+    const base = b.companyShareType ? shareBaseOf(b) : b.totalAmount;
+    return [{ vehicleId: b.vehicleId, days: b.totalDays, revenue: b.totalAmount, payout: Math.max(0, base - fee - companyShareOf(b, base)), referralFee: fee }];
   }
   const past: Leg[] = ex.map((e, i) => ({
     vehicleId: e.fromVehicleId, days: e.fromDays, revenue: e.fromRevenue,

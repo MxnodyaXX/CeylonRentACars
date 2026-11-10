@@ -1,7 +1,11 @@
+import { channelOf, referrerOf } from '../../lib/channels';
+import { referralFeeWorking } from '../../lib/referral';
+import { useCompanyFinance } from '../../lib/companyFinance';
+import { companyShareOf, shareBaseOf, shareBaseParts, shareWorking } from '../../lib/companyShare';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
-  FileText, History, Loader2, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldAlert, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
+  FileText, History, Loader2, Receipt, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldAlert, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
 } from 'lucide-react';
 import Modal from './Modal';
 import VehicleImage from './VehicleImage';
@@ -167,7 +171,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
       {b.insertedByAdmin && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Owner entry</span>}
     </>
   );
-  const created = `Created ${fmtDateTime(b.createdAt)} · ${b.referral || 'Direct'}`;
+  const created = `Created ${fmtDateTime(b.createdAt)} · ${referrerOf(b.referral) ?? 'Direct'}${channelOf(b) ? ` · via ${channelOf(b)}` : ''}`;
 
   const miss = missingInfo(b);
   const critical = miss.some((i) => i.critical);
@@ -584,10 +588,14 @@ function Overview({ b, by, price, extra, narrow }: {
 function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmRate }: {
   b: Booking; by: string; canPay: boolean; price: ReturnType<typeof priceBreakdown>; commissionPayout?: number; includedKm: number; extraKmRate: number;
 }) {
-  const { recordPayment, settleDeposit, addCharge, waiveCharge, vehicles } = useStore();
+  const { recordPayment, settleDeposit, addCharge, waiveCharge, vehicles, payFromDeposit } = useStore();
   const ledger = ledgerOf(b);
   const held = depositHeld(b);
-  const [pay, setPay] = useState({ kind: 'Payment' as PaymentKind, amount: price.due || 0, method: 'Cash', receiptNo: '', note: '' });
+  const [pay, setPay] = useState({ kind: 'Payment' as PaymentKind, amount: price.due || 0, method: 'Cash', receiptNo: '', note: '', accountId: '' });
+  const finAccounts = useCompanyFinance((s) => s.accounts);
+  const methodAccounts = useCompanyFinance((s) => s.settings.methodAccounts);
+  const finLoaded = useCompanyFinance((s) => s.loaded);
+  useEffect(() => { if (!finLoaded && canPay) useCompanyFinance.getState().refresh(); }, [finLoaded, canPay]);
   const [dep, setDep] = useState({ returned: held, deduction: 0, method: 'Cash', notes: '' });
   const [charge, setCharge] = useState({ kind: 'Traffic fine' as ChargeKind, amount: 0, date: today(), note: '' });
   // whole-trip km (breakdown replacements included); km entered later can top up what was already billed
@@ -598,6 +606,18 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
   const kmToBill = Math.max(0, extraKm - billedKm);
 
   const sign = (k: PaymentKind) => (k === 'Refund' || k === 'Deposit returned' ? -1 : 1);
+  // the bill in parts: rent, extra charges (extra km, fines…), then what came off (deductions, discount)
+  const rentLines = price.lines.filter((l) => l.group === 'rent');
+  const extraLines = price.lines.filter((l) => l.group === 'charge');
+  const offLines = price.lines.filter((l) => l.group === 'deduction' || l.amount < 0);
+  const rentTotal = rentLines.reduce((s, l) => s + l.amount, 0);
+  const extrasTotal = extraLines.reduce((s, l) => s + l.amount, 0);
+  const grossCharges = rentTotal + extrasTotal;
+  const offTotal = -offLines.reduce((s, l) => s + l.amount, 0);
+  // money in from the customer (deposits are kept apart from the bill)
+  // deposit money that paid the bill (recorded as payments 'by Security deposit')
+  const depUsed = ledger.filter((p) => p.kind === 'Payment' && p.method === 'Security deposit').reduce((t, p) => t + p.amount, 0);
+  const moneyLines = ledger.filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
 
   return (
     <div className="space-y-3">
@@ -605,14 +625,21 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
         <button type="button" onClick={() => { if (!printInvoice(b, vehicles.find((v) => v.id === b.vehicleId))) toast.error('Invoice not opened', 'Allow pop-ups for this site and try again.'); }}
                 className="btn-secondary !py-1.5 text-sm inline-flex items-center gap-1.5"><Printer size={14} /> Print invoice</button>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {[
-          ['Bill', rs(price.bill), 'bg-navy-800 text-white'],
-          ['Paid', rs(price.paid), 'bg-emerald-50 text-emerald-800'],
-          ['Balance due', price.due > 0 ? rs(price.due) : 'Paid', price.due > 0 ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-800'],
-          ['Deposit held', b.depositType === 'cash' ? rs(held) : b.depositType ? b.depositType : '—', 'bg-amber-50 text-amber-800'],
-        ].map(([k, v, cls]) => (
-          <div key={k} className={`rounded-xl px-3 py-2 ${cls}`}><p className="text-[11px] opacity-70">{k}</p><p className="font-bold">{v}</p></div>
+      {/* the whole picture: everything charged, what came off, the final bill, what's paid, and the deposit (kept apart from the bill) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {([
+          ['Rent + extra charges', rs(grossCharges), 'bg-navy-50 text-navy-800', `rent ${rs(rentTotal)}${extrasTotal ? ` + extras ${rs(extrasTotal)}` : ''}`],
+          ['Deductions & discount', offTotal ? `− ${rs(offTotal)}` : 'None', 'bg-emerald-50/60 text-emerald-800', offTotal ? `${offLines.length} item${offLines.length === 1 ? '' : 's'}` : ''],
+          ['Final bill', rs(price.bill), 'bg-navy-800 text-white', 'what the customer pays'],
+          ['Paid', rs(price.paid), 'bg-emerald-50 text-emerald-800', `${moneyLines.length} payment${moneyLines.length === 1 ? '' : 's'}`],
+          ['Balance due', price.due > 0 ? rs(price.due) : price.due < 0 ? `Overpaid ${rs(-price.due)}` : 'Paid in full', price.due > 0 ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-800', ''],
+          ['Deposit', b.depositType === 'cash' ? (held > 0 ? `${rs(held)} held` : (b.depositAmount ?? 0) > 0 ? 'Settled' : '—') : b.depositType ? 'Held item' : 'None', 'bg-amber-50 text-amber-800',
+            b.depositType === 'cash' && (b.depositAmount ?? 0) > 0 ? `${rs(b.depositAmount ?? 0)} taken · not part of the bill` : b.depositType ? (b.depositAssetDescription ?? b.depositType) : ''],
+        ] as const).map(([k, v, cls, sub]) => (
+          <div key={k} className={`rounded-xl px-3 py-2 ${cls}`}>
+            <p className="text-[11px] opacity-70">{k}</p><p className="font-bold">{v}</p>
+            {sub && <p className="text-[10px] opacity-60 leading-tight mt-0.5 truncate">{sub}</p>}
+          </div>
         ))}
       </div>
 
@@ -638,7 +665,7 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
         )}
 
         {!canPay && <p className="mt-3 pt-3 border-t border-navy-100 text-xs text-navy-400">Payments are recorded by Finance.</p>}
-        {canPay && <div className="mt-3 pt-3 border-t border-navy-100 grid grid-cols-2 sm:grid-cols-6 gap-2 items-end">
+        {canPay && <div className={`mt-3 pt-3 border-t border-navy-100 grid grid-cols-2 gap-2 items-end ${finAccounts.length ? "sm:grid-cols-7" : "sm:grid-cols-6"}`}>
           <label className="text-[11px] text-navy-400 col-span-2 sm:col-span-1">Type
             <select className="input !py-1.5 text-sm mt-0.5" value={pay.kind} onChange={(e) => setPay((x) => ({ ...x, kind: e.target.value as PaymentKind, amount: e.target.value === 'Payment' ? price.due : e.target.value === 'Deposit returned' ? held : 0 }))}>
               {PAYMENT_KINDS.map((k) => <option key={k}>{k}</option>)}
@@ -649,105 +676,198 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
             <select className="input !py-1.5 text-sm mt-0.5" value={pay.method} onChange={(e) => setPay((x) => ({ ...x, method: e.target.value }))}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select>
           </label>
           <label className="text-[11px] text-navy-400">Receipt no.<input className="input !py-1.5 text-sm mt-0.5" value={pay.receiptNo} onChange={(e) => setPay((x) => ({ ...x, receiptNo: e.target.value }))} /></label>
+          {finAccounts.length > 0 && (
+            <label className="text-[11px] text-navy-400">Into account
+              <select className="input !py-1.5 text-sm mt-0.5" value={pay.accountId || methodAccounts[pay.method] || ''} onChange={(e) => setPay((x) => ({ ...x, accountId: e.target.value }))}>
+                <option value="">Not set</option>{finAccounts.filter((a) => a.active).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="text-[11px] text-navy-400">Note<input className="input !py-1.5 text-sm mt-0.5" value={pay.note} onChange={(e) => setPay((x) => ({ ...x, note: e.target.value }))} /></label>
           <button type="button" disabled={pay.amount <= 0} className="btn-primary !py-2 text-sm inline-flex items-center justify-center gap-1 disabled:opacity-40"
-                  onClick={() => { recordPayment(b.id, { kind: pay.kind, amount: pay.amount, method: pay.method, receiptNo: pay.receiptNo.trim() || undefined, note: pay.note.trim() || undefined, by }); setPay((x) => ({ ...x, amount: 0, receiptNo: '', note: '' })); }}>
+                  onClick={() => { recordPayment(b.id, { kind: pay.kind, amount: pay.amount, method: pay.method, receiptNo: pay.receiptNo.trim() || undefined, note: pay.note.trim() || undefined, by, accountId: pay.accountId || methodAccounts[pay.method] || undefined }); setPay((x) => ({ ...x, amount: 0, receiptNo: '', note: '' })); }}>
             <Plus size={14} /> Record
           </button>
         </div>}
       </Card>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <Card title="Security deposit" icon={ShieldCheck}>
-          {!b.depositType ? <p className="text-sm text-navy-400">No deposit recorded.{canPay && <> Use the payment form with "Deposit received" to add one.</>}</p> : (
-            <>
-              <KV k="Type" v={b.depositType === 'cash' ? 'Cash' : b.depositType === 'vehicle' ? 'Vehicle' : 'Other'} />
-              {b.depositType === 'cash' ? (
-                <>
-                  <KV k="Collected" v={rs(b.depositAmount ?? 0)} />
-                  <KV k="Returned" v={rs(b.depositReturned ?? 0)} />
-                  <KV k="Kept (deducted)" v={rs(b.depositDeduction ?? 0)} />
-                  <KV k="Still held" v={rs(held)} warn={held > 0 && b.status === 'Completed'} />
-                </>
-              ) : <KV k="Held item" v={b.depositAssetDescription} />}
-              {b.depositNotes && <p className="text-xs text-navy-500 mt-1">{b.depositNotes}</p>}
-              {canPay && b.depositType === 'cash' && held > 0 && (
-                <div className="mt-3 pt-3 border-t border-navy-100 space-y-2">
-                  <p className="text-[11px] font-semibold text-navy-500">Settle the deposit</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <label className="text-[11px] text-navy-400">Return<input className="input !py-1.5 text-sm mt-0.5" type="number" value={dep.returned || ''} onChange={(e) => { const r = Math.min(held, Math.max(0, Number(e.target.value) || 0)); setDep((x) => ({ ...x, returned: r, deduction: held - r })); }} /></label>
-                    <label className="text-[11px] text-navy-400">Keep<input className="input !py-1.5 text-sm mt-0.5" type="number" value={dep.deduction || ''} onChange={(e) => { const d = Math.min(held, Math.max(0, Number(e.target.value) || 0)); setDep((x) => ({ ...x, deduction: d, returned: held - d })); }} /></label>
-                    <label className="text-[11px] text-navy-400">Method<select className="input !py-1.5 text-sm mt-0.5" value={dep.method} onChange={(e) => setDep((x) => ({ ...x, method: e.target.value }))}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select></label>
-                  </div>
-                  <input className="input !py-1.5 text-sm" value={dep.notes} onChange={(e) => setDep((x) => ({ ...x, notes: e.target.value }))} placeholder={dep.deduction ? 'Why is part kept? (required)' : 'Note (optional)'} />
-                  <button type="button" disabled={dep.deduction > 0 && !dep.notes.trim()} className={`${smallBtn} bg-navy-800 text-white disabled:opacity-40`}
-                          onClick={() => settleDeposit(b.id, { returned: dep.returned, deduction: dep.deduction, method: dep.method, notes: dep.notes.trim() || undefined }, by)}>
-                    Settle deposit
+      {/* left: the deposit and the charges · right: how the bill is worked out */}
+      <div className="grid gap-3 lg:grid-cols-2 items-start">
+        <div className="space-y-3 min-w-0">
+          <Card title="Security deposit" icon={ShieldCheck}>
+            {!b.depositType ? <p className="text-sm text-navy-400">No deposit recorded.{canPay && <> Use the payment form with "Deposit received" to add one.</>}</p> : (
+              <>
+                <KV k="Type" v={b.depositType === 'cash' ? 'Cash' : b.depositType === 'vehicle' ? 'Vehicle' : 'Other'} />
+                {b.depositType === 'cash' ? (
+                  <>
+                    <KV k="Collected" v={rs(b.depositAmount ?? 0)} />
+                    <KV k="Returned" v={rs(b.depositReturned ?? 0)} />
+                    {depUsed > 0 && <KV k="Used for the bill" v={rs(depUsed)} />}
+                  <KV k="Kept (deducted)" v={rs((b.depositDeduction ?? 0) - depUsed)} />
+                    <KV k="Still held" v={rs(held)} warn={held > 0 && b.status === 'Completed'} />
+                  </>
+                ) : <KV k="Held item" v={b.depositAssetDescription} />}
+                {b.depositNotes && <p className="text-xs text-navy-500 mt-1">{b.depositNotes}</p>}
+                {/* the deposit can pay what's still owed — the rest is then returned below */}
+              {canPay && b.depositType === 'cash' && held > 0 && price.due > 0 && (
+                <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900 space-y-1.5">
+                  <p>The customer still owes <b>{rs(price.due)}</b>. The deposit can pay <b>{rs(Math.min(held, price.due))}</b> of it{price.due > held ? ` — they pay the other ${rs(price.due - held)}` : held > price.due ? ` — ${rs(held - price.due)} of the deposit is left to return` : ''}.</p>
+                  <button type="button" className={`${smallBtn} bg-amber-600 text-white hover:bg-amber-700`}
+                          onClick={() => { if (confirm(`Pay ${rs(Math.min(held, price.due))} of the bill from the ${b.customerName}'s deposit?`)) payFromDeposit(b.id, Math.min(held, price.due), by); }}>
+                    Use {rs(Math.min(held, price.due))} of the deposit for the bill
                   </button>
                 </div>
               )}
-            </>
+              {canPay && b.depositType === 'cash' && held > 0 && (
+                  <div className="mt-3 pt-3 border-t border-navy-100 space-y-2">
+                    <p className="text-[11px] font-semibold text-navy-500">Settle the deposit</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <label className="text-[11px] text-navy-400">Return<input className="input !py-1.5 text-sm mt-0.5" type="number" value={dep.returned || ''} onChange={(e) => { const r = Math.min(held, Math.max(0, Number(e.target.value) || 0)); setDep((x) => ({ ...x, returned: r, deduction: held - r })); }} /></label>
+                      <label className="text-[11px] text-navy-400">Keep<input className="input !py-1.5 text-sm mt-0.5" type="number" value={dep.deduction || ''} onChange={(e) => { const d = Math.min(held, Math.max(0, Number(e.target.value) || 0)); setDep((x) => ({ ...x, deduction: d, returned: held - d })); }} /></label>
+                      <label className="text-[11px] text-navy-400">Method<select className="input !py-1.5 text-sm mt-0.5" value={dep.method} onChange={(e) => setDep((x) => ({ ...x, method: e.target.value }))}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select></label>
+                    </div>
+                    <input className="input !py-1.5 text-sm" value={dep.notes} onChange={(e) => setDep((x) => ({ ...x, notes: e.target.value }))} placeholder={dep.deduction ? 'Why is part kept? (required)' : 'Note (optional)'} />
+                    <button type="button" disabled={dep.deduction > 0 && !dep.notes.trim()} className={`${smallBtn} bg-navy-800 text-white disabled:opacity-40`}
+                            onClick={() => settleDeposit(b.id, { returned: dep.returned, deduction: dep.deduction, method: dep.method, notes: dep.notes.trim() || undefined }, by)}>
+                      Settle deposit
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+  
+          <Card title="Fines, damage & other charges" icon={AlertTriangle}>
+            {(b.charges ?? []).length === 0 ? <p className="text-sm text-navy-400 mb-2">No extra charges.</p> : (
+              <ul className="space-y-1 mb-2">
+                {(b.charges ?? []).map((c) => { const l = chargeLine(c); return (
+                  <li key={c.id} className={`flex items-start justify-between gap-3 text-sm ${c.status === 'Waived' ? 'text-navy-300 line-through' : 'text-navy-700'}`}>
+                    <span className="min-w-0">
+                      {c.amount < 0 && <span className="mr-1.5 rounded bg-emerald-50 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-emerald-700 no-underline">Deduction</span>}
+                      {l.label}
+                      <span className="block text-xs text-navy-400 leading-snug">{[l.detail, fmtDate(c.date)].filter(Boolean).join(' · ')}</span>
+                    </span>
+                    <span className="flex items-center gap-2 flex-shrink-0">
+                      <b className={c.amount < 0 ? 'text-emerald-700' : ''}>{c.amount < 0 ? `− ${rs(-c.amount)}` : rs(c.amount)}</b>
+                      {canPay && c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">{c.amount < 0 ? 'Remove' : 'Waive'}</button>}
+                    </span>
+                  </li>
+                ); })}
+              </ul>
+            )}
+            {kmToBill > 0 && !canPay && (
+              <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900">
+                The return shows <b>{kmToBill.toLocaleString()} extra km</b> not on the bill yet — Finance adds the charge.
+              </p>
+            )}
+            {kmToBill > 0 && canPay && (
+              <button type="button" onClick={() => addCharge(b.id, { kind: 'Other', amount: kmToBill * extraKmRate, date: today(),
+                        note: `Extra km: ${kmToBill.toLocaleString()} km × Rs ${extraKmRate}${billedKm ? ` (${trip!.total!.toLocaleString()} km over the trip, ${billedKm.toLocaleString()} extra km billed before)` : ''}`, by })}
+                      className="w-full mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900 text-left">
+                {billedKm
+                  ? <>The trip was <b>{trip!.total!.toLocaleString()} km</b> in all cars — <b>{kmToBill.toLocaleString()} more extra km</b> than billed. Add {rs(kmToBill * extraKmRate)} to the bill</>
+                  : <>Handover shows <b>{extraKm.toLocaleString()} extra km</b> — add {rs(extraKm * extraKmRate)} to the bill</>}
+              </button>
+            )}
+            {trip && !trip.complete && trip.missing.some((m) => m.swapId) && (
+              <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900">
+                Odometer readings of a breakdown replacement are missing, so the km of that car aren't on the bill yet — enter them on the Vehicle tab.
+              </p>
+            )}
+            {canPay && <><div className="grid grid-cols-2 gap-2">
+              <select className="input !py-1.5 text-sm" value={charge.kind} onChange={(e) => setCharge((x) => ({ ...x, kind: e.target.value as ChargeKind }))}>{CHARGE_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
+              <input className="input !py-1.5 text-sm" type="number" min="0" placeholder="Amount (Rs)" value={charge.amount || ''} onChange={(e) => setCharge((x) => ({ ...x, amount: Math.max(0, Number(e.target.value) || 0) }))} />
+              <input className="input !py-1.5 text-sm" type="date" value={charge.date} onChange={(e) => setCharge((x) => ({ ...x, date: e.target.value }))} />
+              <input className="input !py-1.5 text-sm" placeholder="Details, e.g. Speeding fine Kandy" value={charge.note} onChange={(e) => setCharge((x) => ({ ...x, note: e.target.value }))} />
+            </div>
+            <button type="button" disabled={charge.amount <= 0} className={`${smallBtn} bg-navy-800 text-white mt-2 disabled:opacity-40`}
+                    onClick={() => { addCharge(b.id, { kind: charge.kind, amount: charge.amount, date: charge.date, note: charge.note.trim() || undefined, by }); setCharge((x) => ({ ...x, amount: 0, note: '' })); }}>
+              <Plus size={12} /> Add to bill
+            </button></>}
+          </Card>
+        </div>
+        {/* right: the bill step by step (the same figures as the tiles above) */}
+        <Card title="How the bill is worked out" icon={Receipt}>
+          <div className="text-sm">
+            {rentLines.map((l, i) => <Step key={`r${i}`} label={l.label} detail={l.detail} amount={l.amount} />)}
+            {extraLines.map((l, i) => <Step key={`c${i}`} label={l.label} detail={l.detail} amount={l.amount} />)}
+            <Step label="Rent + extra charges" amount={grossCharges} total />
+            {offLines.map((l, i) => <Step key={`d${i}`} label={l.label} detail={l.detail} amount={l.amount} />)}
+            <Step label="Final bill" amount={price.bill} total strong />
+            {moneyLines.map((p) => (
+              <Step key={p.id} label={`${p.kind === 'Refund' ? 'Refund given back' : p.kind === 'Advance' ? 'Advance paid' : 'Paid'} ${p.id.startsWith('legacy') ? '' : fmtDate(p.at)}`.trim()}
+                    detail={[p.method !== '—' ? p.method : '', p.receiptNo, p.id.startsWith('legacy') ? 'recorded before the payment log' : p.note].filter(Boolean).join(' · ')}
+                    amount={p.kind === 'Refund' ? p.amount : -p.amount} />
+            ))}
+            <Step label={price.due < 0 ? 'Overpaid' : price.due > 0 ? 'Balance due' : 'Balance due — paid in full'} amount={Math.abs(price.due)} total strong tone={price.due > 0 ? 'due' : 'ok'} />
+            {b.depositType === 'cash' && (b.depositAmount ?? 0) > 0 && (
+              <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <b>Security deposit (separate from the bill):</b> {rs(b.depositAmount ?? 0)} taken
+                {(b.depositReturned ?? 0) > 0 && <> · {rs(b.depositReturned ?? 0)} returned</>}
+                {depUsed > 0 && <> · {rs(depUsed)} used for the bill</>}
+                {(b.depositDeduction ?? 0) - depUsed > 0 && <> · {rs((b.depositDeduction ?? 0) - depUsed)} kept</>}
+                {' '}· {held > 0 ? `${rs(held)} still held` : 'settled'}
+              </div>
+            )}
+          {b.depositType && b.depositType !== 'cash' && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900"><b>Security deposit:</b> {b.depositAssetDescription ?? b.depositType} held (not money)</p>
           )}
-        </Card>
-
-        <Card title="Fines, damage & other charges" icon={AlertTriangle}>
-          {(b.charges ?? []).length === 0 ? <p className="text-sm text-navy-400 mb-2">No extra charges.</p> : (
-            <ul className="space-y-1 mb-2">
-              {(b.charges ?? []).map((c) => { const l = chargeLine(c); return (
-                <li key={c.id} className={`flex items-start justify-between gap-3 text-sm ${c.status === 'Waived' ? 'text-navy-300 line-through' : 'text-navy-700'}`}>
-                  <span className="min-w-0">
-                    {c.amount < 0 && <span className="mr-1.5 rounded bg-emerald-50 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-emerald-700 no-underline">Deduction</span>}
-                    {l.label}
-                    <span className="block text-xs text-navy-400 leading-snug">{[l.detail, fmtDate(c.date)].filter(Boolean).join(' · ')}</span>
-                  </span>
-                  <span className="flex items-center gap-2 flex-shrink-0">
-                    <b className={c.amount < 0 ? 'text-emerald-700' : ''}>{c.amount < 0 ? `− ${rs(-c.amount)}` : rs(c.amount)}</b>
-                    {canPay && c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">{c.amount < 0 ? 'Remove' : 'Waive'}</button>}
-                  </span>
-                </li>
-              ); })}
-            </ul>
-          )}
-          {kmToBill > 0 && !canPay && (
-            <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900">
-              The return shows <b>{kmToBill.toLocaleString()} extra km</b> not on the bill yet — Finance adds the charge.
-            </p>
-          )}
-          {kmToBill > 0 && canPay && (
-            <button type="button" onClick={() => addCharge(b.id, { kind: 'Other', amount: kmToBill * extraKmRate, date: today(),
-                      note: `Extra km: ${kmToBill.toLocaleString()} km × Rs ${extraKmRate}${billedKm ? ` (${trip!.total!.toLocaleString()} km over the trip, ${billedKm.toLocaleString()} extra km billed before)` : ''}`, by })}
-                    className="w-full mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900 text-left">
-              {billedKm
-                ? <>The trip was <b>{trip!.total!.toLocaleString()} km</b> in all cars — <b>{kmToBill.toLocaleString()} more extra km</b> than billed. Add {rs(kmToBill * extraKmRate)} to the bill</>
-                : <>Handover shows <b>{extraKm.toLocaleString()} extra km</b> — add {rs(extraKm * extraKmRate)} to the bill</>}
-            </button>
-          )}
-          {trip && !trip.complete && trip.missing.some((m) => m.swapId) && (
-            <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900">
-              Odometer readings of a breakdown replacement are missing, so the km of that car aren't on the bill yet — enter them on the Vehicle tab.
-            </p>
-          )}
-          {canPay && <><div className="grid grid-cols-2 gap-2">
-            <select className="input !py-1.5 text-sm" value={charge.kind} onChange={(e) => setCharge((x) => ({ ...x, kind: e.target.value as ChargeKind }))}>{CHARGE_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
-            <input className="input !py-1.5 text-sm" type="number" min="0" placeholder="Amount (Rs)" value={charge.amount || ''} onChange={(e) => setCharge((x) => ({ ...x, amount: Math.max(0, Number(e.target.value) || 0) }))} />
-            <input className="input !py-1.5 text-sm" type="date" value={charge.date} onChange={(e) => setCharge((x) => ({ ...x, date: e.target.value }))} />
-            <input className="input !py-1.5 text-sm" placeholder="Details, e.g. Speeding fine Kandy" value={charge.note} onChange={(e) => setCharge((x) => ({ ...x, note: e.target.value }))} />
+          {b.companyShareType && !b.exchanges?.length && (() => {
+            const parts = shareBaseParts(b), base = shareBaseOf(b), co = companyShareOf(b, base);
+            const adj = (b.payoutAdjustments ?? []).filter((a) => !a.reversedAt).reduce((s, a) => s + a.amount, 0);
+            return (
+              <div className="mt-4 pt-3 border-t-2 border-navy-100">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-navy-400 mb-1">Company and owner · on the final bill</p>
+                <Step label="Rent" amount={parts.rent} />
+                {parts.charges > 0 && <Step label="Extra km & other charges" amount={parts.charges} />}
+                {parts.discount > 0 && <Step label="Discount" amount={-parts.discount} />}
+                <Step label="Income to share" amount={base} total />
+                <Step label="Company commission" detail={shareWorking(b, base)} amount={-co} />
+                <Step label="Owner's share" amount={base - co} total />
+                {adj !== 0 && <Step label="Parts / costs taken from the owner" detail="the deductions charged to the owner" amount={-adj} />}
+                {adj !== 0 && <Step label="Owner payout" amount={base - co - adj} total strong />}
+              </div>
+            );
+          })()}
           </div>
-          <button type="button" disabled={charge.amount <= 0} className={`${smallBtn} bg-navy-800 text-white mt-2 disabled:opacity-40`}
-                  onClick={() => { addCharge(b.id, { kind: charge.kind, amount: charge.amount, date: charge.date, note: charge.note.trim() || undefined, by }); setCharge((x) => ({ ...x, amount: 0, note: '' })); }}>
-            <Plus size={12} /> Add to bill
-          </button></>}
         </Card>
       </div>
 
-      <Card title="Referral & owner" icon={Wallet}>
+      <Card title="Commission & owner" icon={Wallet}>
         <div className="grid sm:grid-cols-2 gap-x-6">
-          <KV k="Referral" v={b.referral || 'Direct'} />
-          <KV k="Referral fee" v={(b.referralFee ?? 0) > 0 ? `${rs(b.referralFee ?? 0)} · ${b.referralPaid ? 'paid' : 'not paid yet'}` : 'None'} />
-          <KV k={b.exchanges?.length ? 'Owner payouts (all cars)' : 'Owner payout'} v={commissionPayout !== undefined ? rs(commissionPayout) : undefined} />
+          <KV k="Referred by" v={b.referral || 'Direct'} />
+          <KV k="Company commission" v={b.companyShareType ? <>{rs(companyShareOf(b, shareBaseOf(b)))}
+            <span className="block text-xs font-normal text-navy-400">{shareWorking(b, shareBaseOf(b))}</span></> : 'None (booked before commissions)'} />
+          {(b.referralFee ?? 0) > 0 && <KV k="Referral fee (old booking)" v={<>{rs(b.referralFee ?? 0)} · {b.referralPaid ? 'paid' : 'not paid'}
+            <span className="block text-xs font-normal text-navy-400">{referralFeeWorking(b)}</span></>} />}
+          <KV k={b.exchanges?.length ? 'Owner payouts (all cars)' : 'Owner payout'} v={commissionPayout !== undefined ? <>{rs(commissionPayout)}
+            {!b.exchanges?.length && commissionPayout < b.totalAmount && (() => {
+              const base = b.companyShareType ? shareBaseOf(b) : b.totalAmount;
+              const co = companyShareOf(b, base), fee = b.referralFee ?? 0, adj = (b.payoutAdjustments ?? []).filter((a) => !a.reversedAt).reduce((s, a) => s + a.amount, 0);
+              return Math.abs(commissionPayout - (base - co - fee - adj)) < 1 && (co || fee || adj) ? (
+                <span className="block text-xs font-normal text-navy-400">{rs(base)} {b.companyShareType ? 'final bill income' : 'rental'}{co ? ` − ${rs(co)} company` : ''}{fee ? ` − ${rs(fee)} referral fee` : ''}{adj ? ` − ${rs(adj)} owner's deductions` : ''}</span>
+              ) : null;
+            })()}</> : undefined} />
           <KV k="Payment method" v={b.paymentMethod} />
         </div>
       </Card>
+
+    </div>
+  );
+}
+
+/** One row of the bill working: a line, or a running total */
+function Step({ label, detail, amount, total, strong, tone }: { label: string; detail?: string; amount: number; total?: boolean; strong?: boolean; tone?: 'due' | 'ok' }) {
+  return (
+    <div className={`flex items-start justify-between gap-4 py-1 ${total ? 'border-t border-navy-200 mt-1 pt-1.5' : ''}`}>
+      <div className="min-w-0">
+        <p className={`${total ? 'font-semibold text-navy-900' : 'text-navy-700'} ${strong ? 'text-base' : ''}`}>{label}</p>
+        {detail && <p className="text-xs text-navy-400 leading-snug">{detail}</p>}
+      </div>
+      <span className={`tabular-nums whitespace-nowrap ${strong ? 'text-base font-bold' : total ? 'font-semibold' : 'font-medium'} ${
+        tone === 'due' ? 'text-red-600' : tone === 'ok' ? 'text-emerald-700' : !total && amount < 0 ? 'text-emerald-700' : 'text-navy-800'}`}>
+        {!total && amount < 0 ? '− ' : ''}{rs(Math.abs(amount))}
+      </span>
     </div>
   );
 }

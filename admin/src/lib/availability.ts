@@ -75,7 +75,7 @@ export function statusDateProblem(status: string, b: StatusDates, now = Date.now
       return null;
     case 'Ongoing':
       if (notStartedYet) return `This rental starts on ${nice(b.startDate)}${isHm(b.startTime) ? ` ${b.startTime}` : ''} — it can't be Ongoing yet. Use Confirmed.`;
-      if (ended) return `This rental ended on ${nice(b.endDate)} — it can't still be Ongoing. Use Completed, or change the end date if the customer still has the vehicle.`;
+      // past its end date is allowed: the customer still has the car (overdue) — it's completed at the return
       return null;
     case 'Confirmed':
       if (ended) return `This rental ended on ${nice(b.endDate)} — use Completed (or Cancelled if it never happened).`;

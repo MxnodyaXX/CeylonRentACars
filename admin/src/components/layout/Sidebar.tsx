@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { Siren,
   LayoutDashboard, Car, CalendarDays, MessageSquare,
   Percent, Users, Receipt, UserCheck, Bell, Settings, ShieldCheck, Truck, Contact, HandCoins, CreditCard, AlertTriangle, Globe,
-  ChevronsLeft, ChevronDown, MessageCircle, Smartphone, MessageSquareHeart, Handshake, LucideIcon,
+  ChevronsLeft, ChevronDown, Landmark, BookOpen, MessageCircle, Smartphone, MessageSquareHeart, Handshake, LucideIcon,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
@@ -28,6 +28,8 @@ const groups: { title: string; links: Link[] }[] = [
     { to: '/incomplete',    icon: AlertTriangle,   label: 'Incomplete'  },
   ] },
   { title: 'Finance', links: [
+    { to: '/accounts',      icon: BookOpen,        label: 'Company accounts' },
+    { to: '/settlements',   icon: Landmark,        label: 'Owner payouts' },
     { to: '/commissions',   icon: Percent,         label: 'Commissions' },
     { to: '/referrals',     icon: HandCoins,       label: 'Referrals'   },
     { to: '/expenses',      icon: Receipt,         label: 'Expenses'    },

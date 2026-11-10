@@ -102,7 +102,11 @@ function oToDb(o: Owner) {
 const BOOKING_EXT: [keyof Booking, string][] = [
   ['payments', 'payments'], ['customerInfo', 'customer_info'], ['documents', 'documents'], ['checklists', 'checklists'],
   ['charges', 'charges'], ['agreement', 'agreement'], ['activity', 'activity'], ['internalNotes', 'internal_notes'],
-  ['exchanges', 'exchanges'], ['payoutAdjustments', 'payout_adjustments'],
+  ['exchanges', 'exchanges'], ['payoutAdjustments', 'payout_adjustments'], ['channel', 'channel'],
+  ['referralFeeType', 'referral_fee_type'], ['referralFeeValue', 'referral_fee_value'],
+  ['companyShareType', 'company_share_type'], ['companyShareValue', 'company_share_value'], ['companyShareMin', 'company_share_min'],
+  ['companyKmRate', 'company_km_rate'], ['companyKmKm', 'company_km_km'], ['companyKmCharge', 'company_km_charge'],
+  ['priceMode', 'price_mode'], ['standardRate', 'standard_rate'],
 ]
 function bookingExtRow(u: Partial<Booking>) {
   const row: Record<string, unknown> = {}
@@ -149,6 +153,17 @@ function bFromDb(r: Record<string, unknown>): Booking {
     paidAmount: num(r.paid_amount),
     status: r.status as Booking['status'],
     referral: (r.referral as string) ?? undefined,
+    channel: (r.channel as string) ?? undefined,
+    referralFeeType: (r.referral_fee_type as Booking['referralFeeType']) ?? undefined,
+    referralFeeValue: numOpt(r.referral_fee_value),
+    companyShareType: (r.company_share_type as Booking['companyShareType']) ?? undefined,
+    companyShareValue: numOpt(r.company_share_value),
+    companyShareMin: numOpt(r.company_share_min),
+    companyKmRate: numOpt(r.company_km_rate),
+    companyKmKm: numOpt(r.company_km_km),
+    companyKmCharge: numOpt(r.company_km_charge),
+    priceMode: (r.price_mode as Booking['priceMode']) ?? undefined,
+    standardRate: numOpt(r.standard_rate),
     referralFee: numOpt(r.referral_fee),
     referralPaid: (r.referral_paid as boolean) ?? undefined,
     referralPaidAt: (r.referral_paid_at as string) ?? undefined,
@@ -289,6 +304,7 @@ function cFromDb(r: Record<string, unknown>): Commission {
     coordinatorFee: numOpt(r.coordinator_fee),
     status: r.status as Commission['status'], createdAt: r.created_at as string,
     ...(r.note ? { note: r.note as string } : {}),
+    ...(r.settlement_id ? { settlementId: r.settlement_id as string } : {}),
   }
 }
 
@@ -309,6 +325,8 @@ function eFromDb(r: Record<string, unknown>): Expense {
     category: r.category as Expense['category'], amount: num(r.amount),
     description: r.description as string, date: r.date as string,
     receipt: (r.receipt as string) ?? undefined, createdAt: r.created_at as string,
+    ...(r.paid_by ? { paidBy: r.paid_by as Expense['paidBy'] } : {}),
+    ...(r.settlement_id ? { settlementId: r.settlement_id as string } : {}),
   }
 }
 
@@ -317,6 +335,8 @@ function eToDb(e: Expense) {
     id: e.id, vehicle_id: fk(e.vehicleId), category: e.category, amount: e.amount,
     description: e.description, date: e.date, receipt: e.receipt ?? null,
     created_at: e.createdAt,
+    // only sent when set, so saving works before 17_owner_settlements.sql adds the column
+    ...(e.paidBy ? { paid_by: e.paidBy } : {}),
   }
 }
 
@@ -606,6 +626,10 @@ export const db = {
   // ── Expenses ──────────────────────────────────────────────────────────────
   insertExpense: (e: Expense) => supabase.from('expenses').insert(eToDb(e)),
   deleteExpense: (id: string) => supabase.from('expenses').delete().eq('id', id),
+  updateExpense: (id: string, u: Partial<Expense>) => supabase.from('expenses').update({
+    ...(u.paidBy !== undefined ? { paid_by: u.paidBy } : {}),
+    ...(u.description !== undefined ? { description: u.description } : {}),
+  }).eq('id', id),
 
   // ── Drivers ───────────────────────────────────────────────────────────────
   insertDriver: (d: Driver) => supabase.from('drivers').insert(dToDb(d)),

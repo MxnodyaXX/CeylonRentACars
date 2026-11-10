@@ -13,6 +13,9 @@
 import { useEffect, useState, useMemo } from 'react';
 import Modal from './Modal';
 import Select from './Select';
+import ChannelSelect from './ChannelSelect';
+import CompanyShareField from './CompanyShareField';
+import { isChannel, referrerOf } from '../../lib/channels';
 import TimePicker from './TimePicker';
 import LocationInput from './LocationInput';
 import { useStore } from '../../store/useStore';
@@ -35,7 +38,6 @@ import { Booking, CustomerInfo, Owner, Vehicle } from '../../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const REFERRAL_SOURCES = ['WhatsApp', 'Facebook', 'Instagram', 'TikTok', 'Google', 'Word of Mouth'];
 
 const fmt12 = (t?: string) => {
   if (!t || !/^\d{1,2}:\d{2}$/.test(t)) return '';
@@ -72,6 +74,10 @@ const emptyForm = (vehicleId = '') => ({
   paidAmount: 0,
   status: 'Confirmed' as const,
   referral: 'Direct',
+  channel: '',
+  companyShareType: undefined as Booking['companyShareType'],
+  companyShareValue: undefined as number | undefined,
+  companyShareMin: undefined as number | undefined,
   referralFeeType: 'fixed' as 'fixed' | 'percent',
   referralFeeValue: 0,
   notes: '',
@@ -313,7 +319,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
   };
 
   // Referral logic
-  const isPersonReferral = !!form.referral && form.referral !== 'Direct' && !REFERRAL_SOURCES.includes(form.referral);
+  const isPersonReferral = !!referrerOf(form.referral);
   const selfReferral = isPersonReferral && !!selectedOwner &&
     form.referral.trim().toLowerCase() === selectedOwner.name.trim().toLowerCase();
 
@@ -362,6 +368,8 @@ export default function AdminBookingModal({ open, onClose }: Props) {
     const bookingId = addBooking({
       ...bookingData,
       ...(priceNote.length ? { activity: priceNote } : {}),
+      // how the rent was set, for the bill: standard daily rate, an agreed rate per day, or an agreed total
+      ...(form.rentalType === 'Daily' ? { priceMode: price.mode, standardRate } : {}),
       depositAssetDescription: form.depositType === 'vehicle'
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
@@ -642,9 +650,11 @@ export default function AdminBookingModal({ open, onClose }: Props) {
               )
             )}
 
+            <ChannelSelect value={form.channel} onChange={(v) => set('channel', v)} />
+
             {/* Referral */}
             <div>
-              <p className="label">Referral <span className="text-navy-400 font-normal">(who sent this hire)</span></p>
+              <p className="label">Referred by <span className="text-navy-400 font-normal">(a person — Direct if nobody)</span></p>
               {referralCustom ? (
                 <div className="flex gap-2">
                   <input
@@ -663,7 +673,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                   value={form.referral}
                   onChange={(val) => {
                     if (val === '__custom__') { setReferralCustom(true); setForm((f) => ({ ...f, referral: '', referralFeeValue: 0 })); return; }
-                    const isSource = REFERRAL_SOURCES.includes(val);
+                    const isSource = isChannel(val);
                     setForm((f) => ({
                       ...f, referral: val || 'Direct',
                       ...((val === 'Direct' || val === '' || isSource) ? { referralFeeValue: 0 } : {}),
@@ -673,8 +683,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                   options={[
                     { value: 'Direct', label: 'Direct' },
                     ...owners.map((o) => ({ value: o.name, label: o.name, sub: 'Owner referral · earns a fee' })),
-                    ...REFERRAL_SOURCES.map((s) => ({ value: s, label: s, sub: 'Marketing source' })),
-                    { value: '__custom__', label: 'Other / third party…', sub: 'Type a name · earns a fee' },
+                    { value: '__custom__', label: 'Someone new…', sub: 'Type a name · earns a fee' },
                   ]}
                 />
               )}
@@ -700,34 +709,8 @@ export default function AdminBookingModal({ open, onClose }: Props) {
               </div>
             )}
 
-            {/* Referral fee */}
-            {isPersonReferral && !selfReferral && (
-              <div className="bg-navy-50/60 rounded-xl p-3">
-                <p className="label">Referral Fee for {form.referral}</p>
-                <div className="flex gap-2 items-center">
-                  <div className="flex bg-white rounded-xl p-0.5 gap-0.5 border border-navy-100 flex-shrink-0">
-                    {(['fixed', 'percent'] as const).map((t) => (
-                      <button key={t} type="button" onClick={() => set('referralFeeType', t)}
-                        className={`px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-all ${form.referralFeeType === t ? 'bg-navy-700 text-white' : 'text-navy-500'}`}>
-                        {t === 'fixed' ? 'Rs' : '%'}
-                      </button>
-                    ))}
-                  </div>
-                  <input className="input flex-1" type="number" min={0} value={form.referralFeeValue || ''}
-                    onChange={(e) => set('referralFeeValue', +e.target.value)}
-                    placeholder={form.referralFeeType === 'percent' ? 'e.g. 5' : 'e.g. 2000'} />
-                </div>
-                {form.referralFeeValue > 0 && (
-                  <p className="text-xs text-navy-500 mt-2">
-                    Referrer gets <span className="font-semibold text-navy-800">Rs {(
-                      form.referralFeeType === 'percent'
-                        ? Math.round(form.totalAmount * (form.referralFeeValue / 100))
-                        : Math.round(form.referralFeeValue)
-                    ).toLocaleString()}</span> · deducted from owner payout
-                  </p>
-                )}
-              </div>
-            )}
+            <CompanyShareField value={form} total={form.totalAmount} days={form.totalDays} rentalType={form.rentalType}
+                               onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
 
             {/* Locations + payment + driver */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

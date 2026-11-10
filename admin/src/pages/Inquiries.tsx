@@ -116,6 +116,7 @@ export default function Inquiries() {
     navigate('/bookings', {
       state: {
         fromInquiry: {
+          source:        inq.referral,
           customerName:  inq.customerName,
           customerPhone: inq.customerPhone,
           startDate:     inq.startDate,

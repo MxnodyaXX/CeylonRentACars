@@ -40,6 +40,9 @@ import { durationLabel, unitLabel, RentalType } from '../lib/rentalPeriod';
 import LocationInput from '../components/ui/LocationInput';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap, rentalDays } from '../lib/availability';
 import TimePicker from '../components/ui/TimePicker';
+import ChannelSelect from '../components/ui/ChannelSelect';
+import CompanyShareField from '../components/ui/CompanyShareField';
+import { canonicalNames, channelName, isChannel, nameKey, referrerOf } from '../lib/channels';
 import { Booking, CustomerInfo } from '../types';
 import {
   parseISO, addDays,
@@ -81,7 +84,6 @@ const LOST_REASONS = [
 
 // Marketing channels the customer can come through — these do NOT earn a referral fee.
 // Only owner referrals or a named third party are paid a fee.
-const REFERRAL_SOURCES = ['WhatsApp', 'Facebook', 'Instagram', 'TikTok', 'Google', 'Word of Mouth'];
 
 /** 'HH:mm' (24h) → '8:00 AM' for display; '' when unset/invalid. */
 const fmt12 = (t?: string) => {
@@ -128,6 +130,10 @@ const emptyForm = () => ({
   paidAmount: 0,
   status: 'Confirmed' as BookingStatus,
   referral: 'Direct',
+  channel: '',
+  companyShareType: undefined as Booking['companyShareType'],
+  companyShareValue: undefined as number | undefined,
+  companyShareMin: undefined as number | undefined,
   referralFeeType: 'fixed' as 'fixed' | 'percent',
   referralFeeValue: 0,
   notes: '',
@@ -210,6 +216,13 @@ export default function Bookings() {
   const [customerMode,    setCustomerMode]    = useState<'new' | 'existing'>('new');
   const [selectedCustomer, setSelectedCustomer] = useState('');
   const [referralCustom,   setReferralCustom]   = useState(false);
+  // people who referred before but aren't owners (one spelling each), so they're picked, not retyped
+  const thirdParties = useMemo(() => {
+    const names = bookings.map((b) => referrerOf(b.referral)).filter((n): n is string => !!n);
+    const fix = canonicalNames(names, owners);
+    const ownerKeys = new Set(owners.map((o) => nameKey(o.name)));
+    return [...new Set(names.map(fix))].filter((n) => !ownerKeys.has(nameKey(n))).sort();
+  }, [bookings, owners]);
   // Daily price: standard (days × daily rent) or an agreed custom rate per day / total
   const STANDARD_PRICE = { mode: 'standard' as PriceMode, customRate: 0, customTotal: 0 };
   const [price, setPrice] = useState(STANDARD_PRICE);
@@ -221,6 +234,7 @@ export default function Bookings() {
       startTime?: string; endTime?: string; pickupLocation?: string; dropLocation?: string; customerEmail?: string; totalAmount?: number;
       // from the agreed booking terms (inquiry consultation)
       paidAmount?: number; depositAmount?: number; depositType?: 'cash' | 'vehicle' | 'other'; totalKm?: number;
+      source?: string;   // the inquiry's referral: a channel or a person
     } } | null)?.fromInquiry;
     if (!inq) return;
     const f = emptyForm();
@@ -241,6 +255,9 @@ export default function Bookings() {
     if (inq.paidAmount)     f.paidAmount     = inq.paidAmount;
     if (inq.depositAmount)  { f.depositAmount = inq.depositAmount; f.depositType = inq.depositType ?? 'cash'; }
     if (inq.totalKm)        f.quotation = { ...f.quotation, totalKm: inq.totalKm };
+    // the inquiry's source: a channel (Website, WhatsApp…) or the person who referred them
+    if (inq.source && isChannel(inq.source)) f.channel = channelName(inq.source)!;
+    else if (referrerOf(inq.source)) f.referral = inq.source!.trim();
     setForm(f);
     setModal('add');
     setAvailability(null);
@@ -318,8 +335,7 @@ export default function Bookings() {
     : vehicles;
 
   // Only an owner referral or a named third party earns a fee — not Direct or a marketing source.
-  const isPersonReferral =
-    !!form.referral && form.referral !== 'Direct' && !REFERRAL_SOURCES.includes(form.referral);
+  const isPersonReferral = !!referrerOf(form.referral);
 
   // A vehicle's own owner can't be the referrer for their vehicle — they'd be
   // paying a referral fee to themselves. When that happens the booking is blocked
@@ -457,6 +473,10 @@ export default function Bookings() {
       setError(`${bookedVehicleOwner!.name} owns this vehicle and can't be its own referrer. Change the referral to Direct to continue.`);
       return;
     }
+    if (!form.channel) {
+      setError('Choose how the customer found us (walk-in, WhatsApp, Facebook…).');
+      return;
+    }
     const { depositVehicleModel, depositVehicleColor, depositVehicleNumber, ...bookingData } = form;
     // Record an agreed price next to the standard one, so the difference is explained later
     const standardTotal = form.totalDays * standardRate;
@@ -467,6 +487,8 @@ export default function Bookings() {
     const bookingId = addBooking({
       ...bookingData,
       ...(priceNote.length ? { activity: priceNote } : {}),
+      // how the rent was set, for the bill: standard daily rate, an agreed rate per day, or an agreed total
+      ...(form.rentalType === 'Daily' ? { priceMode: price.mode, standardRate } : {}),
       depositAssetDescription: form.depositType === 'vehicle'
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
@@ -1368,9 +1390,11 @@ export default function Bookings() {
             <div className="col-span-full"><DoNotRentWarning phone={form.customerPhone} /></div>
             <div className="col-span-full"><CustomerIdFields value={form.customerInfo} selfDrive={!form.driverId} onChange={(ci) => setForm((f) => ({ ...f, customerInfo: ci }))} /></div>
 
+            <ChannelSelect className="sm:col-span-2" required value={form.channel} onChange={(v) => set('channel', v)} />
+
             {/* Referral — pick a registered owner, or enter a third party */}
             <div className="sm:col-span-2">
-              <p className="label">Referral <span className="text-navy-400 font-normal">(who sent this hire)</span></p>
+              <p className="label">Referred by <span className="text-navy-400 font-normal">(a person who sent this hire — Direct if nobody)</span></p>
               {referralCustom ? (
                 <div className="flex gap-2">
                   <input
@@ -1394,7 +1418,7 @@ export default function Bookings() {
                   onChange={(val) => {
                     if (val === '__custom__') { setReferralCustom(true); setForm((f) => ({ ...f, referral: '', referralFeeValue: 0 })); return; }
                     // Marketing sources & Direct never carry a fee — clear any entered fee.
-                    const isSource = REFERRAL_SOURCES.includes(val);
+                    const isSource = isChannel(val);
                     setForm((f) => ({
                       ...f,
                       referral: val || 'Direct',
@@ -1405,8 +1429,8 @@ export default function Bookings() {
                   options={[
                     { value: 'Direct', label: 'Direct' },
                     ...owners.map((o) => ({ value: o.name, label: o.name, sub: 'Owner referral · earns a fee' })),
-                    ...REFERRAL_SOURCES.map((s) => ({ value: s, label: s, sub: 'Marketing source' })),
-                    { value: '__custom__', label: 'Other / third party…', sub: 'Type a name · earns a fee' },
+                    ...thirdParties.map((n) => ({ value: n, label: n, sub: 'Referred before · earns a fee' })),
+                    { value: '__custom__', label: 'Someone new…', sub: 'Type a name · earns a fee' },
                   ]}
                 />
               )}
@@ -1435,49 +1459,9 @@ export default function Bookings() {
               </div>
             )}
 
-            {/* Referral fee — only owner / third-party referrals are paid; deducted from the owner payout */}
-            {isPersonReferral && !selfReferral && (
-              <div className="sm:col-span-2 bg-navy-50/60 rounded-xl p-3">
-                <p className="label">Referral Fee for {form.referral}</p>
-                <div className="flex gap-2 items-center">
-                  <div className="flex bg-white rounded-xl p-0.5 gap-0.5 border border-navy-100 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => set('referralFeeType', 'fixed')}
-                      className={`px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-all ${form.referralFeeType === 'fixed' ? 'bg-navy-700 text-white' : 'text-navy-500'}`}
-                    >
-                      Rs
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => set('referralFeeType', 'percent')}
-                      className={`px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-all ${form.referralFeeType === 'percent' ? 'bg-navy-700 text-white' : 'text-navy-500'}`}
-                    >
-                      %
-                    </button>
-                  </div>
-                  <input
-                    className="input flex-1"
-                    type="number"
-                    min={0}
-                    value={form.referralFeeValue || ''}
-                    onChange={(e) => set('referralFeeValue', +e.target.value)}
-                    placeholder={form.referralFeeType === 'percent' ? 'e.g. 5' : 'e.g. 2000'}
-                  />
-                </div>
-                {form.referralFeeValue > 0 && (
-                  <p className="text-xs text-navy-500 mt-2">
-                    Referrer gets <span className="font-semibold text-navy-800">Rs {(
-                      form.referralFeeType === 'percent'
-                        ? Math.round(form.totalAmount * (form.referralFeeValue / 100))
-                        : Math.round(form.referralFeeValue)
-                    ).toLocaleString()}</span>
-                    {form.referralFeeType === 'percent' && ` (${form.referralFeeValue}% of Rs ${form.totalAmount.toLocaleString()})`}
-                    {' · '}deducted from owner payout
-                  </p>
-                )}
-              </div>
-            )}
+            {/* the company's commission (no referral fees — all commission is the company's) */}
+            <CompanyShareField className="sm:col-span-2" value={form} total={form.totalAmount} days={form.totalDays} rentalType={form.rentalType}
+                               onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
 
             <div>
               <p className="label">Pickup Location</p>

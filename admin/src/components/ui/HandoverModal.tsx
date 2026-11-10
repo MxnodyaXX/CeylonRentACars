@@ -10,12 +10,45 @@ import { tripKmFor, useBreakdownStore } from '../../store/useBreakdownStore';
 import { SwapReadingsFix } from '../breakdowns/SwapPanel';
 import UsagePhases from '../breakdowns/UsagePhases';
 import { rentalDays } from '../../lib/availability';
+import { companyShareOf, shareBaseOf, shareWorking } from '../../lib/companyShare';
 import { breakdownHooks } from '../../store/useStore';
 import { printInvoice } from '../../lib/printInvoice';
 import type { Booking, ChargeKind, HandoverChecklist, KmMeter, RecoveryReason } from '../../types';
 import KmReading from './KmReading';
 import { METER_LABEL, kmWithMeter, meterOf } from '../../lib/tripKm';
 import type { BdSwap } from '../../lib/breakdowns';
+import type { ReactNode } from 'react';
+
+type CoOpt = 'booked' | 'percent' | 'amount' | 'perday' | 'none';
+
+/** the booking's own commission method, in words */
+function methodText(b: Booking) {
+  const v = b.companyShareValue ?? 0;
+  switch (b.companyShareType) {
+    case 'percent': return `${v}% of the bill`;
+    case 'percent_min': return `${v}%, at least ${rs(b.companyShareMin ?? 0)} a day`;
+    case 'per_day': return `${rs(v)} a day`;
+    case 'fixed': return v ? `${rs(v)} for the trip` : 'no commission';
+    default: return 'none';
+  }
+}
+
+/** one way of taking the commission — a card to pick, with what the company would get */
+function CoCard({ n, active, onPick, title, sub, amount, children }: { n: number; active: boolean; onPick: () => void; title: string; sub: string; amount: number | null; children?: ReactNode }) {
+  return (
+    <div role="radio" aria-checked={active} tabIndex={0} onClick={onPick} onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onPick(); } }}
+         className={`cursor-pointer rounded-xl border p-3 text-sm transition ${active ? 'border-navy-800 ring-2 ring-navy-800/15 bg-white' : 'border-navy-100 bg-white/60 hover:border-navy-300'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-start gap-2 min-w-0">
+          <span className={`mt-0.5 w-5 h-5 flex-shrink-0 rounded-full text-[11px] font-bold flex items-center justify-center ${active ? 'bg-navy-800 text-white' : 'bg-navy-100 text-navy-500'}`}>{n}</span>
+          <div className="min-w-0"><p className="font-semibold text-navy-800 leading-tight">{title}</p><p className="text-[11px] text-navy-400 leading-snug">{sub}</p></div>
+        </div>
+        <div className="text-right flex-shrink-0"><p className="text-[10px] text-navy-400">Company</p><p className={`font-bold tabular-nums ${active ? 'text-navy-900' : 'text-navy-500'}`}>{amount === null ? '—' : rs(amount)}</p></div>
+      </div>
+      {children && <div className="mt-2 pl-7" onClick={(e) => { e.stopPropagation(); onPick(); }}>{children}</div>}
+    </div>
+  );
+}
 
 const EXTRA_KINDS: ChargeKind[] = ['Fuel', 'Late return', 'Damage', 'Cleaning', 'Traffic fine', 'Toll', 'Parking', 'Other'];
 /** Money off the bill — what the customer paid for the car (tyres, parts…) is usually the owner's cost */
@@ -121,10 +154,30 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const carsUsed = trip ? [...new Set(trip.legs.filter((l) => l.km).map((l) => l.car))] : [];
   const driven = trip?.total;
   const [kmAck, setKmAck] = useState(false);
-  // a recovery ends the rental early: the km allowance is for the days the customer actually had the car
-  const kmDays = recover ? Math.max(1, rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay)) : b.totalDays;
+  // Returned early / late (daily rentals): the days actually used, from the scheduled start to the return time
+  const daily = step === 'return' && !recover && (b.rentalType ?? 'Daily') === 'Daily' && b.totalDays > 0;
+  const usedDays = daily ? rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay) : b.totalDays;
+  const dayRate = b.totalDays ? Math.round(b.totalAmount / b.totalDays) : 0;
+  const exchangedDays = (b.exchanges ?? []).reduce((s, e) => s + e.fromDays, 0);
+  const early = daily && usedDays < b.totalDays && usedDays >= Math.max(1, exchangedDays);
+  const late = daily && usedDays > b.totalDays;
+  // how the rent ends up: 'auto' = early: the days used / late: + the extra days · 'full' = the booked price ·
+  // 'rate' = a custom daily rate × the days used · 'total' = a custom amount for the whole trip
+  const [rentOpt, setRentOpt] = useState<'auto' | 'full' | 'rate' | 'total'>('auto');
+  // the km allowance is for the days the customer is charged for: a recovery or an early / late return charged by the
+  // days used gets that many days' km; keeping the full booking price keeps the booked days' km
+  const kmDays = recover ? Math.max(1, rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay))
+    : (early || late) && rentOpt !== 'full' ? usedDays : b.totalDays;
   const includedKm = (vehicle?.includedKmPerDay ?? 100) * (kmDays || 1);
   const extraKm = driven !== undefined ? Math.max(0, driven - includedKm) : 0;
+  // km given free on top of the included km (agreed with the customer) — only the rest is charged
+  const [freeKmIn, setFreeKmIn] = useState('');
+  const freeKm = Math.max(0, Math.round(Number(freeKmIn) || 0));
+  const billKm = Math.max(0, extraKm - freeKm);
+  // or one agreed amount for all the extra km (instead of km × rate)
+  const [kmMode, setKmMode] = useState<'rate' | 'amount'>('rate');
+  const [kmAmountIn, setKmAmountIn] = useState('');
+  const kmAmount = Math.max(0, Math.round(Number(kmAmountIn) || 0));
 
   // ── Settlement at return: rent so far, extra km, other charges, deposit, payment collected ──
   const isReturn = step === 'return';
@@ -138,30 +191,30 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const [depKeep, setDepKeep] = useState('');
   const [depNote, setDepNote] = useState('');
   const [settleDep, setSettleDep] = useState(held > 0);
+  const keep = Math.min(held, Math.max(0, Number(depKeep) || 0));
   // a recovery usually collects nothing on the spot — what's unpaid stays owed on the booking
   const [collect, setCollect] = useState<string | null>(recover ? '0' : null);   // null = follow the balance
   const [method, setMethod] = useState('Cash');
   const [receiptNo, setReceiptNo] = useState('');
   const [invoice, setInvoice] = useState(canPay);
   const rate = Math.max(0, Number(kmRate) || 0);
-  const kmCharge = isReturn && canPay && chargeKm && !kmAlreadyCharged ? Math.round(extraKm * rate) : 0;
+  const kmCharge = isReturn && canPay && chargeKm && !kmAlreadyCharged ? (kmMode === 'amount' ? kmAmount : Math.round(billKm * rate)) : 0;
   const extrasTotal = extras.reduce((s, x) => s + Math.max(0, Number(x.amount) || 0), 0);
   // deductions: the customer paid for something the car needed (e.g. new tyres) — off the bill, and by default off the owner's payout
   const [deds, setDeds] = useState<{ kind: DeductionKind; amount: string; note: string; owner: boolean }[]>([]);
   const dedTotal = deds.reduce((s, x) => s + Math.max(0, Number(x.amount) || 0), 0);
   const carOwner = useStore((s) => s.owners.find((o) => o.id === vehicle?.ownerId));
-  // Returned early / late (daily rentals): the days actually used, from the scheduled start to the return time
-  const daily = isReturn && !recover && (b.rentalType ?? 'Daily') === 'Daily' && b.totalDays > 0;
-  const usedDays = daily ? rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay) : b.totalDays;
-  const dayRate = b.totalDays ? Math.round(b.totalAmount / b.totalDays) : 0;
-  const exchangedDays = (b.exchanges ?? []).reduce((s, e) => s + e.fromDays, 0);
-  const early = daily && usedDays < b.totalDays && usedDays >= Math.max(1, exchangedDays);
-  const late = daily && usedDays > b.totalDays;
-  const [chargeUsedOnly, setChargeUsedOnly] = useState(true);
-  const [chargeLate, setChargeLate] = useState(true);
+  const [customRate, setCustomRate] = useState('');
+  const [customTotal, setCustomTotal] = useState('');
+  const chargeUsedOnly = rentOpt === 'auto';
+  const chargeLate = rentOpt === 'auto';
   const usedValue = early ? Math.round((b.totalAmount * usedDays) / b.totalDays) : b.totalAmount;
   const earlyCut = early && chargeUsedOnly && canPay ? b.totalAmount - usedValue : 0;
   const lateCharge = late && chargeLate && canPay ? (usedDays - b.totalDays) * dayRate : 0;
+  const customRent = (early || late) && canPay
+    ? rentOpt === 'rate' ? Math.round((Number(customRate) || 0) * usedDays) : rentOpt === 'total' ? Math.round(Number(customTotal) || 0) : null
+    : null;
+  const customAdj = customRent !== null && customRent > 0 ? customRent - b.totalAmount : 0;
   // Recovery: why, and the rent the customer owes for the time they had the car (any rental type)
   const [rcReason, setRcReason] = useState<RecoveryReason | ''>('');
   const [rcDetails, setRcDetails] = useState('');
@@ -185,12 +238,16 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const span = (ms: number) => { const m = Math.max(0, Math.round(ms / 60_000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60; return [d && `${d} day${d === 1 ? '' : 's'}`, h && `${h} h`, mi && `${mi} min`].filter(Boolean).join(' ') || '0 min'; };
   const recoverRent = rcRent === 'full' ? b.totalAmount : rcRent === 'custom' ? Math.max(0, Math.round(Number(rcCustom) || 0)) : usedRent;
   const rentChange = recover ? recoverRent - b.totalAmount : 0;
-  const newBill = price.bill - earlyCut + rentChange + kmCharge + extrasTotal + lateCharge - dedTotal;
+  const newBill = price.bill - earlyCut + rentChange + customAdj + kmCharge + extrasTotal + lateCharge - dedTotal;
   const dueNow = Math.max(0, newBill - price.paid);
   const refundDue = Math.max(0, price.paid - newBill);
   const [refundNow, setRefundNow] = useState(true);
-  const collectAmt = !canPay ? 0 : collect === null ? dueNow : Math.max(0, Number(collect) || 0);
-  const remaining = Math.max(0, newBill - price.paid - collectAmt);
+  // the cash deposit can pay the bill: what's left after anything kept for damage, up to the balance
+  const [depForBill, setDepForBill] = useState(true);
+  const depFree = Math.max(0, held - (settleDep ? keep : 0));
+  const depApplied = canPay && isReturn && depForBill && b.depositType === 'cash' ? Math.min(depFree, dueNow) : 0;
+  const collectAmt = !canPay ? 0 : collect === null ? Math.max(0, dueNow - depApplied) : Math.max(0, Number(collect) || 0);
+  const remaining = Math.max(0, newBill - price.paid - depApplied - collectAmt);
   // Recovered with money still owed: keep it as the customer's credit (followed up on the Credit page),
   // or write it off as bad debt — all of it, or part with the rest kept as credit
   const [owedAs, setOwedAs] = useState<'credit' | 'writeoff' | ''>('');
@@ -198,7 +255,37 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const [writeOffWhy, setWriteOffWhy] = useState('');
   const writeOff = owedAs === 'writeoff' ? Math.min(remaining, writeOffIn.trim() === '' ? remaining : Math.max(0, Math.round(Number(writeOffIn) || 0))) : 0;
   const creditLeft = owedAs ? remaining - writeOff : 0;
-  const keep = Math.min(held, Math.max(0, Number(depKeep) || 0));
+  // the company's commission on the FINAL bill: rent (as it ends up) + charges already on it + the ones added now − discount
+  const finalRent = b.totalAmount - earlyCut + rentChange + customAdj;
+  const shareBase = shareBaseOf(b) - b.totalAmount + finalRent + kmCharge + lateCharge + extrasTotal;
+  const shareDays = early || (customRent ?? 0) > 0 ? usedDays : b.totalDays;
+  // the commission for this trip — 1 the company rate on the booking · 2 a custom % · 3 a custom amount ·
+  // 4 Rs per day + Rs per extra km · (or none)
+  const [coOpt, setCoOpt] = useState<CoOpt>('booked');
+  const [coPct, setCoPct] = useState(String(b.companyShareValue && (b.companyShareType === 'percent' || b.companyShareType === 'percent_min') ? b.companyShareValue : 15));
+  const [coAmt, setCoAmt] = useState('');
+  const [coDay, setCoDay] = useState(String(b.companyShareType === 'per_day' ? b.companyShareValue ?? 1000 : b.companyShareMin || 1000));
+  const [kmCo, setKmCo] = useState('');   // '' = the suggested Rs per km
+  const dayRent = b.standardRate || vehicle?.dailyRent || (b.totalDays ? b.totalAmount / b.totalDays : 0);
+  const coDayN = Math.max(0, Math.round(Number(coDay) || 0));
+  // suggested per km: the same part of each km as of each day (Rs 1,000 of a Rs 7,000 day → Rs 10 of Rs 70/km)
+  const kmCoDefault = dayRent ? Math.max(0, Math.round((rate || 0) * (coDayN / dayRent))) : 10;
+  const kmCoRate = kmCo.trim() === '' ? kmCoDefault : Math.max(0, Number(kmCo) || 0);
+  const kmFields = (opt: CoOpt): Pick<Booking, 'companyKmRate' | 'companyKmKm' | 'companyKmCharge'> | null =>
+    opt === 'perday' && kmCharge > 0 ? { companyKmRate: kmCoRate, companyKmKm: kmMode === 'amount' ? extraKm : billKm, companyKmCharge: kmCharge } : null;
+  const fieldsOf = (opt: CoOpt): Pick<Booking, 'companyShareType' | 'companyShareValue' | 'companyShareMin'> | null =>
+    opt === 'percent' ? { companyShareType: 'percent', companyShareValue: Math.max(0, Math.min(100, Number(coPct) || 0)), companyShareMin: undefined }
+    : opt === 'amount' ? { companyShareType: 'fixed', companyShareValue: Math.max(0, Math.round(Number(coAmt) || 0)), companyShareMin: undefined }
+    : opt === 'perday' ? { companyShareType: 'per_day', companyShareValue: coDayN, companyShareMin: undefined }
+    : opt === 'none' ? { companyShareType: 'fixed', companyShareValue: 0, companyShareMin: undefined }
+    : null;
+  const shareFor = (opt: CoOpt) => ({ ...b, ...(fieldsOf(opt) ?? {}), ...(kmFields(opt) ?? (opt !== 'booked' ? { companyKmCharge: 0 } : {})), totalDays: shareDays });
+  const cutFor = (opt: CoOpt) => { const x = shareFor(opt); return x.companyShareType ? companyShareOf(x, shareBase) : 0; };
+  const coFields = fieldsOf(coOpt);
+  const kmSplit = kmFields(coOpt);
+  const shareB = shareFor(coOpt);
+  const companyCut = cutFor(coOpt);
+  const ownerDeds = deds.filter((x) => x.owner).reduce((s, x) => s + Math.max(0, Number(x.amount) || 0), 0);
 
   const addPhotos = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -231,6 +318,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
       photos: photos.length ? photos : undefined, signature,
       ...(recover && rcReason ? { recovery: { reason: rcReason, details: rcDetails.trim(), policeRef: rcPolice.trim() || undefined, customerFlagged: rcFlag || undefined } } : {}),
     };
+    if (isReturn && canPay && chargeKm && kmMode === 'amount' && extraKm > 0 && !kmAlreadyCharged && kmAmountIn.trim() === '') return setError('Enter the agreed amount for the extra km (or untick "Charge it").');
     if (isReturn && canPay && settleDep && keep > 0 && !depNote.trim()) return setError('Say why part of the deposit is kept.');
     if (isReturn && extras.some((x) => (Number(x.amount) || 0) > 0 && x.kind === 'Other' && !x.note.trim())) return setError('Describe each "Other" charge.');
     if (isReturn && deds.some((x) => (Number(x.amount) || 0) > 0 && !x.note.trim())) return setError('Say what each deduction is for (e.g. 2 rear tyres, receipt from the shop).');
@@ -239,6 +327,26 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
       // nothing is changed when the rental can't be completed (e.g. a breakdown replacement is still out)
       const blocked = breakdownHooks.activeSwapNote?.(b.id);
       if (blocked) return setError(blocked);
+      if (coFields && canPay && !b.exchanges?.length) {
+        if (coOpt === 'amount' && !(Number(coAmt) >= 0 && coAmt.trim() !== '')) return setError('Enter the commission amount.');
+        if (coOpt === 'perday' && coDay.trim() === '') return setError('Enter the company amount per day.');
+        // the per-km split goes with option 4 only (0 = none)
+        editBooking(b.id, { ...coFields, ...(kmSplit ?? ((b.companyKmCharge ?? 0) > 0 ? { companyKmCharge: 0 } : {})) }, {
+          by, reason: 'Commission set at the return',
+          changes: [`Company commission: ${shareWorking(shareB, shareBase) ?? 'none'} = Rs ${companyCut.toLocaleString('en-LK')} (was ${shareWorking({ ...b, totalDays: shareDays }, shareBase) ?? 'as booked'})`],
+        });
+      }
+      if ((rentOpt === 'rate' || rentOpt === 'total') && (early || late) && canPay) {
+        if (!customRent || customRent <= 0) return setError(rentOpt === 'rate' ? 'Enter the daily rate to charge.' : 'Enter the amount for the whole trip.');
+        editBooking(b.id, {
+          endDate: at.slice(0, 10), endTime: at.slice(11, 16), totalDays: usedDays, totalAmount: customRent,
+          priceMode: rentOpt === 'rate' ? 'perDay' : 'total', standardRate: b.standardRate ?? vehicle?.dailyRent,
+        }, {
+          by, changes: [`Returned ${early ? 'early' : 'late'}: ${usedDays} day${usedDays === 1 ? '' : 's'} used (${b.totalDays} booked)`,
+            `Price Rs ${b.totalAmount.toLocaleString('en-LK')} → Rs ${customRent.toLocaleString('en-LK')} (${rentOpt === 'rate' ? `${usedDays} × Rs ${(Number(customRate) || 0).toLocaleString('en-LK')} agreed daily rate` : 'agreed amount for the trip'})`],
+          reason: 'Price agreed at the return',
+        });
+      }
       // returned early and only the days used are charged: shorten the booking first (audited; owner payouts follow)
       if (earlyCut > 0) {
         const back = new Date(at);
@@ -291,7 +399,9 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
       }
       if (canPay && saveRate && vehicle && rate !== (vehicle.extraKmRate ?? 50)) updateVehicle(vehicle.id, { extraKmRate: rate });
       if (lateCharge > 0) addCharge(b.id, { kind: 'Late return', amount: lateCharge, date: today(), note: `${usedDays - b.totalDays} extra day${usedDays - b.totalDays === 1 ? '' : 's'} × Rs ${dayRate.toLocaleString('en-LK')} (booked until ${b.endDate})`, by });
-      if (kmCharge > 0) addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${extraKm.toLocaleString()} km × Rs ${rate.toLocaleString()}${carsUsed.length > 1 ? ` (${driven!.toLocaleString()} km driven in ${carsUsed.join(' + ')})` : ''}`, by });
+      if (kmCharge > 0 && kmMode === 'amount') addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${extraKm.toLocaleString()} km — agreed amount for the km (works out to Rs ${(Math.round((kmCharge / Math.max(1, extraKm)) * 100) / 100).toLocaleString('en-LK')}/km)${carsUsed.length > 1 ? ` (${driven!.toLocaleString()} km driven in ${carsUsed.join(' + ')})` : ''}`, by });
+      else if (kmCharge > 0) addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${billKm.toLocaleString()} km × Rs ${rate.toLocaleString()}${freeKm > 0 ? ` (${extraKm.toLocaleString()} km over the included ${includedKm.toLocaleString()} − ${freeKm.toLocaleString()} km given free)` : ''}${carsUsed.length > 1 ? ` (${driven!.toLocaleString()} km driven in ${carsUsed.join(' + ')})` : ''}`, by });
+      if (kmCharge === 0 && freeKm > 0 && extraKm > 0 && canPay) useStore.getState().logBookingActivity(b.id, { by, type: 'Note', text: `Extra km not charged: ${Math.min(extraKm, freeKm).toLocaleString()} km given free` });
       extras.forEach((x) => {
         const amount = Math.max(0, Number(x.amount) || 0);
         if (amount > 0) addCharge(b.id, { kind: x.kind, amount, date: today(), note: x.note.trim() || undefined, by });
@@ -308,9 +418,10 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
         addCharge(b.id, { kind: 'Deduction', amount: -amount, date: today(), note, by,
           ...(o?.adjustmentId ? { ownerAdjustmentId: o.adjustmentId } : {}), ...(o?.owedId ? { ownerOwedId: o.owedId } : {}) });
       });
+      if (depApplied > 0) useStore.getState().payFromDeposit(b.id, depApplied, by);
       if (collectAmt > 0) recordPayment(b.id, { kind: 'Payment', amount: collectAmt, method, receiptNo: receiptNo.trim() || undefined, note: recover ? 'Collected at recovery' : 'Collected at return', by });
       if (canPay && refundDue > 0 && refundNow) recordPayment(b.id, { kind: 'Refund', amount: refundDue, method, receiptNo: receiptNo.trim() || undefined, note: 'Overpayment refunded at return', by });
-      if (canPay && settleDep && held > 0) settleDeposit(b.id, { returned: held - keep, deduction: keep, method, notes: depNote.trim() || undefined }, by);
+      if (canPay && settleDep && held - depApplied > 0) settleDeposit(b.id, { returned: Math.max(0, held - depApplied - keep), deduction: keep, method, notes: depNote.trim() || undefined }, by);
       // what's still owed after a recovery: the customer's credit, and/or written off as bad debt
       if (recover && owedAs && remaining > 0) {
         const st = useStore.getState();
@@ -478,23 +589,33 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                     </div>
                   ))}
                 </div>
-                {early ? (
-                  <div className="flex flex-col gap-1 text-sm">
-                    <label className="flex items-center gap-2"><input type="radio" checked={chargeUsedOnly} onChange={() => setChargeUsedOnly(true)} />
-                      Charge the days used: {usedDays} × {rs(dayRate)} = <b>{rs(usedValue)}</b></label>
-                    <label className="flex items-center gap-2"><input type="radio" checked={!chargeUsedOnly} onChange={() => setChargeUsedOnly(false)} />
-                      Keep the full booking price ({rs(b.totalAmount)})</label>
-                  </div>
-                ) : (
-                  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={chargeLate} onChange={(e) => setChargeLate(e.target.checked)} />
-                    Charge the extra days: {usedDays - b.totalDays} × {rs(dayRate)} = <b>{rs((usedDays - b.totalDays) * dayRate)}</b></label>
-                )}
+                <div className="flex flex-col gap-1.5 text-sm">
+                  <label className="flex items-center gap-2"><input type="radio" checked={rentOpt === 'auto'} onChange={() => setRentOpt('auto')} />
+                    {early ? <>Charge the days used: {usedDays} × {rs(dayRate)} = <b>{rs(usedValue)}</b></>
+                           : <>Charge the extra days: {usedDays - b.totalDays} × {rs(dayRate)} = <b>{rs((usedDays - b.totalDays) * dayRate)}</b> (total {rs(b.totalAmount + (usedDays - b.totalDays) * dayRate)})</>}</label>
+                  <label className="flex items-center gap-2"><input type="radio" checked={rentOpt === 'full'} onChange={() => setRentOpt('full')} />
+                    {early ? <>Keep the full booking price ({rs(b.totalAmount)})</> : <>Don't charge the extra days — keep {rs(b.totalAmount)}</>}</label>
+                  <label className="flex flex-wrap items-center gap-2"><input type="radio" checked={rentOpt === 'rate'} onChange={() => setRentOpt('rate')} />
+                    Custom daily rate:
+                    <input className="input !py-1 !w-28" type="number" min={0} placeholder={String(dayRate)} value={customRate}
+                           onFocus={() => setRentOpt('rate')} onChange={(e) => { setRentOpt('rate'); setCustomRate(e.target.value); }} />
+                    × {usedDays} day{usedDays === 1 ? '' : 's'}{rentOpt === 'rate' && Number(customRate) > 0 && <> = <b>{rs(Math.round(Number(customRate) * usedDays))}</b></>}</label>
+                  <label className="flex flex-wrap items-center gap-2"><input type="radio" checked={rentOpt === 'total'} onChange={() => setRentOpt('total')} />
+                    Custom amount for the whole trip:
+                    <input className="input !py-1 !w-32" type="number" min={0} placeholder={String(b.totalAmount)} value={customTotal}
+                           onFocus={() => setRentOpt('total')} onChange={(e) => { setRentOpt('total'); setCustomTotal(e.target.value); }} />
+                    {rentOpt === 'total' && Number(customTotal) > 0 && <span className="text-xs opacity-80">({usedDays} days · {rs(Math.round(Number(customTotal) / usedDays))}/day)</span>}</label>
+                  {customRent !== null && customRent > 0 && (
+                    <p className="text-xs font-semibold">Rent {rs(b.totalAmount)} → {rs(customRent)} ({customAdj >= 0 ? '+' : '−'} {rs(Math.abs(customAdj))})</p>
+                  )}
+                </div>
                 <ul className="text-xs space-y-0.5 opacity-90">
                   {[
                     'Days are counted from the booked start to the "Returned at" time.',
                     b.waiveExtraDay && 'Partial days are waived for this booking.',
                     bookingSwaps.length > 0 && 'Days in a breakdown replacement count as used — the customer pays for them.',
                     early && chargeUsedOnly && 'The booking is shortened and the change is kept in its history; owner payouts follow.',
+                    (rentOpt === 'rate' || rentOpt === 'total') && 'The booking is set to the days used at this price; the change is kept in its history and owner payouts follow.',
                   ].filter(Boolean).map((n) => <li key={n as string} className="flex gap-1.5"><Info size={13} className="mt-0.5 flex-shrink-0" />{n}</li>)}
                 </ul>
               </div>
@@ -570,7 +691,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               ))}
               {earlyCut > 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Returned early — {b.totalDays - usedDays} unused day{b.totalDays - usedDays === 1 ? '' : 's'} not charged</span><span className="text-red-600">− {rs(earlyCut)}</span></div>}
               {lateCharge > 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Late return — {usedDays - b.totalDays} extra day{usedDays - b.totalDays === 1 ? '' : 's'}</span><span className="text-navy-800">{rs(lateCharge)}</span></div>}
-              <div className="flex justify-between gap-3 py-0.5 border-t border-navy-50 mt-1"><span className="text-navy-500">Bill</span><b>{rs(price.bill - earlyCut + lateCharge + rentChange)}</b></div>
+              {customAdj !== 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Price agreed at the return — {rentOpt === 'rate' ? `${usedDays} days × ${rs(Number(customRate) || 0)}` : `${rs(customRent ?? 0)} for the trip`}</span><span className={customAdj < 0 ? 'text-red-600' : 'text-navy-800'}>{customAdj < 0 ? `− ${rs(-customAdj)}` : rs(customAdj)}</span></div>}
+              <div className="flex justify-between gap-3 py-0.5 border-t border-navy-50 mt-1"><span className="text-navy-500">Bill</span><b>{rs(price.bill - earlyCut + lateCharge + rentChange + customAdj)}</b></div>
               <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-500">Already paid</span><span className="text-emerald-700">{rs(price.paid)}</span></div>
             </div>}
 
@@ -693,16 +815,38 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               ) : !canPay ? (
                 <p className="text-sm text-navy-700">Driven <b>{driven.toLocaleString()} km</b> · included {includedKm.toLocaleString()} km · <b>{extraKm.toLocaleString()} extra km</b>{extraKm > 0 ? ' — Finance adds the charge' : ''}</p>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+                <>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-navy-700">
+                  <label className="flex items-center gap-1.5"><input type="radio" checked={kmMode === 'rate'} onChange={() => setKmMode('rate')} /> Per km (rate × km)</label>
+                  <label className="flex items-center gap-1.5"><input type="radio" checked={kmMode === 'amount'} onChange={() => setKmMode('amount')} /> One agreed amount for all the extra km</label>
+                </div>
+                {kmMode === 'amount' ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+                    <div className="text-sm text-navy-500">Extra km<p className="text-sm font-semibold text-navy-800 mt-1">{extraKm.toLocaleString()} km</p></div>
+                    <label className="text-sm text-navy-500">Amount for the km (Rs)
+                      <input className="input !py-1.5 mt-1" type="number" min="0" step={500} placeholder={String(Math.round(extraKm * rate))} value={kmAmountIn} onChange={(e) => setKmAmountIn(e.target.value)} autoFocus />
+                    </label>
+                    <div className="text-sm text-navy-500">Charge<p className="text-sm font-semibold text-navy-800 mt-1">{rs(kmAmount)}</p>
+                      {kmAmount > 0 && extraKm > 0 && <p className="text-[11px] text-navy-400">≈ {rs(Math.round(kmAmount / extraKm))}/km</p>}</div>
+                    <label className="text-sm text-navy-700 flex items-center gap-1.5 pb-2"><input type="checkbox" checked={chargeKm} onChange={(e) => setChargeKm(e.target.checked)} /> Charge it</label>
+                  </div>
+                ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 items-end">
                   <div className="text-sm text-navy-500">Extra km<p className="text-sm font-semibold text-navy-800 mt-1">{extraKm.toLocaleString()} km</p></div>
+                  <label className="text-sm text-navy-500">Free km
+                    <input className="input !py-1.5 mt-1" type="number" min="0" step={50} placeholder="0" value={freeKmIn} onChange={(e) => setFreeKmIn(e.target.value)} />
+                  </label>
                   <label className="text-sm text-navy-500">Rate (Rs / km)
                     <input className="input !py-1.5 mt-1" type="number" min="0" value={kmRate} onChange={(e) => setKmRate(e.target.value)} />
                   </label>
-                  <div className="text-sm text-navy-500">Charge<p className="text-sm font-semibold text-navy-800 mt-1">{rs(extraKm * rate)}</p></div>
+                  <div className="text-sm text-navy-500">Charge<p className="text-sm font-semibold text-navy-800 mt-1">{rs(billKm * rate)}</p>
+                    {freeKm > 0 && <p className="text-[11px] text-navy-400">{billKm.toLocaleString()} km × {rs(rate)}</p>}</div>
                   <label className="text-sm text-navy-700 flex items-center gap-1.5 pb-2"><input type="checkbox" checked={chargeKm} onChange={(e) => setChargeKm(e.target.checked)} /> Charge it</label>
                 </div>
+                )}
+                </>
               )}
-              {canPay && vehicle && rate !== (vehicle.extraKmRate ?? 50) && (
+              {canPay && kmMode === 'rate' && vehicle && rate !== (vehicle.extraKmRate ?? 50) && (
                 <label className="text-sm text-navy-700 flex items-center gap-1.5"><input type="checkbox" checked={saveRate} onChange={(e) => setSaveRate(e.target.checked)} />
                   Save Rs {rate.toLocaleString()}/km as {vehicle.vehicleNumber}'s extra km rate (now Rs {(vehicle.extraKmRate ?? 50).toLocaleString()})</label>
               )}
@@ -754,13 +898,80 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
             {held > 0 && (
               <div className="rounded-xl bg-amber-50/70 p-3 space-y-2">
                 <label className="text-sm font-semibold text-amber-900 flex items-center gap-1.5"><input type="checkbox" checked={settleDep} onChange={(e) => setSettleDep(e.target.checked)} /> Settle the deposit now ({rs(held)} held)</label>
+                {b.depositType === 'cash' && dueNow > 0 && (
+                  <label className="text-sm text-amber-900 flex items-start gap-1.5">
+                    <input type="checkbox" className="mt-0.5" checked={depForBill} onChange={(e) => { setDepForBill(e.target.checked); setCollect(null); }} />
+                    <span>Use the deposit to pay the bill — <b>{rs(Math.min(depFree, dueNow))}</b> of the {rs(dueNow)} balance{dueNow > depFree ? `; the customer pays the other ${rs(dueNow - depFree)}` : depFree > dueNow ? `; ${rs(depFree - dueNow)} of the deposit is left` : ''}</span>
+                  </label>
+                )}
                 {settleDep && (
                   <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-2">
                     <label className="text-sm text-navy-500">Keep (Rs)<input className="input !py-1.5 mt-1" type="number" min="0" max={held} value={depKeep} placeholder="0" onChange={(e) => setDepKeep(e.target.value)} /></label>
                     <label className="text-sm text-navy-500">{keep > 0 ? 'Why is part kept? *' : 'Note'}<input className="input !py-1.5 mt-1" value={depNote} onChange={(e) => setDepNote(e.target.value)} /></label>
-                    <p className="text-sm text-amber-900 sm:col-span-2">Return {rs(held - keep)} to the customer{keep > 0 ? `, keep ${rs(keep)}` : ''}.</p>
+                    <p className="text-sm text-amber-900 sm:col-span-2">Return {rs(Math.max(0, held - keep - depApplied))} to the customer{keep > 0 ? `, keep ${rs(keep)}` : ''}{depApplied > 0 ? `, ${rs(depApplied)} pays the bill` : ''}.</p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* the company's commission and the owner's share, on the final bill */}
+            {b.companyShareType && !b.exchanges?.length && (
+              <div className="rounded-xl border border-navy-100 p-3 text-sm space-y-1">
+                <p className="text-sm font-semibold text-navy-700">Company commission · on the final bill</p>
+                <div className="flex justify-between"><span className="text-navy-500">Rent{earlyCut || rentChange ? ' (as it ends up)' : ''}</span><span>{rs(finalRent)}</span></div>
+                {shareBase - finalRent + (b.discount ?? 0) > 0 && <div className="flex justify-between"><span className="text-navy-500">+ Extra km &amp; other charges</span><span>{rs(shareBase - finalRent + (b.discount ?? 0))}</span></div>}
+                {(b.discount ?? 0) > 0 && <div className="flex justify-between"><span className="text-navy-500">− Discount</span><span>− {rs(b.discount ?? 0)}</span></div>}
+                <div className="flex justify-between border-t border-navy-100 pt-1"><span className="text-navy-600">Income to share</span><b>{rs(shareBase)}</b></div>
+                <p className="text-xs font-semibold text-navy-700 pt-2">How does the company take its commission on this trip?</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <CoCard n={1} active={coOpt === 'booked'} onPick={() => setCoOpt('booked')} amount={cutFor('booked')}
+                    title="Company rate" sub={`On the booking: ${methodText(b)}`} />
+                  <CoCard n={2} active={coOpt === 'percent'} onPick={() => setCoOpt('percent')} amount={cutFor('percent')}
+                    title="Custom % for this trip" sub="A percentage of the whole final bill">
+                    <span className="flex items-center gap-1.5">
+                      <input className="input !py-1 !w-20 text-sm" type="number" min={0} max={100} step={0.5} value={coPct}
+                             onFocus={() => setCoOpt('percent')} onChange={(e) => { setCoOpt('percent'); setCoPct(e.target.value); }} />
+                      <span className="text-navy-500">% of {rs(shareBase)}</span></span>
+                  </CoCard>
+                  <CoCard n={3} active={coOpt === 'amount'} onPick={() => setCoOpt('amount')} amount={coAmt.trim() === '' ? null : cutFor('amount')}
+                    title="Custom amount" sub="One amount for the whole trip">
+                    <span className="flex items-center gap-1.5"><span className="text-navy-500">Rs</span>
+                      <input className="input !py-1 !w-28 text-sm" type="number" min={0} step={100} value={coAmt} placeholder={String(cutFor('booked'))}
+                             onFocus={() => setCoOpt('amount')} onChange={(e) => { setCoOpt('amount'); setCoAmt(e.target.value); }} /></span>
+                  </CoCard>
+                  <CoCard n={4} active={coOpt === 'perday'} onPick={() => setCoOpt('perday')} amount={cutFor('perday')}
+                    title="Per day + part of the extra km" sub={kmCharge > 0 ? 'Rs per day of rent, and Rs per extra km charged' : 'Rs per day of rent (no extra km on this trip)'}>
+                    <span className="grid gap-1.5">
+                      <span className="flex items-center gap-1.5"><span className="text-navy-500">Rs</span>
+                        <input className="input !py-1 !w-24 text-sm" type="number" min={0} step={100} value={coDay}
+                               onFocus={() => setCoOpt('perday')} onChange={(e) => { setCoOpt('perday'); setCoDay(e.target.value); }} />
+                        <span className="text-navy-500">a day × {shareDays} = {rs(coDayN * shareDays)}</span></span>
+                      {kmCharge > 0 && (
+                        <span className="flex items-center gap-1.5"><span className="text-navy-500">Rs</span>
+                          <input className="input !py-1 !w-24 text-sm placeholder:text-navy-800" type="number" min={0} step={1} value={kmCo} placeholder={String(kmCoDefault)} title="Suggested: the same part of each km as of each day"
+                                 onFocus={() => setCoOpt('perday')} onChange={(e) => { setCoOpt('perday'); setKmCo(e.target.value); }} />
+                          <span className="text-navy-500">a km × {(kmMode === 'amount' ? extraKm : billKm).toLocaleString()} km = {rs(Math.min(kmCharge, Math.round(kmCoRate * (kmMode === 'amount' ? extraKm : billKm))))}</span></span>
+                      )}
+                      {kmCharge > 0 && kmMode === 'rate' && rate > 0 && <span className="text-[11px] text-navy-400">Customer pays Rs {rate}/km → company Rs {kmCoRate}, owner Rs {Math.max(0, rate - kmCoRate)}</span>}
+                    </span>
+                  </CoCard>
+                </div>
+                <button type="button" onClick={() => setCoOpt(coOpt === 'none' ? 'booked' : 'none')}
+                        className={`text-xs underline ${coOpt === 'none' ? 'text-red-700 font-semibold' : 'text-navy-400 hover:text-navy-700'}`}>
+                  {coOpt === 'none' ? 'No commission on this trip — click to undo' : 'No commission on this trip'}</button>
+
+                {/* the split, plainly */}
+                <div className="rounded-xl bg-navy-50/70 p-3 mt-1 space-y-2">
+                  <div className="flex h-2.5 rounded-full overflow-hidden bg-emerald-200">
+                    <div className="bg-navy-800" style={{ width: `${shareBase > 0 ? Math.min(100, (companyCut / shareBase) * 100) : 0}%` }} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><p className="text-[11px] text-navy-500">Company{shareBase > 0 ? ` · ${Math.round((companyCut / shareBase) * 1000) / 10}%` : ''}</p><p className="text-lg font-bold text-navy-900">{rs(companyCut)}</p></div>
+                    <div className="text-right"><p className="text-[11px] text-emerald-700">{carOwner?.name ?? 'Owner'}</p><p className="text-lg font-bold text-emerald-800">{rs(shareBase - companyCut)}</p></div>
+                  </div>
+                  <p className="text-xs text-navy-500">{shareWorking(shareB, shareBase) ?? 'No commission'}</p>
+                  {ownerDeds > 0 && <p className="text-xs text-navy-500">The owner also pays for the parts deducted above: − {rs(ownerDeds)}</p>}
+                </div>
               </div>
             )}
 
@@ -769,9 +980,10 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               {dedTotal > 0 && <div className="flex justify-between text-sm"><span className="opacity-70">Deductions</span><b className="text-emerald-300">− {rs(dedTotal)}</b></div>}
               <div className="flex justify-between text-sm"><span className="opacity-70">Final bill</span><b>{rs(newBill)}</b></div>
               <div className="flex justify-between text-sm"><span className="opacity-70">Balance before payment</span><b>{rs(dueNow)}</b></div>
+              {depApplied > 0 && <div className="flex justify-between text-sm"><span className="opacity-70">Paid from the deposit</span><b className="text-amber-200">− {rs(depApplied)}</b></div>}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                <label className="text-xs opacity-80">Collected now (Rs)
-                  <input className="input !py-1.5 mt-1 text-navy-900" type="number" min="0" value={collect ?? String(dueNow)} onChange={(e) => setCollect(e.target.value)} />
+                <label className="text-xs opacity-80">{depApplied > 0 ? 'Customer pays now (Rs)' : 'Collected now (Rs)'}
+                  <input className="input !py-1.5 mt-1 text-navy-900" type="number" min="0" value={collect ?? String(Math.max(0, dueNow - depApplied))} onChange={(e) => setCollect(e.target.value)} />
                 </label>
                 <label className="text-xs opacity-80">Method
                   <select className="input !py-1.5 mt-1 text-navy-900" value={method} onChange={(e) => setMethod(e.target.value)}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select>

@@ -30,14 +30,15 @@ const emptyForm = (): Omit<Expense, 'id' | 'createdAt'> => ({
 });
 
 export default function Expenses() {
-  const { expenses, vehicles, addExpense, deleteExpense } = useStore();
+  const { expenses, vehicles, owners, addExpense, deleteExpense, updateExpense } = useStore();
   const { currentUser, isAdmin } = useAuthStore();
   const [filter, setFilter] = useState<ExpenseCategory | 'All'>('All');
   const [vehicleFilter, setVehicleFilter] = useState('');
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState(emptyForm());
-
   const isOwnerRole = !isAdmin() && currentUser?.role === 'owner';
+  // the company paid → taken off the car owner's next monthly payout; an owner's own entry is their own cost
+  const [form, setForm] = useState({ ...emptyForm(), paidBy: (currentUser?.role === 'owner' ? 'owner' : 'company') as Expense['paidBy'] });
+  const mayEdit = isAdmin() || currentUser?.role === 'staff';
   const myVehicleIds = isOwnerRole
     ? new Set(vehicles.filter((v) => v.ownerId === currentUser?.ownerId).map((v) => v.id))
     : null;
@@ -64,7 +65,7 @@ export default function Expenses() {
     if (!form.vehicleId || !form.description || form.amount <= 0) return;
     addExpense(form);
     setModal(false);
-    setForm(emptyForm());
+    setForm({ ...emptyForm(), paidBy: form.paidBy });
   };
 
   return (
@@ -131,7 +132,7 @@ export default function Expenses() {
             </button>
           )}
         </div>
-        <button onClick={() => { setForm(emptyForm()); setModal(true); }} className="btn-primary flex items-center gap-2 flex-shrink-0">
+        <button onClick={() => { setForm((f) => ({ ...emptyForm(), paidBy: f.paidBy })); setModal(true); }} className="btn-primary flex items-center gap-2 flex-shrink-0">
           <Plus size={15} /> Add Expense
         </button>
       </div>
@@ -168,10 +169,14 @@ export default function Expenses() {
                       {e.category}
                     </span>
                   </td>
-                  <td className="py-3 text-sm text-navy-700">{e.description}</td>
+                  <td className="py-3 text-sm text-navy-700">
+                    {e.description}
+                    <PaidByTag e={e} mayEdit={mayEdit && !e.settlementId} ownerName={owners.find((o) => o.id === vehicle?.ownerId)?.name}
+                               onSet={(paidBy) => updateExpense(e.id, { paidBy })} />
+                  </td>
                   <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {e.amount.toLocaleString()}</td>
                   <td className="py-3 text-right">
-                    {currentUser?.role !== 'staff' && <button
+                    {currentUser?.role !== 'staff' && !e.settlementId && <button
                       onClick={() => { if (confirm('Delete this expense?')) deleteExpense(e.id); }}
                       className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-navy-300 hover:text-red-500 transition-colors ml-auto"
                     >
@@ -213,6 +218,20 @@ export default function Expenses() {
             <p className="label">Description *</p>
             <input className="input" value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="Brief description" />
           </div>
+          {!isOwnerRole && (
+            <div className="sm:col-span-2">
+              <p className="label">Who paid it?</p>
+              <div className="grid grid-cols-2 gap-2">
+                {([['company', 'The company', "Taken off the owner's next monthly payout"], ['owner', 'The vehicle owner', 'Recorded only — nothing taken off']] as const).map(([k, label, hint]) => (
+                  <button key={k} type="button" onClick={() => setForm((f) => ({ ...f, paidBy: k }))}
+                          className={`rounded-xl border p-2.5 text-left ${form.paidBy === k ? 'border-navy-800 bg-navy-50' : 'border-navy-100 hover:border-navy-300'}`}>
+                    <span className="block text-sm font-semibold text-navy-800">{label}</span>
+                    <span className="block text-[11px] text-navy-400">{hint}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <button onClick={() => setModal(false)} className="btn-secondary">Cancel</button>
@@ -220,5 +239,19 @@ export default function Expenses() {
         </div>
       </Modal>
     </div>
+  );
+}
+
+/** Who paid the expense and whether it was taken off the owner's payout */
+function PaidByTag({ e, mayEdit, ownerName, onSet }: { e: Expense; mayEdit: boolean; ownerName?: string; onSet: (p: 'company' | 'owner') => void }) {
+  if (e.settlementId) return <span className="block text-[11px] font-semibold text-emerald-700">Taken off {ownerName ?? "the owner"}'s payout · settled</span>;
+  if (e.paidBy === 'company') return <span className="block text-[11px] text-amber-700">Company paid · comes off {ownerName ?? "the owner"}'s next payout</span>;
+  if (e.paidBy === 'owner') return <span className="block text-[11px] text-navy-400">Paid by the owner</span>;
+  if (!mayEdit) return <span className="block text-[11px] text-navy-300">Who paid: not recorded</span>;
+  return (
+    <span className="flex items-center gap-1.5 text-[11px] text-navy-400 mt-0.5">Who paid?
+      <button type="button" onClick={() => onSet('company')} className="rounded px-1.5 py-0.5 bg-navy-50 hover:bg-navy-100 font-semibold text-navy-600">Company</button>
+      <button type="button" onClick={() => onSet('owner')} className="rounded px-1.5 py-0.5 bg-navy-50 hover:bg-navy-100 font-semibold text-navy-600">Owner</button>
+    </span>
   );
 }

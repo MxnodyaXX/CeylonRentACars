@@ -739,5 +739,159 @@ ok((await as('ops', () => ids('select id from bookings'))).length === 0 && (awai
 await as('A', () => db.query("update owners set pending_payout = 0 where id = 'oA'"));
 ok(Number((await db.query("select pending_payout from owners where id = 'oA'")).rows[0].pending_payout) === 100, 'rollback keeps the owner rule');
 
+
+console.log('\nOWNER SETTLEMENTS (17)');
+await db.exec(sql('security/16_staff_roles.sql'));
+await db.exec(sql('security/17_owner_settlements.sql'));
+await db.exec(sql('security/17_owner_settlements.sql'));   // safe to re-run
+// a completed rental on A's car, an owed-back line, a company-paid expense, and a referral fee A earned on B's car
+await db.exec(`
+  insert into bookings (id, vehicle_id, customer_id, customer_name, customer_phone, start_date, end_date, total_days, total_amount, paid_amount, status, referral, created_at)
+    values ('bS1', 'vA', 'cA', 'Customer of A', '0711000001', '2026-10-01', '2026-10-05', 4, 40000, 10000, 'Completed', 'Direct', '${now}'),
+           ('bS2', 'vB', 'cB', 'Customer of B', '0711000002', '2026-10-10', '2026-10-12', 2, 20000, 20000, 'Completed', 'Alice Owner', '${now}');
+  update bookings set referral_fee = 2000, referral_paid = false where id = 'bS2';
+  insert into commissions (id, booking_id, vehicle_id, owner_id, referral, total_income, commission_rate, commission_amount, owner_payout, coordinator_fee, status, created_at) values
+    ('kS1', 'bS1', 'vA', 'oA', 'Direct', 40000, 0, 0, 34000, 0, 'Pending', '${now}'),
+    ('kS2', 'bS1', 'vA', 'oA', 'Direct', 0, 0, 0, -1500, 0, 'Pending', '${now}');
+  insert into expenses (id, vehicle_id, category, amount, description, date, created_at, paid_by) values
+    ('eS1', 'vA', 'Service', 3000, 'oil change', '2026-10-20', '${now}', 'company');
+  update owners set pending_payout = 50000 where id = 'oA';
+`);
+const lines = JSON.stringify([
+  { kind: 'rental', id: 'kS1', label: 'bS1', amount: 34000 },
+  { kind: 'deduction', id: 'kS2', label: 'tyres', amount: -1500 },
+  { kind: 'expense', id: 'eS1', label: 'oil', amount: -3000 },
+  { kind: 'referral', id: 'bS2', label: 'ref', amount: 2000 },
+]);
+const prepare = (who, id = 'stA') => as(who, () => tryQ(
+  `insert into owner_settlements (id, owner_id, period, status, lines, rentals, deductions, expenses, referral_fees, net, approved_by)
+   values ($1, 'oA', '2026-10', 'paid', $2::jsonb, 34000, -1500, 3000, 2000, 31500, 'me')`, [id, lines]));
+
+ok(!!(await prepare('ops')) && !!(await prepare('fleet')), 'only Finance (or an admin) can prepare a settlement');
+ok((await prepare('fin')) === null, 'Finance prepares October for owner A');
+let st = (await db.query("select * from owner_settlements where id = 'stA'")).rows[0];
+ok(st.status === 'pending_approval' && st.approved_by === null, 'it starts as waiting for approval, whatever status was sent');
+ok(!!(await as('fin', () => tryQ("select review_owner_settlement('stA', true)"))), 'Finance cannot approve its own settlement');
+ok(!!(await as('A', () => tryQ("update owner_settlements set status = 'approved' where id = 'stA'"))) || (await db.query("select status from owner_settlements where id='stA'")).rows[0].status === 'pending_approval', 'nobody approves by editing the row');
+ok((await as('A', () => ids('select id from owner_settlements'))).length === 0, 'the owner does not see it before it is paid');
+ok(!!(await as('admin', () => tryQ("select review_owner_settlement('stA', false, '')"))), 'sending back needs a reason');
+await as('admin', () => db.query("select review_owner_settlement('stA', false, 'Check the tyres line')"));
+ok((await db.query("select status, review_note from owner_settlements where id='stA'")).rows[0].review_note === 'Check the tyres line', 'Brian sends it back with a note');
+ok(!!(await as('fin', () => tryQ("select pay_owner_settlement('stA', 'Bank transfer', 'REF1')"))), 'a returned settlement cannot be paid');
+await as('fin', () => db.query("update owner_settlements set net = 31500 where id = 'stA'"));
+ok((await db.query("select status from owner_settlements where id='stA'")).rows[0].status === 'pending_approval', 'Finance prepares it again → waiting for approval');
+await as('admin', () => db.query("select review_owner_settlement('stA', true, null)"));
+st = (await db.query("select * from owner_settlements where id = 'stA'")).rows[0];
+ok(st.status === 'approved' && !!st.approved_by, 'Brian approves');
+ok(!!(await as('fin', () => tryQ("update owner_settlements set net = 999999 where id = 'stA'"))) || Number((await db.query("select net from owner_settlements where id='stA'")).rows[0].net) === 31500, 'an approved settlement cannot be edited');
+ok((await as('fin', () => db.query("delete from owner_settlements where id = 'stA' returning id"))).rows.length === 0, '…or withdrawn');
+ok(!!(await as('fin', () => tryQ("select pay_owner_settlement('stA', 'Bank transfer', '')"))), 'a payment needs its bank reference');
+ok(!!(await as('ops', () => tryQ("select pay_owner_settlement('stA', 'Bank transfer', 'REF1')"))), 'Operations cannot record owner payouts');
+// a line changed after approval: refused
+await db.exec("update commissions set owner_payout = 34500 where id = 'kS1'");
+ok(/changed after it was prepared/.test(await as('fin', () => tryQ("select pay_owner_settlement('stA', 'Bank transfer', 'REF1')")) ?? ''), 'a payout line changed after approval stops the payment');
+ok((await db.query("select status from commissions where id = 'kS1'")).rows[0].status === 'Pending', '…and nothing is half-paid');
+await db.exec("update commissions set owner_payout = 34000 where id = 'kS1'");
+ok((await as('fin', () => tryQ("select pay_owner_settlement('stA', 'Bank transfer', 'REF1')"))) === null, 'Finance records the bank transfer');
+st = (await db.query("select * from owner_settlements where id = 'stA'")).rows[0];
+ok(st.status === 'paid' && st.pay_ref === 'REF1' && !!st.paid_at, 'it is paid, with the reference and date');
+const ks = (await db.query("select id, status, settlement_id from commissions where id in ('kS1','kS2') order by id")).rows;
+ok(ks.every((k) => k.status === 'Paid' && k.settlement_id === 'stA'), 'its payout lines are Paid and linked to the settlement');
+ok((await db.query("select settlement_id from expenses where id='eS1'")).rows[0].settlement_id === 'stA', 'the expense is marked as taken off');
+const bs2 = (await db.query("select referral_paid, referral_settlement_id from bookings where id='bS2'")).rows[0];
+ok(bs2.referral_paid === true && bs2.referral_settlement_id === 'stA', 'the referral fee is marked paid');
+ok(Number((await db.query("select pending_payout from owners where id='oA'")).rows[0].pending_payout) === 50000 - (34000 - 1500 + 2000), "the owner's pending payout drops by what was paid");
+// locked history
+ok(/settled with the owner/.test(await as('admin', () => tryQ("update commissions set owner_payout = 1 where id = 'kS1'")) ?? ''), 'a settled payout line cannot be changed — even by an admin');
+ok(/settled with the owner/.test(await as('admin', () => tryQ("delete from expenses where id = 'eS1'")) ?? ''), 'a settled expense cannot be deleted');
+{ const e = await as('admin', () => tryQ("update expenses set amount = 1 where id = 'eS1'")); if (!/settled with the owner/.test(e ?? '')) console.log('   expense update said:', e); ok(/settled with the owner/.test(e ?? ''), '…or changed'); }
+ok(/Owner Settlements page/.test(await as('admin', () => tryQ("update commissions set settlement_id = 'stA' where id = 'kA'")) ?? ''), 'lines are only settled through a payment');
+ok(!!(await as('admin', () => tryQ("update owner_settlements set net = 1 where id = 'stA'"))), 'a paid settlement cannot be edited');
+ok((await as('admin', () => tryQ("select pay_owner_settlement('stA', 'Bank transfer', 'REF2')"))) !== null, 'it cannot be paid twice');
+// the owner
+ok((await as('A', () => ids('select id from owner_settlements'))).join() === 'stA', 'owner A now sees their statement');
+ok((await as('B', () => ids('select id from owner_settlements'))).length === 0, 'owner B does not see A\'s');
+ok(!!(await as('B', () => tryQ("select confirm_owner_settlement('stA')"))), 'owner B cannot confirm it');
+await as('A', () => db.query("select confirm_owner_settlement('stA', 'Received, thanks')"));
+st = (await db.query("select * from owner_settlements where id = 'stA'")).rows[0];
+ok(st.status === 'confirmed' && st.owner_note === 'Received, thanks' && !!st.owner_confirmed_at, 'owner A confirms receipt');
+ok(!!(await as('anon', () => tryQ("select confirm_owner_settlement('stA')"))) && !!(await as('anon', () => tryQ('select id from owner_settlements'))), 'website visitors have no access');
+ok(!!(await prepare('fin')), 'one settlement per owner per month');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query("select count(*) n from security_check where result = 'FAIL'")).rows[0].n == 0, 'verify.sql still all PASS with 17');
+await db.exec(sql('security/rollback/17_rollback_owner_settlements.sql'));
+ok((await db.query("select to_regprocedure('public.pay_owner_settlement(text,text,text,timestamptz,text)') f")).rows[0].f === null
+   && Number((await db.query('select count(*) n from owner_settlements')).rows[0].n) === 1, 'rollback removes the functions and keeps the history');
+
+
+console.log('\nCOMPANY ACCOUNTS (18)');
+await db.exec(sql('security/16_staff_roles.sql'));
+await db.exec(sql('security/17_owner_settlements.sql'));
+await db.exec(sql('security/18_company_accounts.sql'));
+await db.exec(sql('security/18_company_accounts.sql'));   // safe to re-run
+claims.boss = { sub: '00000000-0000-0000-0000-0000000000b9', role: 'authenticated', app_metadata: { role: 'admin', name: 'Brian' } };
+claims.fin2 = { sub: '00000000-0000-0000-0000-0000000000f9', role: 'authenticated', app_metadata: { role: 'staff', name: 'Dinithi', permissions: { canViewFinance: true, canTakePayments: true } } };
+
+ok(!!(await as('fin2', () => tryQ("insert into company_accounts (id, name, kind) values ('acX', 'x', 'cash')"))), 'only admins set up accounts');
+await as('boss', () => db.query("insert into company_accounts (id, name, kind, opening_balance) values ('acCash', 'Cash in hand', 'cash', 10000), ('acBank', 'BOC current', 'bank', 500000)"));
+ok((await as('fin2', () => ids('select id from company_accounts'))).length === 2, 'Finance sees the accounts');
+ok((await as('ops', () => ids('select id from company_accounts'))).length === 0 && (await as('A', () => ids('select id from company_accounts'))).length === 0, 'Operations and owners do not');
+ok(!!(await as('anon', () => tryQ('select id from company_accounts'))), 'website visitors have no access');
+
+// expenses: small ones approved at once, big ones wait for Brian
+await as('fin2', () => db.query("insert into company_expenses (id, date, category, amount, description, status, approved_by) values ('ce1', '2026-11-03', 'Electricity', 8000, 'CEB bill', 'paid', 'me'), ('ce2', '2026-11-04', 'Rent', 60000, 'Office rent', 'approved', 'me')"));
+let ce = Object.fromEntries((await db.query("select id, status, requested_by, approved_by from company_expenses")).rows.map((r) => [r.id, r]));
+ok(ce.ce1.status === 'approved' && /Auto/.test(ce.ce1.approved_by) && ce.ce1.requested_by === 'Dinithi', 'a small expense is approved at once (whatever status was sent)');
+ok(ce.ce2.status === 'pending' && ce.ce2.approved_by === null, 'one over the approval limit waits for Brian');
+ok(!!(await as('fin2', () => tryQ("update company_expenses set status = 'approved' where id = 'ce2'"))), 'Finance cannot approve it');
+ok(!!(await as('fin2', () => tryQ("select review_company_expense('ce2', true)"))), '…not even through the function');
+ok(!!(await as('fin2', () => tryQ("update company_expenses set status = 'paid', account_id = 'acBank' where id = 'ce2'"))), 'an unapproved expense cannot be paid');
+ok(!!(await as('boss', () => tryQ("select review_company_expense('ce2', false, '')"))), 'rejecting needs a reason');
+await as('boss', () => db.query("select review_company_expense('ce2', true)"));
+ok((await db.query("select status, approved_by from company_expenses where id='ce2'")).rows[0].approved_by === 'Brian', 'Brian approves it');
+ok(!!(await as('fin2', () => tryQ("update company_expenses set amount = 1 where id = 'ce2'"))), 'an approved expense cannot be changed');
+ok(!!(await as('fin2', () => tryQ("update company_expenses set status = 'paid' where id = 'ce2'"))), 'paying needs the account');
+await as('fin2', () => db.query("update company_expenses set status = 'paid', account_id = 'acBank', paid_on = '2026-11-05' where id = 'ce2'"));
+ce = (await db.query("select * from company_expenses where id='ce2'")).rows[0];
+ok(ce.status === 'paid' && ce.paid_by === 'Dinithi' && ce.account_id === 'acBank', 'Finance pays it from the bank account');
+ok(!!(await as('fin2', () => tryQ("update company_expenses set description = 'x' where id = 'ce2'"))), 'a paid expense is final for Finance');
+ok((await as('fin2', () => db.query("delete from company_expenses where id = 'ce2' returning id"))).rows.length === 0 || !!(await as('fin2', () => tryQ("delete from company_expenses where id = 'ce2'"))), 'and cannot be deleted');
+// private costs (salaries) are Brian's only
+await as('boss', () => db.query("insert into company_expenses (id, date, category, amount, description, private) values ('ce3', '2026-11-06', 'Salaries', 90000, 'November salaries', true)"));
+ok((await as('fin2', () => ids('select id from company_expenses'))).join() === 'ce1,ce2', 'Finance does not see private costs');
+ok((await db.query("select status from company_expenses where id='ce3'")).rows[0].status === 'approved', "an admin's own expense is approved");
+ok(!!(await as('fin2', () => tryQ("insert into company_expenses (id, date, category, amount, description, private) values ('ce4', '2026-11-06', 'Salaries', 1, 'x', true)"))), 'Finance cannot add private ones');
+ok((await as('ops', () => ids('select id from company_expenses'))).length === 0, 'Operations sees no company expenses');
+
+// transfers
+await as('fin2', () => db.query("insert into account_transfers (id, date, from_account, to_account, amount, note) values ('t1', '2026-11-07', 'acCash', 'acBank', 5000, 'banked')"));
+ok((await db.query("select by_name from account_transfers where id='t1'")).rows[0].by_name === 'Dinithi', 'Finance moves cash to the bank (recorded under their name)');
+ok(!!(await as('fin2', () => tryQ("insert into account_transfers (id, date, from_account, to_account, amount) values ('t2', '2026-11-07', 'acCash', 'acCash', 5)"))), 'a transfer needs two different accounts');
+ok((await as('fin2', () => db.query("delete from account_transfers where id = 't1' returning id"))).rows.length === 0, 'Finance cannot delete a transfer');
+
+// month close
+ok(!!(await as('fin2', () => tryQ("insert into month_closes (period, closed_by) values ('2026-11', 'x')"))), 'only an admin closes a month');
+await as('boss', () => db.query("insert into month_closes (period, closed_by, summary) values ('2026-11', 'Brian', '{\"profit\": 1}')"));
+ok(/month is closed/.test(await as('fin2', () => tryQ("insert into company_expenses (id, date, category, amount, description) values ('ce5', '2026-11-20', 'Fuel', 100, 'x')")) ?? ''), 'no new expense in a closed month');
+ok(/month is closed/.test(await as('boss', () => tryQ("update company_expenses set description = 'y' where id = 'ce1'")) ?? ''), 'no changes in a closed month — even for an admin');
+ok(/month is closed/.test(await as('fin2', () => tryQ("insert into account_transfers (id, date, from_account, to_account, amount) values ('t3', '2026-11-08', 'acCash', 'acBank', 5)")) ?? ''), 'no transfers in a closed month');
+ok((await as('fin2', () => tryQ("insert into company_expenses (id, date, category, amount, description) values ('ce6', '2026-12-01', 'Fuel', 100, 'x')"))) === null, 'the next month is open');
+await as('boss', () => db.query("delete from month_closes where period = '2026-11'"));
+ok((await as('boss', () => tryQ("update company_expenses set description = 'y' where id = 'ce1'"))) === null, 'an admin can reopen a month');
+
+// owner payout account
+await db.exec("insert into owner_settlements (id, owner_id, period, status, lines, net) values ('stX', 'oA', '2026-11', 'paid', '[]', 100)");
+ok(!!(await as('ops', () => tryQ("select set_settlement_account('stX', 'acBank')"))), 'Operations cannot set the payout account');
+await as('fin2', () => db.query("select set_settlement_account('stX', 'acBank')"));
+ok((await db.query("select pay_account_id from owner_settlements where id='stX'")).rows[0].pay_account_id === 'acBank', 'Finance records which account paid the owner');
+await as('fin2', () => db.query("select set_settlement_account('stX', 'acCash')"));
+ok((await db.query("select pay_account_id from owner_settlements where id='stX'")).rows[0].pay_account_id === 'acBank', '…once (it is not changed afterwards)');
+
+await db.exec(sql('security/verify.sql'));
+ok((await db.query("select count(*) n from security_check where result = 'FAIL'")).rows[0].n == 0, 'verify.sql still all PASS with 18');
+await db.exec(sql('security/rollback/18_rollback_company_accounts.sql'));
+ok((await db.query("select to_regprocedure('public.review_company_expense(text,boolean,text)') f")).rows[0].f === null
+   && Number((await db.query('select count(*) n from company_expenses')).rows[0].n) >= 3, 'rollback removes the functions and keeps the records');
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

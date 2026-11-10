@@ -267,10 +267,15 @@ export function manualSwaps(b: Booking): BdSwap[] {
 /** Readings that must be entered before the bill — without the booked car's own return reading (typed in the return form) */
 export const missingSwapReadings = (t: TripKm) => t.missing.filter((m) => m.swapId);
 
-/** Extra km already on the bill — from the "Extra km: N km × Rs R" charges (live ones only) */
-export const chargedExtraKm = (b: Booking) => (b.charges ?? [])
-  .filter((c) => c.status === 'Charged' && /^extra km/i.test(c.note ?? ''))
-  .reduce((s, c) => s + (Number(/extra km:\s*([\d,]+)\s*km/i.exec(c.note ?? '')?.[1]?.replace(/,/g, '')) || 0), 0);
+/** Extra km already dealt with on the bill — charged ("Extra km: N km × Rs R", live charges only) or given free at the
+ *  return ("− M km given free" in the charge, or "Extra km not charged: M km given free"), so they aren't offered again */
+export const chargedExtraKm = (b: Booking) => {
+  const n = (re: RegExp, t?: string) => Number(re.exec(t ?? '')?.[1]?.replace(/,/g, '')) || 0;
+  const charged = (b.charges ?? []).filter((c) => c.status === 'Charged' && /^extra km/i.test(c.note ?? ''))
+    .reduce((s, c) => s + n(/extra km:\s*([\d,]+)\s*km/i, c.note) + n(/−\s*([\d,]+)\s*km given free/i, c.note), 0);
+  const free = (b.activity ?? []).reduce((s, a) => s + n(/Extra km not charged:\s*([\d,]+)\s*km given free/i, a.text), 0);
+  return charged + free;
+};
 
 /** Filled in by the breakdown store, so plain modules (the invoice) get the whole-trip km without importing stores */
 export const tripKmProvider: { of?: (b: Booking) => TripKm } = {};

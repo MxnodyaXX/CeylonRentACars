@@ -13,7 +13,7 @@ const TEAM_PAGES: Record<string, StaffAbility | true | false> = {
   '/': true, '/vehicles': true, '/bookings': true, '/notifications': true, '/settings': true,
   '/inquiries': 'canViewInquiries', '/messages': 'canViewInquiries',
   '/handovers': 'canViewHandovers', '/breakdowns': 'canManageBreakdowns', '/incomplete': 'canViewIncomplete',
-  '/commissions': 'canViewFinance', '/credit': 'canViewFinance', '/referrals': 'canViewReferrals', '/expenses': 'canViewExpenses',
+  '/commissions': 'canViewFinance', '/credit': 'canViewFinance', '/settlements': 'canViewFinance', '/accounts': 'canViewFinance', '/referrals': 'canViewReferrals', '/expenses': 'canViewExpenses',
   '/owners': 'canViewOwners', '/drivers': 'canViewDrivers', '/customers': 'canViewCustomers', '/feedback': 'canViewFeedback',
   // Brian and IT only
   '/partners': false, '/website': false, '/whatsapp-setup': false, '/whatsapp-templates': false, '/permissions': false,

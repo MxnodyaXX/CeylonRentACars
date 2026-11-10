@@ -37,6 +37,8 @@ import Incomplete from './pages/Incomplete';
 import Website from './pages/Website';
 import Feedback from './pages/Feedback';
 import { canOpen } from './lib/access';
+import Settlements from './pages/Settlements';
+import CompanyAccounts from './pages/CompanyAccounts';
 
 export default function App() {
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -143,6 +145,8 @@ export default function App() {
           <Route path="/permissions"   element={allow('/permissions', <Permissions />)} />
           <Route path="/settings"      element={allow('/settings', <Settings />)} />
           <Route path="/credit"        element={allow('/credit', <CreditManagement />)} />
+          <Route path="/settlements"   element={allow('/settlements', <Settlements />)} />
+          <Route path="/accounts"      element={allow('/accounts', <CompanyAccounts />)} />
           <Route path="/breakdowns"    element={allow('/breakdowns', <Breakdowns />)} />
           <Route path="/breakdowns/:id" element={allow('/breakdowns', <BreakdownIncident />)} />
           <Route path="/website"       element={allow('/website', <Website />)} />

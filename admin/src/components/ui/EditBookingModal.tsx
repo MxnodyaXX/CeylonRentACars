@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { AlertCircle, Gauge, History, Receipt, Save } from 'lucide-react';
 import Modal from './Modal';
 import Select from './Select';
+import CompanyShareField from './CompanyShareField';
+import { CHANNELS, channelOf } from '../../lib/channels';
 import DateInput from './DateInput';
 import TimePicker from './TimePicker';
 import { useStore } from '../../store/useStore';
@@ -47,7 +49,11 @@ const formOf = (b: Booking) => ({
   creditAmount: b.creditAmount ?? 0,
   status: b.status,
   referral: b.referral ?? 'Direct',
+  channel: channelOf(b) ?? '',
   referralFee: b.referralFee ?? 0,
+  companyShareType: b.companyShareType,
+  companyShareValue: b.companyShareValue,
+  companyShareMin: b.companyShareMin,
   pickupLocation: b.pickupLocation ?? '',
   dropLocation: b.dropLocation ?? '',
 });
@@ -77,7 +83,11 @@ const FIELDS: { key: keyof Form; label: string; fmt?: (v: unknown, f: Form, vehi
   { key: 'creditAmount', label: 'Credit due', fmt: (v) => rs(v as number) },
   { key: 'status', label: 'Status' },
   { key: 'referral', label: 'Referral' },
+  { key: 'channel', label: 'How they found us' },
   { key: 'referralFee', label: 'Referral fee', fmt: (v) => rs(v as number) },
+  { key: 'companyShareType', label: 'Commission method', fmt: (v) => String(v ?? 'none') },
+  { key: 'companyShareValue', label: 'Commission', fmt: (v) => String(v ?? '—') },
+  { key: 'companyShareMin', label: 'Commission minimum', fmt: (v) => (v ? rs(v as number) : '—') },
   { key: 'pickupLocation', label: 'Pickup' },
   { key: 'dropLocation', label: 'Drop' },
 ];
@@ -196,7 +206,8 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
       rentalType: f.rentalType, rentalUnits: f.rentalType === 'Daily' ? undefined : f.rentalUnits, unitRate: f.rentalType === 'Daily' ? undefined : f.unitRate,
       discount: f.discount, extraCharges: extraTotal, advanceAmount: f.advanceAmount, paidAmount: f.paidAmount,
       creditAmount: f.creditAmount, ...(f.creditAmount === 0 && booking.creditAmount ? { creditSettled: true } : {}),
-      status: f.status, referral: f.referral, referralFee: f.referralFee,
+      status: f.status, referral: f.referral, referralFee: f.referralFee, channel: f.channel || undefined,
+      companyShareType: f.companyShareType, companyShareValue: f.companyShareValue, companyShareMin: f.companyShareMin,
       pickupLocation: f.pickupLocation, dropLocation: f.dropLocation,
       pickupAt: f.startTime ? `${f.startDate}T${f.startTime}` : booking.pickupAt,
       returnAt: f.endTime ? `${f.endDate}T${f.endTime}` : booking.returnAt,
@@ -258,7 +269,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     onClose();
   };
 
-  const referralOptions = ['Direct', 'Company', ...REFERRAL_SOURCES, ...owners.map((o) => o.name)];
+  const referralOptions = ['Direct', 'Company', ...owners.map((o) => o.name)];
   if (f.referral && !referralOptions.includes(f.referral)) referralOptions.push(f.referral);
 
   return (
@@ -386,12 +397,26 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
 
         {/* Referral */}
         <section className="border-t border-navy-100 pt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Field label="Referral">
+          <Field label="Referred by">
             <Select value={f.referral} onChange={(v) => set('referral', v)} options={referralOptions.map((r) => ({ value: r, label: r }))} />
           </Field>
-          <Field label="Referral fee (Rs)" hint={booking.referralPaid && f.referralFee !== original.referralFee ? <p className="text-[11px] text-amber-700 mt-1">This fee was already marked as paid to the referrer.</p> : null}>
-            <input className="input" type="number" min="0" value={f.referralFee || ''} onChange={(e) => set('referralFee', numIn(e.target.value))} placeholder="0" />
+          <Field label="How they found us">
+            <Select value={f.channel} onChange={(v) => set('channel', v)} placeholder="Not recorded" options={CHANNELS.map((c) => ({ value: c.value, label: c.label, sub: c.sub }))} />
           </Field>
+          {(original.referralFee ?? 0) > 0 && (
+            <Field label="Referral fee (Rs) — old booking" hint={<p className="text-[11px] text-navy-400 mt-1">Referral fees are no longer paid. Set 0 to remove it.</p>}>
+              <input className="input" type="number" min="0" value={f.referralFee || ''} onChange={(e) => set('referralFee', numIn(e.target.value))} placeholder="0" />
+            </Field>
+          )}
+          {f.companyShareType ? (
+            <CompanyShareField className="sm:col-span-2" value={f} total={f.totalAmount} days={f.totalDays} rentalType={f.rentalType} autoDefault={false}
+                               onChange={(v) => setF((cur) => ({ ...cur, ...v }))} />
+          ) : (
+            <div className="sm:col-span-2 rounded-xl border border-dashed border-navy-200 px-3 py-2 text-xs text-navy-500 flex items-center justify-between gap-2">
+              <span>No company commission on this booking (made before commissions were set).</span>
+              <button type="button" className="btn-secondary !py-1 text-xs" onClick={() => setF((cur) => ({ ...cur, companyShareType: 'percent_min', companyShareValue: 15, companyShareMin: 1000 }))}>Add commission</button>
+            </div>
+          )}
         </section>
 
         {/* Customer & places */}

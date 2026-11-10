@@ -7,6 +7,10 @@ import {
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import Select from './Select';
+import ChannelSelect from './ChannelSelect';
+import CompanyShareField from './CompanyShareField';
+import { companyShareOf } from '../../lib/companyShare';
+import { isChannel, isMarketingChannel, referrerOf } from '../../lib/channels';
 import DateInput from './DateInput';
 import TimePicker from './TimePicker';
 import LocationInput from './LocationInput';
@@ -14,7 +18,7 @@ import { rentalDays, statusForDates, statusDateProblem } from '../../lib/availab
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
 import DoNotRentWarning from './DoNotRentWarning';
 import { CustomerIdFields, MissingDetailsPanel } from './NewBookingDetails';
-import type { CustomerInfo } from '../../types';
+import type { Booking, CustomerInfo } from '../../types';
 import { RentalType } from '../../lib/rentalPeriod';
 import { resolveReferralFee } from '../../lib/referral';
 import { creditResponsibilityOf } from '../../lib/credit';
@@ -24,7 +28,6 @@ import ManualMileageFields, { emptyMileage, mileageOf } from './ManualMileageFie
 
 const genOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-const REFERRAL_SOURCES = ['WhatsApp', 'Facebook', 'Instagram', 'TikTok', 'Google', 'Word of Mouth'];
 type BookingStatus = 'Confirmed' | 'Ongoing' | 'Completed' | 'Cancelled';
 
 const emptyForm = () => ({
@@ -54,10 +57,14 @@ const emptyForm = () => ({
   creditAmount: 0,
   status: 'Completed' as BookingStatus,
   referral: 'Direct',
+  channel: '',
+  companyShareType: undefined as Booking['companyShareType'],
+  companyShareValue: undefined as number | undefined,
+  companyShareMin: undefined as number | undefined,
   referralFeeType: 'fixed' as 'fixed' | 'percent',
   referralFeeValue: 0,
   referralAlreadyPaid: false,
-  commissionAlreadyPaid: true,
+  commissionAlreadyPaid: false,
   notes: '',
   pickupLocation: '',
   dropLocation: '',
@@ -141,7 +148,8 @@ export default function ManualBookingModal({ onClose }: Props) {
   const vehicle     = vehicles.find((v) => v.id === form.vehicleId);
   const vehicleOwner = owners.find((o) => o.id === vehicle?.ownerId);
   const referralFee = resolveReferralFee(form.referralFeeType, form.referralFeeValue, form.totalAmount);
-  const ownerPayout = Math.max(0, form.totalAmount - referralFee);
+  const companyAmount = companyShareOf(form, form.totalAmount);
+  const ownerPayout = Math.max(0, form.totalAmount - referralFee - companyAmount);
   // readings, breakdown replacements and the extra km charge (Ongoing / Completed bookings)
   const mileage = mileageOf(mileageDraft, {
     vehicles, vehicleId: form.vehicleId, status: form.status, startDate: form.startDate, startTime: form.startTime,
@@ -158,8 +166,9 @@ export default function ManualBookingModal({ onClose }: Props) {
   const paidTotal   = (form.paidAmount || 0) + (form.advanceAmount || 0);
   const due         = Math.max(0, billAmount - paidTotal);
 
-  const isOwnerReferral = !!form.referral && form.referral !== 'Direct' && !REFERRAL_SOURCES.includes(form.referral);
-  const isSocialReferral = REFERRAL_SOURCES.includes(form.referral);
+  const isOwnerReferral = !!referrerOf(form.referral) && form.referral !== 'Company';
+  // found through marketing with nobody referring them: no one to hold responsible for a credit
+  const isSocialReferral = !referrerOf(form.referral) && (isMarketingChannel(form.channel) || isChannel(form.referral));
   const companyResponsible = form.referral === 'Company';
   // A credit on another party's vehicle needs that owner's OTP approval (Company is exempt).
   const needsOwnerOtp = creditChoice === 'credit' && due > 0 && !isSocialReferral && !companyResponsible && !!vehicleOwner;
@@ -308,7 +317,6 @@ export default function ManualBookingModal({ onClose }: Props) {
 
   const allReferralOptions = [
     'Direct',
-    ...REFERRAL_SOURCES,
     ...owners.map((o) => o.name),
   ];
 
@@ -691,7 +699,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                 <div className="mt-3">
                   <label className="flex items-center gap-2 text-sm text-navy-700 cursor-pointer">
                     <input type="checkbox" className="rounded" checked={form.commissionAlreadyPaid} onChange={(e) => set('commissionAlreadyPaid', e.target.checked)} />
-                    Owner payout already settled (marks commission as Paid)
+                    The owner was already paid for this outside the monthly payouts <span className="text-navy-400">(leave unticked and it is paid in the next owner payout)</span>
                   </label>
                 </div>
               </section>
@@ -703,6 +711,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                   <h3 className="text-sm font-semibold text-navy-700">Referral</h3>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <ChannelSelect className="sm:col-span-2" value={form.channel} onChange={(v) => set('channel', v)} />
                   <div className="sm:col-span-2">
                     <Field label="Referred By">
                       {referralCustom ? (
@@ -720,7 +729,6 @@ export default function ManualBookingModal({ onClose }: Props) {
                             onChange={(v) => set('referral', v)}
                             options={[
                               { value: 'Direct', label: 'Direct' },
-                              ...REFERRAL_SOURCES.map((s) => ({ value: s, label: s, group: 'Marketing Channels' })),
                               ...owners.map((o) => ({ value: o.name, label: o.name, group: 'Owners', sub: 'earns referral fee' })),
                             ]}
                           />
@@ -736,23 +744,8 @@ export default function ManualBookingModal({ onClose }: Props) {
                       )}
                     </Field>
                   </div>
-                  {isOwnerReferral && (
-                    <>
-                      <Field label="Referral Fee Type">
-                        <Select value={form.referralFeeType} onChange={(v) => set('referralFeeType', v as 'fixed' | 'percent')}
-                          options={[{ value: 'fixed', label: 'Fixed (Rs)' }, { value: 'percent', label: 'Percentage (%)' }]} />
-                      </Field>
-                      <Field label={form.referralFeeType === 'fixed' ? 'Referral Fee (Rs)' : 'Referral Fee (%)'}>
-                        <input className="input" type="number" min="0" value={form.referralFeeValue || ''} onChange={(e) => set('referralFeeValue', +e.target.value)} />
-                      </Field>
-                      <div className="sm:col-span-2">
-                        <label className="flex items-center gap-2 text-sm text-navy-700 cursor-pointer">
-                          <input type="checkbox" className="rounded" checked={form.referralAlreadyPaid} onChange={(e) => set('referralAlreadyPaid', e.target.checked)} />
-                          Referral fee already paid to {form.referral}
-                        </label>
-                      </div>
-                    </>
-                  )}
+                  <CompanyShareField className="sm:col-span-2" value={form} total={form.totalAmount} days={form.totalDays} rentalType={form.rentalType}
+                                     onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
                 </div>
               </section>
 
@@ -865,6 +858,12 @@ export default function ManualBookingModal({ onClose }: Props) {
                     </div>
                   )}
 
+                  {companyAmount > 0 && (
+                    <div className="flex justify-between text-navy-600">
+                      <span>Company commission</span>
+                      <span>− Rs {companyAmount.toLocaleString()}</span>
+                    </div>
+                  )}
                   {referralFee > 0 && (
                     <div className="flex justify-between text-amber-700">
                       <span>Referral Fee → <span className="font-medium">{form.referral}</span></span>

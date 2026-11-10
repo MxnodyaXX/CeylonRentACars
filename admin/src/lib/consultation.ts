@@ -351,6 +351,7 @@ export function bookingFromAgreement(inq: Inquiry, a: BookingAgreement, email?: 
   const hm = (dt?: string) => (dt && dt.length >= 16 ? dt.slice(11, 16) : undefined);
   const fmtDt = (dt?: string) => (dt ? new Date(dt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '');
   return {
+    source: inq.referral,
     customerName: inq.customerName,
     customerPhone: inq.customerPhone,
     customerEmail: email,

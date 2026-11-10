@@ -29,6 +29,17 @@ alter table bookings add column if not exists charges        jsonb;   -- fines, 
 alter table bookings add column if not exists agreement      jsonb;   -- rental agreement printed / signed
 alter table bookings add column if not exists activity       jsonb;   -- history of everything done to the booking
 alter table bookings add column if not exists internal_notes text;    -- staff-only notes
+alter table bookings add column if not exists channel        text;    -- how the customer reached us (Walk-in, WhatsApp, Facebook…)
+alter table bookings add column if not exists referral_fee_type  text;          -- 'fixed' | 'percent' — how the referral fee was set
+alter table bookings add column if not exists referral_fee_value numeric(12,2); -- the rupees, or the percent
+alter table bookings add column if not exists company_share_type  text;          -- 'percent' | 'percent_min' | 'per_day' | 'fixed'
+alter table bookings add column if not exists company_share_value numeric(12,2); -- the % or the rupees
+alter table bookings add column if not exists company_share_min   numeric(12,2); -- minimum per day (percent_min)
+alter table bookings add column if not exists company_km_rate   numeric(12,2); -- extra km split per km: Rs the company keeps per km
+alter table bookings add column if not exists company_km_km     numeric(12,2); --   the km it applies to
+alter table bookings add column if not exists company_km_charge numeric(12,2); --   the extra-km charge on the bill it comes out of
+alter table bookings add column if not exists price_mode    text;          -- 'standard' | 'perDay' | 'total' — how the rent was set
+alter table bookings add column if not exists standard_rate numeric(12,2); -- the car's standard daily rate when booked
 
 -- Customers who should not be rented to again
 alter table customers add column if not exists do_not_rent        boolean not null default false;

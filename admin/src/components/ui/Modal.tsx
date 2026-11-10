@@ -11,9 +11,11 @@ interface Props {
   maxHeight?: string;
   /** extra buttons shown before the close button */
   headerActions?: ReactNode;
+  /** read-only panels: a click outside closes at once (no "close it?" question) */
+  closeOnOutside?: boolean;
 }
 
-export default function Modal({ open, onClose, title, children, width = 'max-w-lg', headerActions, maxHeight = 'max-h-[92vh]' }: Props) {
+export default function Modal({ open, onClose, title, children, width = 'max-w-lg', headerActions, maxHeight = 'max-h-[92vh]', closeOnOutside }: Props) {
   const panel = useRef<HTMLDivElement>(null);
   // a click outside only counts when it also started outside (selecting text and letting go outside isn't one)
   const downOutside = useRef(false);
@@ -28,7 +30,7 @@ export default function Modal({ open, onClose, title, children, width = 'max-w-l
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
       onMouseDown={(e) => { downOutside.current = outside(e.target); }}
-      onClick={(e) => { if (downOutside.current && outside(e.target)) setAsking(true); downOutside.current = false; }}
+      onClick={(e) => { if (downOutside.current && outside(e.target)) { if (closeOnOutside) onClose(); else setAsking(true); } downOutside.current = false; }}
     >
       <div className="absolute inset-0 bg-navy-900/30 backdrop-blur-sm anim-fade-in" />
       <div

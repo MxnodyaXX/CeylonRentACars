@@ -5,6 +5,7 @@ import { sampleData } from '../data/sampleData';
 import { supabaseEnabled } from '../lib/supabase';
 import { db, dbFetchAll } from '../lib/db';
 import { resolveReferralFee } from '../lib/referral';
+import { companyShareOf, shareBaseOf } from '../lib/companyShare';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap } from '../lib/availability';
 import { legsOf, mainCommission, payoutRowFor, previewExchange } from '../lib/exchange';
 import { sendSms, smsTemplates, ADMIN_PHONE } from '../lib/sms';
@@ -283,9 +284,12 @@ export const useStore = create<AppState>()(
         const id = uid();
         const vehicle = get().vehicles.find((v) => v.id === b.vehicleId);
 
-        // The referrer's fee is the only deduction — the owner keeps the rest of the total.
+        // The company keeps its share (the method chosen on the booking); the owner gets the rest.
+        // (Referral fees are no longer paid — an old booking's fee would still come off.)
         const referralFee = resolveReferralFee(b.referralFeeType, b.referralFeeValue, b.totalAmount);
-        const ownerPayout = Math.max(0, b.totalAmount - referralFee);
+        const shareBase = b.companyShareType ? shareBaseOf(b) : b.totalAmount;
+        const companyAmount = companyShareOf(b, shareBase);
+        const ownerPayout = Math.max(0, shareBase - referralFee - companyAmount);
 
         const commission: Commission = {
           id: uid(),
@@ -293,9 +297,9 @@ export const useStore = create<AppState>()(
           vehicleId: b.vehicleId,
           ownerId: vehicle?.ownerId ?? '',
           referral: b.referral ?? 'Direct',
-          totalIncome: b.totalAmount,
-          commissionRate: 0,
-          commissionAmount: 0,
+          totalIncome: shareBase,
+          commissionRate: b.companyShareType === 'percent' || b.companyShareType === 'percent_min' ? b.companyShareValue ?? 0 : 0,
+          commissionAmount: companyAmount,
           ownerPayout,
           coordinatorFee: referralFee,
           status: 'Pending',
@@ -525,6 +529,23 @@ export const useStore = create<AppState>()(
         }
       },
 
+      renameReferral: (from, to) => {
+        const target = to.trim();
+        const keys = new Set(from.map((n) => n.trim().toLowerCase()));
+        const hit = (r?: string) => !!r && keys.has(r.trim().toLowerCase()) && r !== target;
+        const bks = get().bookings.filter((b) => hit(b.referral));
+        const cms = get().commissions.filter((c) => hit(c.referral));
+        if (!bks.length && !cms.length) return 0;
+        set((s) => ({
+          bookings: s.bookings.map((b) => (hit(b.referral) ? { ...b, referral: target } : b)),
+          commissions: s.commissions.map((c) => (hit(c.referral) ? { ...c, referral: target } : c)),
+        }));
+        bks.forEach((b) => sync(() => db.updateBooking(b.id, { referral: target })));
+        cms.forEach((c) => sync(() => db.updateCommission(c.id, { referral: target })));
+        toast.success('Names merged', `${bks.length} booking${bks.length === 1 ? '' : 's'} now say "${target}".`);
+        return bks.length;
+      },
+
       // ── Inquiries ─────────────────────────────────────────────────────────
       addInquiry: (i) => {
         const newI: Inquiry = { ...i, id: uid(), createdAt: now() };
@@ -562,6 +583,18 @@ export const useStore = create<AppState>()(
           const label = exV ? `${exV.brand} ${exV.model} (${exV.vehicleNumber})` : 'your vehicle';
           sendSms(exOwner.phone, smsTemplates.ownerExpenseLogged(exOwner.name, label, newE.category, newE.amount),
             { category: 'ownerExpenseLogged', role: 'owner', relatedId: newE.id, optIn: exOwner.smsOptIn, transactional: true });
+        }
+      },
+
+      updateExpense: (id, u) => {
+        const before = get().expenses.find((e) => e.id === id);
+        if (!before) return;
+        set((s) => ({ expenses: s.expenses.map((e) => (e.id === id ? { ...e, ...u } : e)) }));
+        if (supabaseEnabled) {
+          Promise.resolve(db.updateExpense(id, u)).then(ok).catch((err) => {
+            set((s) => ({ expenses: s.expenses.map((e) => (e.id === id ? before : e)) }));
+            reportDbError(err, 'The expense was not changed.');
+          });
         }
       },
 
@@ -618,6 +651,19 @@ export const useStore = create<AppState>()(
         }
       },
 
+      reopenPayout: (id) => {
+        const c = get().commissions.find((x) => x.id === id);
+        if (!c || c.status !== 'Paid' || c.settlementId) return;
+        get().updateCommission(id, { status: 'Pending' });
+        // it is owed again
+        const owner = get().owners.find((o) => o.id === c.ownerId);
+        if (owner && c.ownerPayout) {
+          const pendingPayout = Math.max(0, owner.pendingPayout + c.ownerPayout);
+          set((s) => ({ owners: s.owners.map((o) => (o.id === owner.id ? { ...o, pendingPayout } : o)) }));
+          sync(() => db.updateOwner(owner.id, { pendingPayout }));
+        }
+      },
+
       updateCommission: (id, updates) => {
         const existing = get().commissions.find((c) => c.id === id);
         set((s) => ({
@@ -653,7 +699,9 @@ export const useStore = create<AppState>()(
 
         // ── 2. Referral fee ───────────────────────────────────────────────
         const referralFee = resolveReferralFee(data.referralFeeType, data.referralFeeValue, data.totalAmount);
-        const ownerPayout = Math.max(0, data.totalAmount - referralFee);
+        const shareBase = data.companyShareType ? shareBaseOf(data) : data.totalAmount;
+        const companyAmount = companyShareOf(data, shareBase);
+        const ownerPayout = Math.max(0, shareBase - referralFee - companyAmount);
 
         // ── 3. Booking record ─────────────────────────────────────────────
         // (payouts for breakdown replacement cars come along with the booking — not a booking field)
@@ -661,7 +709,7 @@ export const useStore = create<AppState>()(
         const newBooking: Booking = { ...bookingData, id: bookingId, customerId, referralFee, createdAt: now() };
 
         // ── 4. Commission record ──────────────────────────────────────────
-        const commissionPaid = (data as { commissionAlreadyPaid?: boolean }).commissionAlreadyPaid ?? data.status === 'Completed';
+        const commissionPaid = (data as { commissionAlreadyPaid?: boolean }).commissionAlreadyPaid ?? false;
         const referralPaidFlag = (data as { referralAlreadyPaid?: boolean }).referralAlreadyPaid ?? false;
         const commission: Commission = {
           id: uid(),
@@ -670,8 +718,8 @@ export const useStore = create<AppState>()(
           ownerId: vehicle?.ownerId ?? '',
           referral: data.referral ?? 'Direct',
           totalIncome: data.totalAmount,
-          commissionRate: 0,
-          commissionAmount: 0,
+          commissionRate: data.companyShareType === 'percent' || data.companyShareType === 'percent_min' ? data.companyShareValue ?? 0 : 0,
+          commissionAmount: companyAmount,
           ownerPayout,
           coordinatorFee: referralFee,
           status: commissionPaid ? 'Paid' : 'Pending',
@@ -906,6 +954,9 @@ export const useStore = create<AppState>()(
         const exchanged = !!next.exchanges?.length;
         const commUpdates: Partial<Commission> | undefined = comm && {
           totalIncome: current(next).revenue, coordinatorFee: exchanged ? 0 : next.referralFee ?? 0, ownerPayout: current(next).payout,
+          ...(exchanged ? {} : { commissionAmount: companyShareOf(next, next.companyShareType ? shareBaseOf(next) : next.totalAmount),
+            ...(next.companyShareType ? { totalIncome: shareBaseOf(next) } : {}),
+            commissionRate: next.companyShareType === 'percent' || next.companyShareType === 'percent_min' ? next.companyShareValue ?? 0 : 0 }),
           vehicleId: next.vehicleId, ownerId: ownerOf(next.vehicleId) ?? '', referral: next.referral ?? 'Direct',
         };
         const bookings = s.bookings.map((b) => (b.id === id ? next : b));
@@ -953,7 +1004,7 @@ export const useStore = create<AppState>()(
         Object.entries(legRows).forEach(([cid, u]) => sync(() => db.updateCommission(cid, u)));
         Object.entries(vehicleUpdates).forEach(([vid, u]) => sync(() => db.updateVehicle(vid, u)));
         Object.entries(ownerUpdates).forEach(([oid, u]) => sync(() => db.updateOwner(oid, u)));
-        toast.success('Booking corrected', `${next.customerName}: ${meta.changes.length} change${meta.changes.length === 1 ? '' : 's'} saved.`);
+        if (!meta.quiet) toast.success('Booking corrected', `${next.customerName}: ${meta.changes.length} change${meta.changes.length === 1 ? '' : 's'} saved.`);
       },
 
       // ── Full booking record ─────────────────────────────────────────────
@@ -992,6 +1043,22 @@ export const useStore = create<AppState>()(
         return entry.id;
       },
 
+      // Pay (part of) the bill from the cash deposit held: a payment "from the security deposit" on the bill,
+      // and the same amount marked as used on the deposit — so it is counted once, and the rest can be returned.
+      payFromDeposit: (id, amount, by) => {
+        const b = get().bookings.find((x) => x.id === id);
+        if (!b || b.depositType !== 'cash') return;
+        const held = Math.max(0, (b.depositAmount ?? 0) - (b.depositReturned ?? 0) - (b.depositDeduction ?? 0));
+        const amt = Math.min(Math.round(amount), held);
+        if (amt <= 0) return;
+        get().recordPayment(id, { kind: 'Payment', amount: amt, method: 'Security deposit', note: 'Paid from the security deposit', by });
+        const fresh = get().bookings.find((x) => x.id === id)!;
+        get().logBookingActivity(id, { by, type: 'Deposit', text: `Rs ${amt.toLocaleString()} of the deposit used for the bill${held - amt > 0 ? ` — Rs ${(held - amt).toLocaleString()} still held` : ''}` }, {
+          depositDeduction: (fresh.depositDeduction ?? 0) + amt,
+          depositNotes: [fresh.depositNotes, `Rs ${amt.toLocaleString()} used for the bill`].filter(Boolean).join('; '),
+        });
+      },
+
       // Close out a cash deposit: what goes back to the customer and what is kept (and why)
       settleDeposit: (id, st, by) => {
         const b = get().bookings.find((x) => x.id === id);
@@ -1019,7 +1086,33 @@ export const useStore = create<AppState>()(
           { charges: [...(b.charges ?? []), charge], extraCharges: (b.extraCharges ?? 0) + c.amount });
         if (off) toast.success('Deduction recorded', `Rs ${(-c.amount).toLocaleString()} off the bill${c.note ? ` — ${c.note}` : ''}.`);
         else toast.success('Charge added', `${c.kind}: Rs ${c.amount.toLocaleString()} added to the bill.`);
+        get().refreshPayout(id);
         return charge.id;
+      },
+
+      // The commission and the owner's share follow the final bill (rent + charges − discount):
+      // worked out again when a charge is added or removed — until the owner is paid.
+      refreshPayout: (id) => {
+        const st = get();
+        const b = st.bookings.find((x) => x.id === id);
+        if (!b || !b.companyShareType || b.exchanges?.length || b.status === 'Cancelled') return;
+        const c = mainCommission(st.commissions, b);
+        if (!c || c.status === 'Paid' || c.settlementId) return;
+        const base = shareBaseOf(b);
+        const commissionAmount = companyShareOf(b, base);
+        const ownerPayout = legsOf(b)[0].payout;
+        if (Math.abs(c.ownerPayout - ownerPayout) < 0.5 && c.commissionAmount === commissionAmount && c.totalIncome === base) return;
+        const delta = ownerPayout - c.ownerPayout;
+        const updates: Partial<Commission> = { ownerPayout, commissionAmount, totalIncome: base };
+        const owner = st.owners.find((o) => o.id === c.ownerId);
+        const ownerUpdates: Partial<Owner> | undefined = owner && delta
+          ? { totalEarnings: Math.max(0, owner.totalEarnings + delta), pendingPayout: Math.max(0, owner.pendingPayout + delta) } : undefined;
+        set((s) => ({
+          commissions: s.commissions.map((x) => (x.id === c.id ? { ...x, ...updates } : x)),
+          owners: ownerUpdates ? s.owners.map((o) => (o.id === owner!.id ? { ...o, ...ownerUpdates } : o)) : s.owners,
+        }));
+        sync(() => db.updateCommission(c.id, updates));
+        if (ownerUpdates) sync(() => db.updateOwner(owner!.id, ownerUpdates));
       },
       waiveCharge: (id, chargeId, by) => {
         const b = get().bookings.find((x) => x.id === id);
@@ -1028,10 +1121,13 @@ export const useStore = create<AppState>()(
         get().logBookingActivity(id, { by, type: 'Charge', text: c.amount < 0 ? `Deduction Rs ${(-c.amount).toLocaleString()} removed — back on the bill${c.note ? ` (${c.note})` : ''}` : `${c.kind} Rs ${c.amount.toLocaleString()} waived` }, {
           charges: (b.charges ?? []).map((x) => (x.id === chargeId ? { ...x, status: 'Waived' as const } : x)),
           extraCharges: (b.extraCharges ?? 0) - c.amount,
+          // the extra-km charge split per km goes with it (0 = no split)
+          ...((b.companyKmCharge ?? 0) > 0 && c.note?.startsWith('Extra km') && Math.abs(c.amount - (b.companyKmCharge ?? 0)) < 1 ? { companyKmCharge: 0 } : {}),
         });
         // a deduction the owner carried: their payout goes back up
         if (c.ownerAdjustmentId) get().reverseOwnerPayoutAdjustment(id, c.ownerAdjustmentId, by);
         if (c.ownerOwedId && get().commissions.find((x) => x.id === c.ownerOwedId)?.status !== 'Paid') get().updateSwapPayout(c.ownerOwedId, 0, 'Deduction removed — nothing owed');
+        get().refreshPayout(id);
       },
 
       // Pickup / return handover with its checklist — starts or completes the rental

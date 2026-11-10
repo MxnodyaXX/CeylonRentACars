@@ -1,3 +1,4 @@
+import PayoutReminder from '../components/ui/PayoutReminder';
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -205,6 +206,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-5">
       <Header title="Dashboard" subtitle="Fleet performance at a glance" />
+      <PayoutReminder />
 
       {/* ── KPI Row ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

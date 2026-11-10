@@ -18,6 +18,7 @@ import { bookingDiscount } from '../../lib/revenue';
 import { durationLabel } from '../../lib/rentalPeriod';
 import { bookingTouchesVehicles, legsOf, ownerCommissions, splitNote } from '../../lib/exchange';
 import { bookingDue } from '../../lib/credit';
+import OwnerStatements from './OwnerStatements';
 
 const BAR_COLORS = ['#E11D2A', '#10B981', '#F59E0B', '#8B5CF6', '#111114', '#EC4899'];
 type PeriodKey = 'all' | 'week' | 'month' | 'year' | 'custom';
@@ -571,6 +572,8 @@ export default function OwnerView() {
           </div>
         </div>
       )}
+
+      <OwnerStatements />
 
       {/* ── Pending Payouts ─────────────────────────────────────────── */}
       <div className="card mb-6">

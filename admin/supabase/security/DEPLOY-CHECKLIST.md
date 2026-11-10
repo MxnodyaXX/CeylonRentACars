@@ -407,3 +407,43 @@ enforces it (`16_staff_roles.sql`). Hiding buttons is not the only protection.
       Authentication → Users → admin → Reset password / set a new one) and keep it only for emergencies,
       or switch it off. Until then anyone with the old password still has full access.
 - [ ] Changing someone's job or switches takes effect when they next sign in (or within an hour).
+
+## Part 15 — monthly owner payouts (after Part 14 / 16)
+
+Customers pay the company. On a fixed day each month the company pays every owner for the rentals
+**completed** the month before, whether or not the customer has paid in full. The payout is
+their share − amounts they owe back − expenses the company paid on their cars + referral fees.
+Finance prepares → Brian approves → Finance records the transfer → the owner confirms in their login.
+
+- [ ] SQL Editor → run `security/17_owner_settlements.sql` (undo: `rollback/17_rollback_owner_settlements.sql`,
+      which keeps the payout history). **If 01 is ever re-run, run 16 and then 17 again.**
+- [ ] Run `security/verify.sql`: still no FAIL
+- [ ] Push the admin
+- [ ] Admin → **Owner payouts** (Finance menu): set the payout day (default: the 5th)
+- [ ] Expenses: older expenses show "Who paid? Company / Owner". Set them, because only **Company** ones
+      are taken off the owner's payout. New expenses ask when they're added.
+- [ ] First run: open last month → each owner → check the lines → **Send for approval** (Dinithi) →
+      **Approve** (Brian) → transfer the money → **Record payment** with the bank reference (Dinithi).
+      The owner gets an SMS and confirms in their login (Commissions → Monthly payout statements).
+- [ ] Payout lines that were already marked Paid by hand before this aren't included again.
+
+## Part 16 — Company accounts: the company's books on one page (after Part 15 / 17)
+
+Finance → **Company accounts** (admins and Finance only):
+- **Overview:** whose money the company holds, profit for the period, money to come in and go out, charts and checks.
+- **Ledger:** every money movement, exportable to Excel.
+- **Company expenses:** running costs not tied to a car. Those above the approval limit wait for Brian.
+- **Accounts:** the cash box and bank accounts with opening balances, transfers, and the usual account per payment method.
+- **Month close:** a checked month is locked.
+
+- [ ] SQL Editor → run `security/18_company_accounts.sql` (undo: `rollback/18_rollback_company_accounts.sql` keeps
+      the records). **If 01 is ever re-run, run 16, 17 and then 18 again.**
+- [ ] Run `security/verify.sql`: still no FAIL
+- [ ] Push the admin
+- [ ] Brian → Company accounts → **Accounts**: add the cash box and each bank account with its **balance on
+      1 Oct 2026**. Then set the usual account for Cash and for Bank transfer (Settings box), and check the
+      approval limit (default Rs 25,000).
+- [ ] From now on, record company running costs (rent, electricity, ads, salaries…) under **Company
+      expenses**. Tick **Private** for salaries so only admins see them. Vehicle repairs stay on the Expenses page.
+- [ ] When cash is banked, record it under **Accounts → Move money between accounts**.
+- [ ] Each month, once the accountant has checked it: **Month close → Close month**.

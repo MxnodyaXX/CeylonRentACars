@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, Key, Loader2, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, UserPlus, RotateCcw } from 'lucide-react';
+import { ChevronDown, Copy, Key, Loader2, ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, UserPlus, RotateCcw } from 'lucide-react';
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { cleanUsername } from '../../lib/staffAuth';
@@ -129,6 +129,7 @@ function NewTeamLogin({ taken, onCreated }: { taken: Set<string>; onCreated: (c:
 function TeamCard({ u, onCredentials }: { u: AppUser; onCredentials: (c: { username: string; password: string }) => void }) {
   const { updateTeamLogin, resetPassword } = useAuthStore();
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const perms = (u.permissions ?? {}) as Perms;
   const job = jobOf(u.job);
   const preset = u.job ? presetFor(u.job) : {};
@@ -149,42 +150,57 @@ function TeamCard({ u, onCredentials }: { u: AppUser; onCredentials: (c: { usern
     if (pw) onCredentials({ username: u.username, password: pw });
   };
 
+  const on = ABILITIES.filter((a) => perms[a.key]).length;
+  const initials = u.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+
   return (
-    <div className={`card space-y-4 ${u.disabled ? 'opacity-70' : ''}`}>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-navy-700 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-            {u.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
-          </div>
-          <div>
-            <p className="font-semibold text-navy-800 text-sm">{u.name} <span className="font-mono text-xs font-normal text-navy-400">@{u.username}</span></p>
-            <p className="text-xs text-navy-400">
-              {job?.label ?? 'No job'}{u.lastSignIn ? ` · last signed in ${new Date(u.lastSignIn).toLocaleDateString('en-GB')}` : ' · not signed in yet'}
-              {u.mustChangePassword && ' · temporary password'}
-            </p>
-          </div>
+    <div className={`card !p-0 overflow-hidden ${u.disabled ? 'opacity-70' : ''}`}>
+      {/* the summary row opens and closes the profile */}
+      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+              className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-navy-50/50 transition-colors">
+        <div className="w-11 h-11 rounded-xl bg-navy-700 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{initials}</div>
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-navy-800 text-sm truncate">{u.name} <span className="font-mono text-xs font-normal text-navy-400">@{u.username}</span></p>
+          <p className="text-xs text-navy-400 truncate">
+            {job?.label ?? 'No job'}{u.lastSignIn ? ` · last signed in ${new Date(u.lastSignIn).toLocaleDateString('en-GB')}` : ' · not signed in yet'}
+            {u.mustChangePassword && ' · temporary password'}
+          </p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {busy && <Loader2 size={15} className="animate-spin text-navy-400" />}
-          <select className="input !py-1.5 !w-auto text-xs" value={u.job ?? ''} disabled={busy}
-                  onChange={(e) => {
-                    const j = e.target.value as StaffJob;
-                    if (confirm(`Make ${u.name} ${jobLabel(j)}? Their switches are reset to that job's usual abilities.`)) save({ job: j, permissions: presetFor(j) }, 'Job changed');
-                  }}>
-            {JOBS.map((j) => <option key={j.key} value={j.key}>{j.label}</option>)}
-          </select>
-          <button type="button" onClick={reset} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-navy-50 px-2.5 py-1.5 text-xs font-semibold text-navy-600 hover:bg-navy-100"><Key size={12} /> New password</button>
-          <button type="button" disabled={busy}
-                  onClick={() => { if (u.disabled || confirm(`Switch off ${u.name}'s login? They can't sign in until you switch it back on.`)) save({ disabled: !u.disabled }, u.disabled ? 'Login switched on' : 'Login switched off'); }}
-                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${u.disabled ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}>
-            {u.disabled ? <><ShieldCheck size={12} /> Switch on</> : <><ShieldOff size={12} /> Switch off</>}
-          </button>
+        <span className="hidden sm:flex items-center gap-1.5 flex-shrink-0">
+          {u.disabled && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-600">Switched off</span>}
+          {differs && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Custom</span>}
+          <span className="rounded-full bg-navy-50 px-2 py-0.5 text-[11px] font-semibold text-navy-600">{on} of {ABILITIES.length} abilities</span>
+        </span>
+        {busy && <Loader2 size={15} className="animate-spin text-navy-400 flex-shrink-0" />}
+        <ChevronDown size={18} className={`text-navy-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 pt-4 space-y-4 border-t border-navy-100">
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs font-medium text-navy-500 flex items-center gap-2">Job
+              <select className="input !py-1.5 !w-auto text-xs" value={u.job ?? ''} disabled={busy}
+                      onChange={(e) => {
+                        const j = e.target.value as StaffJob;
+                        if (confirm(`Make ${u.name} ${jobLabel(j)}? Their switches are reset to that job's usual abilities.`)) save({ job: j, permissions: presetFor(j) }, 'Job changed');
+                      }}>
+                {JOBS.map((j) => <option key={j.key} value={j.key}>{j.label}</option>)}
+              </select>
+            </label>
+            <span className="flex-1" />
+            <button type="button" onClick={reset} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-navy-50 px-2.5 py-1.5 text-xs font-semibold text-navy-600 hover:bg-navy-100"><Key size={12} /> New password</button>
+            <button type="button" disabled={busy}
+                    onClick={() => { if (u.disabled || confirm(`Switch off ${u.name}'s login? They can't sign in until you switch it back on.`)) save({ disabled: !u.disabled }, u.disabled ? 'Login switched on' : 'Login switched off'); }}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${u.disabled ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}>
+              {u.disabled ? <><ShieldCheck size={12} /> Switch on</> : <><ShieldOff size={12} /> Switch off</>}
+            </button>
+          </div>
+          <AbilitySwitches perms={perms} disabled={busy || u.disabled} onToggle={(k) => save({ permissions: { ...perms, [k]: !perms[k] } })} />
+          {differs && u.job && (
+            <button type="button" disabled={busy} onClick={() => save({ permissions: presetFor(u.job!) }, 'Abilities reset')}
+                    className="text-xs font-semibold text-navy-500 hover:text-navy-800 inline-flex items-center gap-1"><RotateCcw size={12} /> Back to the usual {job?.label} abilities</button>
+          )}
         </div>
-      </div>
-      <AbilitySwitches perms={perms} disabled={busy || u.disabled} onToggle={(k) => save({ permissions: { ...perms, [k]: !perms[k] } })} />
-      {differs && u.job && (
-        <button type="button" disabled={busy} onClick={() => save({ permissions: presetFor(u.job!) }, 'Abilities reset')}
-                className="text-xs font-semibold text-navy-500 hover:text-navy-800 inline-flex items-center gap-1"><RotateCcw size={12} /> Back to the usual {job?.label} abilities</button>
       )}
     </div>
   );

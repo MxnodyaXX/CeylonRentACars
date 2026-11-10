@@ -195,7 +195,21 @@ export interface Booking {
   estimatedAmount?: number;  // from quotation calculator
   paidAmount: number;
   status: 'Confirmed' | 'Ongoing' | 'Completed' | 'Cancelled';
-  referral?: string;         // owner name / third-party name / 'Direct'
+  referral?: string;         // WHO brought the customer: owner name / third-party name / 'Direct'
+  channel?: string;          // HOW they reached us: Walk-in, WhatsApp, Facebook… (lib/channels.ts)
+  /** The company's share of the rental (lib/companyShare.ts) — missing on bookings made before it existed (= 0) */
+  companyShareType?: 'percent' | 'percent_min' | 'per_day' | 'fixed';
+  companyShareValue?: number;  // the % or the rupees
+  companyShareMin?: number;    // percent_min: the minimum per day
+  /** Extra km split per km (set at the return): the company keeps companyKmRate for each of companyKmKm km out of the
+   *  extra-km charge companyKmCharge; the rest of that charge is the owner's. The rent part keeps its own method. */
+  companyKmRate?: number;
+  companyKmKm?: number;
+  companyKmCharge?: number;
+  /** How the rent was set when booking (daily rentals): the car's standard rate, an agreed rate per day, or an agreed total */
+  priceMode?: 'standard' | 'perDay' | 'total';
+  /** The car's standard daily rate at the time of booking */
+  standardRate?: number;
   referralFeeType?: 'fixed' | 'percent'; // how the referral fee is entered
   referralFeeValue?: number; // raw input: rupees (fixed) or percent (percent)
   referralFee?: number;      // resolved rupee amount paid to the referrer
@@ -251,7 +265,24 @@ export interface PaymentEntry {
   receiptNo?: string;
   note?: string;
   by: string;
+  /** the company account the money went into / came out of (Company accounts); missing = by the method's usual account */
+  accountId?: string;
 }
+
+/** The company's cash box / bank accounts (security/18_company_accounts.sql) */
+export interface CompanyAccount {
+  id: string; name: string; kind: 'cash' | 'bank' | 'card' | 'online';
+  bankName?: string; accountNo?: string; openingBalance: number; openingDate: string; active: boolean;
+}
+/** A company running cost not tied to a car (rent, electricity, salaries, ads…) */
+export interface CompanyExpense {
+  id: string; date: string; category: string; amount: number; description: string;
+  accountId?: string; receiptPath?: string; private: boolean;
+  status: 'pending' | 'approved' | 'rejected' | 'paid';
+  requestedBy?: string; approvedBy?: string; approvedAt?: string; reviewNote?: string; paidOn?: string; paidBy?: string; createdAt?: string;
+}
+export interface AccountTransfer { id: string; date: string; fromAccount: string; toAccount: string; amount: number; note?: string; byName?: string }
+export interface MonthClose { period: string; closedBy?: string; closedAt?: string; summary: Record<string, number>; note?: string }
 
 export interface CustomerInfo {
   nationality?: string;
@@ -604,6 +635,42 @@ export interface Commission {
   createdAt: string;
   /** Why this payout exists, shown to the owner (e.g. a breakdown replacement) — set by admins only */
   note?: string;
+  /** The monthly owner settlement that paid this line (locked once set) */
+  settlementId?: string;
+}
+
+/** One line of a monthly owner settlement — kept with the settlement exactly as it was approved */
+export interface SettlementLine {
+  kind: 'rental' | 'deduction' | 'expense' | 'referral';
+  id: string;              // commission id (rental / deduction), expense id, or booking id (referral fee)
+  bookingId?: string;
+  label: string;           // what it is, e.g. "Toyota Aqua CAA-1111 · Nimal Perera"
+  detail?: string;         // e.g. "1–5 Oct 2026 · Rs 40,000 rental − Rs 6,000 company"
+  date: string;            // completed / expense date
+  amount: number;          // signed: + paid to the owner, − taken off
+  carriedOver?: boolean;   // completed before this month but not settled then
+}
+
+export type SettlementStatus = 'pending_approval' | 'returned' | 'approved' | 'paid' | 'confirmed';
+
+/** A month's payout to one owner (supabase/security/17_owner_settlements.sql) */
+export interface OwnerSettlement {
+  id: string;
+  ownerId: string;
+  period: string;          // 'YYYY-MM'
+  status: SettlementStatus;
+  lines: SettlementLine[];
+  rentals: number;
+  deductions: number;      // ≤ 0
+  expenses: number;        // ≥ 0 (taken off)
+  referralFees: number;
+  net: number;
+  preparedBy?: string; preparedAt?: string;
+  reviewNote?: string;
+  approvedBy?: string; approvedAt?: string;
+  paidBy?: string; paidAt?: string; payMethod?: string; payRef?: string; slipPath?: string; payAccountId?: string;
+  ownerConfirmedAt?: string; ownerNote?: string;
+  createdAt?: string;
 }
 
 export type ExpenseCategory = 'Service' | 'Repair' | 'Fine' | 'Damage' | 'Tire' | 'Insurance' | 'Fuel' | 'Other';
@@ -617,6 +684,10 @@ export interface Expense {
   date: string;
   receipt?: string;
   createdAt: string;
+  /** Who paid it: 'company' → taken off the car owner's next monthly payout; 'owner' → the owner's own cost */
+  paidBy?: 'company' | 'owner';
+  /** The monthly owner settlement it was taken off (locked once set) */
+  settlementId?: string;
 }
 
 export interface Driver {
@@ -695,6 +766,12 @@ export interface AppState {
   cancelBooking: (id: string, why?: { reason: string; details?: string; by: string }) => void;
   /** Deletes a booking for good (admin) — used for bookings whose vehicle no longer exists */
   deleteBooking: (id: string) => void;
+  /** Commission + owner's share worked out again on the final bill (after a charge is added or removed) */
+  refreshPayout: (bookingId: string) => void;
+  /** A payout line marked Paid by hand but never actually paid: back to Pending so the monthly payout includes it */
+  reopenPayout: (id: string) => void;
+  /** Merge referrer spellings into one name on every booking and payout line (admin) — returns how many were changed */
+  renameReferral: (from: string[], to: string) => number;
   startBooking: (id: string) => void;
   completeBooking: (id: string) => void;
   markReferralPaid: (bookingId: string, paid: boolean) => void;
@@ -705,6 +782,8 @@ export interface AppState {
 
   addExpense: (e: Omit<Expense, 'id' | 'createdAt'>) => void;
   deleteExpense: (id: string) => void;
+  /** Set who paid an older expense (only who-paid / description; settled ones are locked) */
+  updateExpense: (id: string, u: Pick<Expense, 'paidBy'> | Pick<Expense, 'description'>) => void;
 
   addDriver: (d: Omit<Driver, 'id' | 'joinedAt' | 'totalEarnings'>) => void;
   updateDriver: (id: string, updates: Partial<Driver>) => void;
@@ -718,7 +797,10 @@ export interface AppState {
   addManualBooking: (data: Omit<Booking, 'id' | 'createdAt'> & { customerAddress?: string; dailyRateUsed?: number; referralAlreadyPaid?: boolean; commissionAlreadyPaid?: boolean }) => string;
   recomputeStats: () => void;
   /** Admin correction of a booking; `changes` is a readable list kept as an audit line in the notes */
-  editBooking: (id: string, updates: Partial<Booking>, meta: { by: string; changes: string[]; reason?: string; type?: ActivityEntry['type'] }) => void;
+  /** Pay (part of) the bill from the cash deposit held — recorded as a payment and as deposit used */
+  payFromDeposit: (bookingId: string, amount: number, by: string) => void;
+  /** quiet: no toast (bulk changes report once themselves) */
+  editBooking: (id: string, updates: Partial<Booking>, meta: { by: string; changes: string[]; reason?: string; type?: ActivityEntry['type']; quiet?: boolean }) => void;
   // ── Full booking record ──
   logBookingActivity: (id: string, entry: Omit<ActivityEntry, 'at'>, updates?: Partial<Booking>) => void;
   /** Returns the ledger entry id (pass id to record a known entry) */

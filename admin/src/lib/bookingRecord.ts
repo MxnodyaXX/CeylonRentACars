@@ -46,6 +46,44 @@ export function chargeLine(c: ExtraCharge): PriceLine {
 }
 
 /** Rental × rate, extra charges, discount → bill; then paid and due */
+/**
+ * How a daily rental's rent was set, for the bill — never just "total ÷ days":
+ *   the car's standard daily rate · an agreed rate per day · an agreed total
+ * From what the booking saved (priceMode / standardRate); older bookings: from the "Custom price" note in
+ * their history, then by comparing with the car's daily rate.
+ */
+export function rentBasis(b: Booking, vehicle?: Vehicle): { label: string; detail?: string } {
+  const days = b.totalDays || 1;
+  const dayWord = `${days} day${days === 1 ? '' : 's'}`;
+  const perDay = Math.round(b.totalAmount / days);
+  const agreed = (std?: number, how = 'agreed with the customer') => ({
+    label: `Agreed price for ${dayWord}`,
+    detail: `${how} · works out to ${rs(perDay)}/day${std ? ` · the standard rate would be ${rs(std * days)} (${days} × ${rs(std)})` : ''}`,
+  });
+  // 1 · saved with the booking
+  if (b.priceMode) {
+    const std = b.standardRate ?? vehicle?.dailyRent;
+    if (b.priceMode === 'standard' && std && Math.abs(std * days - b.totalAmount) < 1) return { label: `${dayWord} × ${rs(std)}`, detail: "the car's standard daily rate" };
+    if (b.priceMode === 'perDay') return { label: `${dayWord} × ${rs(perDay)}`, detail: `agreed rate per day${std && std !== perDay ? ` · standard ${rs(std)}/day` : ''}` };
+    if (b.priceMode === 'total') return agreed(std, 'agreed total');
+    return { label: `${dayWord} × ${rs(perDay)}`, detail: `booked at the standard rate (${rs(std ?? perDay)}/day); the price was changed later — see History` };
+  }
+  // 2 · the note the booking form wrote: "Custom price Rs 98,000 (agreed total) — standard was Rs 97,500 (15 days × Rs 6,500)"
+  const note = (b.activity ?? []).map((a) => a.text).find((t) => /^Custom price Rs/.test(t));
+  const m = note?.match(/^Custom price Rs ([\d,]+) \((?:Rs ([\d,]+) \/ day|agreed total)\) — standard was Rs [\d,]+ \(\d+ days? × Rs ([\d,]+)\)/);
+  if (m) {
+    const std = Number(m[3].replace(/,/g, ''));
+    if (m[2]) return { label: `${dayWord} × ${rs(perDay)}`, detail: `agreed rate per day · standard ${rs(std)}/day` };
+    return agreed(std, 'agreed total');
+  }
+  // 3 · terms agreed in an inquiry consultation
+  if (/AGREED TERMS/.test(b.notes ?? '')) return agreed(vehicle?.dailyRent, 'agreed with the customer in the inquiry (see the booking notes)');
+  // 4 · compare with the car's daily rate today
+  const std = vehicle?.dailyRent;
+  if (std && Math.abs(std * days - b.totalAmount) < 1) return { label: `${dayWord} × ${rs(std)}`, detail: "the car's standard daily rate" };
+  return agreed(std, 'price set on the booking');
+}
+
 export function priceBreakdown(b: Booking, vehicle?: Vehicle) {
   const type = (b.rentalType ?? 'Daily') as RentalType;
   const lines: PriceLine[] = [];
@@ -58,8 +96,7 @@ export function priceBreakdown(b: Booking, vehicle?: Vehicle) {
   } else if (type !== 'Daily' && b.rentalUnits) {
     lines.push({ label: `${b.rentalUnits} ${b.rentalUnits === 1 ? UNIT[type].one : UNIT[type].many} × ${rs(b.unitRate ?? 0)}`, amount: b.totalAmount, group: 'rent' });
   } else {
-    const rate = b.totalDays ? Math.round(b.totalAmount / b.totalDays) : vehicle?.dailyRent ?? 0;
-    lines.push({ label: `${b.totalDays} day${b.totalDays === 1 ? '' : 's'} × ${rs(rate)}`, amount: b.totalAmount, group: 'rent' });
+    lines.push({ ...rentBasis(b, vehicle), amount: b.totalAmount, group: 'rent' });
   }
   const charged = (b.charges ?? []).filter((c) => c.status === 'Charged');
   const chargedTotal = charged.reduce((s, c) => s + c.amount, 0);

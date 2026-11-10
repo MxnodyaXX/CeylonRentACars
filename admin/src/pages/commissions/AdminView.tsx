@@ -8,6 +8,9 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { TrendingUp, DollarSign, Users, Percent, Search, X, FileSpreadsheet, FileText, Maximize2, ChevronDown } from 'lucide-react';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
 import { bookingDiscount } from '../../lib/revenue';
+import { canonicalNames, channelOf, nameKey, referrerOf } from '../../lib/channels';
+import ReferralNamesFix from './ReferralNamesFix';
+import { useAuthStore } from '../../store/useAuthStore';
 
 export default function AdminView() {
   const { commissions, bookings, vehicles, owners } = useStore();
@@ -22,22 +25,27 @@ export default function AdminView() {
   const pendingCount     = commissions.filter((c) => c.status === 'Pending').length;
 
   // ── Income by referral ────────────────────────────────────────────────────
-  // Direct is split per owner (which owners get non-referred business); owner /
-  // third-party referrals and marketing sources each get their own bar.
-  const REFERRAL_SOURCES = ['WhatsApp', 'Facebook', 'Instagram', 'TikTok', 'Google', 'Word of Mouth'];
+  // WHO brought the customer: nobody (Direct, split by the car's owner) or a person (by referrer).
+  // HOW they found us (the channel) is a separate breakdown below — older bookings that had the
+  // channel in the referral box count as Direct here and under their channel there.
   const ownerNameById = (id: string) => owners.find((o) => o.id === id)?.name ?? 'Unknown';
+  const bookingOf = (c: { bookingId?: string }) => bookings.find((b) => b.id === c.bookingId);
+  // one name per person, whatever the spelling ("THISAGA" and "Thisaga" are the same)
+  const canon = canonicalNames(commissions.map((c) => referrerOf(c.referral)).filter((n): n is string => !!n), owners);
+  const personOf = (c: { referral?: string }) => { const r = referrerOf(c.referral); return r ? canon(r) : undefined; };
 
   const directByOwner: Record<string, { count: number; total: number }> = {};
   const referralMap:   Record<string, { count: number; total: number }> = {};
   const sourceMap:     Record<string, { count: number; total: number }> = {};
   commissions.forEach((c) => {
-    const ref = c.referral || 'Direct';
-    const bucket =
-      ref === 'Direct'                 ? (directByOwner[c.ownerId] ??= { count: 0, total: 0 })
-      : REFERRAL_SOURCES.includes(ref) ? (sourceMap[ref]           ??= { count: 0, total: 0 })
-      :                                  (referralMap[ref]          ??= { count: 0, total: 0 });
+    const person = personOf(c);
+    const bucket = person ? (referralMap[person] ??= { count: 0, total: 0 }) : (directByOwner[c.ownerId] ??= { count: 0, total: 0 });
     bucket.count += 1;
     bucket.total += c.totalIncome;
+    const ch = channelOf(bookingOf(c) ?? { referral: c.referral }) ?? 'Not recorded';
+    const cb = (sourceMap[ch] ??= { count: 0, total: 0 });
+    cb.count += 1;
+    cb.total += c.totalIncome;
   });
 
   const SOURCE_COLORS   = ['#10B981', '#8B5CF6', '#EC4899', '#06B6D4', '#F97316', '#71717A'];
@@ -48,36 +56,54 @@ export default function AdminView() {
   const directOwnerBars = Object.entries(directByOwner).map(([oid, d], i) => ({
     id: oid, key: `ow_${oid}`, name: ownerNameById(oid),
     color: OWNER_COLORS[i % OWNER_COLORS.length], total: d.total, count: d.count,
-  }));
+  })).sort((a, b) => b.total - a.total);
   const directTotal = directOwnerBars.reduce((s, b) => s + b.total, 0);
   const directCount = directOwnerBars.reduce((s, b) => s + b.count, 0);
 
-  // Owner Referrals = one bar of stacked referrer segments (which owner referred it).
+  // Referrals = one bar of stacked referrer segments (who brought the customer).
   const referrerBars = Object.entries(referralMap).map(([n, d], i) => ({
     id: n, key: `rf_${i}`, name: n,
     color: REFERRER_COLORS[i % REFERRER_COLORS.length], total: d.total, count: d.count,
-  }));
+  })).sort((a, b) => b.total - a.total);
   const referrerTotal = referrerBars.reduce((s, b) => s + b.total, 0);
   const referrerCount = referrerBars.reduce((s, b) => s + b.count, 0);
 
-  // Marketing sources stay as one bar each.
+  // How customers found us (every booking, whoever referred it)
   const sourceBars = Object.entries(sourceMap).map(([n, d], i) => ({
-    name: n, color: SOURCE_COLORS[i % SOURCE_COLORS.length], total: d.total, count: d.count,
-  }));
+    name: n, color: n === 'Not recorded' ? '#D4D4D8' : SOURCE_COLORS[i % SOURCE_COLORS.length], total: d.total, count: d.count,
+  })).sort((a, b) => (a.name === 'Not recorded' ? 1 : b.name === 'Not recorded' ? -1 : b.total - a.total));
   const otherColorByName: Record<string, string> = Object.fromEntries(sourceBars.map((b) => [b.name, b.color]));
+  const channelGrand = sourceBars.reduce((s, b) => s + b.total, 0);
+
+  // Everything a person brought in: their own cars' direct hires + the customers they referred
+  const broughtIn = (() => {
+    const m = new Map<string, { name: string; direct: number; referred: number; count: number }>();
+    directOwnerBars.forEach((b) => {
+      const k = nameKey(b.name);
+      const e = m.get(k) ?? { name: b.name, direct: 0, referred: 0, count: 0 };
+      e.direct += b.total; e.count += b.count; m.set(k, e);
+    });
+    referrerBars.forEach((b) => {
+      const k = nameKey(b.name);
+      const e = m.get(k) ?? { name: b.name, direct: 0, referred: 0, count: 0 };
+      e.referred += b.total; e.count += b.count; m.set(k, e);
+    });
+    return [...m.values()].map((e) => ({ ...e, total: e.direct + e.referred })).sort((a, b) => b.total - a.total);
+  })();
+  const broughtGrand = broughtIn.reduce((s, e) => s + e.total, 0);
 
   // Detailed entries (each with its underlying bookings) for the expanded view.
   const directEntries = directOwnerBars.map((b) => ({
     key: `d:${b.id}`, name: b.name, color: b.color, total: b.total, count: b.count,
-    rows: commissions.filter((c) => (c.referral || 'Direct') === 'Direct' && c.ownerId === b.id),
+    rows: commissions.filter((c) => !personOf(c) && c.ownerId === b.id),
   }));
   const referrerEntries = referrerBars.map((b) => ({
     key: `r:${b.name}`, name: b.name, color: b.color, total: b.total, count: b.count,
-    rows: commissions.filter((c) => c.referral === b.name),
+    rows: commissions.filter((c) => personOf(c) === b.name),
   }));
   const sourceEntries = sourceBars.map((b) => ({
     key: `s:${b.name}`, name: b.name, color: b.color, total: b.total, count: b.count,
-    rows: commissions.filter((c) => c.referral === b.name),
+    rows: commissions.filter((c) => (channelOf(bookingOf(c) ?? { referral: c.referral }) ?? 'Not recorded') === b.name),
   }));
 
   // One chart row per x-category. Direct & Owner Referrals carry their stacked
@@ -88,13 +114,13 @@ export default function AdminView() {
 
   const directRow: Record<string, string | number> = { name: 'Direct', other: 0, ...zeroKeys(refKeys) };
   directOwnerBars.forEach((b) => { directRow[b.key] = b.total; });
-  const referralRow: Record<string, string | number> = { name: 'Owner Referrals', other: 0, ...zeroKeys(ownerKeys) };
+  const referralRow: Record<string, string | number> = { name: 'Referrals', other: 0, ...zeroKeys(ownerKeys) };
   referrerBars.forEach((b) => { referralRow[b.key] = b.total; });
 
+  // the chart is WHO brought the customer; the channels are listed under it (they overlap these bars)
   const chartRows: Record<string, string | number>[] = [
     ...(directOwnerBars.length ? [directRow] : []),
     ...(referrerBars.length ? [referralRow] : []),
-    ...sourceBars.map((b) => ({ name: b.name, other: b.total, ...zeroKeys(ownerKeys), ...zeroKeys(refKeys) })),
   ];
 
   // Hover Direct → total + each owner's slice; hover any other bar → that referral.
@@ -119,14 +145,14 @@ export default function AdminView() {
         </div>
       );
     }
-    if (label === 'Owner Referrals') {
+    if (label === 'Referrals') {
       return (
         <div className="bg-white rounded-xl shadow-card border border-navy-100 px-3 py-2 text-xs">
           <p className="font-bold text-navy-800">
-            Owner Referrals · Rs {referrerTotal.toLocaleString()}
+            Referrals · Rs {referrerTotal.toLocaleString()}
             <span className="font-normal text-navy-400"> · {referrerCount} booking{referrerCount !== 1 ? 's' : ''}</span>
           </p>
-          <p className="font-normal text-navy-400 mb-1.5 text-[10px]">Income owners referred onto other vehicles</p>
+          <p className="font-normal text-navy-400 mb-1.5 text-[10px]">Customers a person brought in (earns a referral fee)</p>
           {referrerBars.filter((b) => b.total > 0).map((b) => (
             <div key={b.id} className="flex items-center justify-between gap-5">
               <span className="flex items-center gap-1.5 text-navy-600">
@@ -158,6 +184,8 @@ export default function AdminView() {
   const [dateFrom, setDateFrom]   = useState('');
   const [dateTo, setDateTo]       = useState('');
   const [expanded, setExpanded]   = useState(false);
+  const [fixNames, setFixNames]   = useState(false);
+  const isAdmin = useAuthStore((st) => st.isAdmin());
   const [openRows, setOpenRows]   = useState<Record<string, boolean>>({});
   const toggleRow = (k: string) => setOpenRows((m) => ({ ...m, [k]: !m[k] }));
 
@@ -461,10 +489,10 @@ export default function AdminView() {
           <div className="flex items-center justify-between mb-4 gap-3">
             <p className="section-title">Income by Referral</p>
             <div className="flex items-center gap-3">
+              {isAdmin && <button type="button" onClick={() => setFixNames(true)} className="text-[11px] font-semibold text-navy-500 hover:text-navy-800 underline-offset-2 hover:underline">Fix names</button>}
               <div className="hidden sm:flex items-center gap-3 text-[10px] text-navy-400">
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ background: OWNER_COLORS[0] }} /> Direct (by owner)</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ background: REFERRER_COLORS[0] }} /> Owner referral</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-navy-300" /> Source</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ background: REFERRER_COLORS[0] }} /> Referral</span>
               </div>
               <button
                 onClick={() => setExpanded(true)}
@@ -484,7 +512,7 @@ export default function AdminView() {
                 <p className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide">
                   Direct income · by vehicle owner · Rs {directTotal.toLocaleString()}
                 </p>
-                <p className="text-[10px] text-navy-300 mb-1.5">Walk-in hires on the owner&apos;s own vehicle (no referrer)</p>
+                <p className="text-[10px] text-navy-300 mb-1.5">Hires on the owner&apos;s own vehicle with nobody referring them</p>
                 <div className="grid grid-cols-3 gap-2">
                   {directOwnerBars.map((b, i) => (
                     <div key={b.id} className="bg-navy-50/60 rounded-xl p-2 text-center anim-fade-up hover:bg-navy-50 transition-colors" style={{ animationDelay: `${i * 45}ms` }}>
@@ -499,9 +527,9 @@ export default function AdminView() {
             {referrerBars.length > 0 && (
               <div>
                 <p className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide">
-                  Owner Referrals · by referrer · Rs {referrerTotal.toLocaleString()}
+                  Referrals · by referrer · Rs {referrerTotal.toLocaleString()}
                 </p>
-                <p className="text-[10px] text-navy-300 mb-1.5">Income an owner referred onto another owner&apos;s vehicle</p>
+                <p className="text-[10px] text-navy-300 mb-1.5">Customers a person brought in, usually onto another owner&apos;s vehicle (earns a referral fee)</p>
                 <div className="grid grid-cols-3 gap-2">
                   {referrerBars.map((b, i) => (
                     <div key={b.id} className="bg-navy-50/60 rounded-xl p-2 text-center anim-fade-up hover:bg-navy-50 transition-colors" style={{ animationDelay: `${i * 45}ms` }}>
@@ -513,16 +541,35 @@ export default function AdminView() {
                 </div>
               </div>
             )}
+            {broughtIn.length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide">Total brought in · by person · Rs {broughtGrand.toLocaleString()}</p>
+                <p className="text-[10px] text-navy-300 mb-1.5">Direct hires on their own cars + customers they referred</p>
+                <div className="space-y-1">
+                  {broughtIn.map((e) => (
+                    <div key={e.name} className="flex items-center gap-2 text-xs">
+                      <span className="w-28 sm:w-36 truncate font-medium text-navy-700">{e.name}</span>
+                      <span className="flex-1 h-2 rounded-full bg-navy-50 overflow-hidden flex">
+                        <span className="h-full" style={{ width: `${(e.direct / (broughtIn[0]?.total || 1)) * 100}%`, background: OWNER_COLORS[0] }} />
+                        <span className="h-full" style={{ width: `${(e.referred / (broughtIn[0]?.total || 1)) * 100}%`, background: REFERRER_COLORS[0] }} />
+                      </span>
+                      <span className="w-24 text-right font-semibold text-navy-800">Rs {e.total.toLocaleString()}</span>
+                      <span className="w-10 text-right text-navy-400">{broughtGrand ? Math.round((e.total / broughtGrand) * 100) : 0}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {sourceBars.length > 0 && (
               <div>
-                <p className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide">Marketing Sources</p>
-                <p className="text-[10px] text-navy-300 mb-1.5">Hires that came through a marketing channel</p>
+                <p className="text-[10px] font-semibold text-navy-400 uppercase tracking-wide">How customers found us · all bookings</p>
+                <p className="text-[10px] text-navy-300 mb-1.5">The channel on each booking — overlaps the groups above</p>
                 <div className="grid grid-cols-3 gap-2">
                   {sourceBars.map((b, i) => (
                     <div key={b.name} className="bg-navy-50/60 rounded-xl p-2 text-center anim-fade-up hover:bg-navy-50 transition-colors" style={{ animationDelay: `${i * 45}ms` }}>
                       <div className="w-3 h-3 rounded-full mx-auto mb-1" style={{ background: b.color }} />
-                      <p className="text-xs font-medium text-navy-700 truncate">{b.name}</p>
-                      <p className="text-xs text-navy-400">{b.count} booking{b.count !== 1 ? 's' : ''} · Rs {b.total.toLocaleString()}</p>
+                      <p className={`text-xs font-medium truncate ${b.name === 'Not recorded' ? 'text-navy-400' : 'text-navy-700'}`}>{b.name}</p>
+                      <p className="text-xs text-navy-400">{b.count} · Rs {b.total.toLocaleString()} · {channelGrand ? Math.round((b.total / channelGrand) * 100) : 0}%</p>
                     </div>
                   ))}
                 </div>
@@ -714,11 +761,12 @@ export default function AdminView() {
           <div className="bg-navy-50/40 rounded-2xl p-4">
             {renderChart(320)}
           </div>
-          {renderDetailSection('Direct income · by vehicle owner', "Walk-in hires on the owner's own vehicle (no referrer)", directEntries)}
-          {renderDetailSection('Owner Referrals · by referrer', "Income an owner referred onto another owner's vehicle", referrerEntries)}
-          {renderDetailSection('Marketing Sources', 'Hires that came through a marketing channel', sourceEntries)}
+          {renderDetailSection('Direct income · by vehicle owner', "Hires on the owner's own vehicle with nobody referring them", directEntries)}
+          {renderDetailSection('Referrals · by referrer', 'Customers a person brought in (earns a referral fee)', referrerEntries)}
+          {renderDetailSection('How customers found us', 'The channel on each booking — overlaps the groups above', sourceEntries)}
         </div>
       </Modal>
+      {fixNames && <ReferralNamesFix onClose={() => setFixNames(false)} />}
     </>
   );
 }
