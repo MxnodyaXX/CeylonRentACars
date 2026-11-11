@@ -207,10 +207,13 @@ export default function AdminBookingModal({ open, onClose }: Props) {
   // Daily price: standard (days × daily rent) or an agreed custom rate per day / total
   const STANDARD_PRICE = { mode: 'standard' as PriceMode, customRate: 0, customTotal: 0 };
   const [price, setPrice] = useState(STANDARD_PRICE);
+  // one of the days is a part day (e.g. an evening pickup) charged a smaller amount — undefined = none
+  const [partDay, setPartDay] = useState<number | undefined>(undefined);
 
   // Reset everything when modal is opened/closed
   const handleClose = () => {
     setPrice(STANDARD_PRICE);
+    setPartDay(undefined);
     setStep('owner');
     setSelectedOwner(null);
     setSelectedVehicle(null);
@@ -269,7 +272,8 @@ export default function AdminBookingModal({ open, onClose }: Props) {
 
   // A daily booking's total follows the chosen price (standard or custom); a new vehicle starts at standard
   const standardRate = vehicles.find((v) => v.id === form.vehicleId)?.dailyRent ?? 0;
-  const dailyTotal = priceFor(price.mode, form.totalDays, standardRate, price.customRate, price.customTotal);
+  const partOn = price.mode !== 'total' && (partDay ?? 0) > 0 ? partDay : undefined;
+  const dailyTotal = priceFor(price.mode, form.totalDays, standardRate, price.customRate, price.customTotal, partOn);
   useEffect(() => { setPrice(STANDARD_PRICE); }, [form.vehicleId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (form.rentalType === 'Daily' && form.totalAmount !== dailyTotal) setForm((f) => ({ ...f, totalAmount: dailyTotal }));
@@ -369,7 +373,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
       ...bookingData,
       ...(priceNote.length ? { activity: priceNote } : {}),
       // how the rent was set, for the bill: standard daily rate, an agreed rate per day, or an agreed total
-      ...(form.rentalType === 'Daily' ? { priceMode: price.mode, standardRate } : {}),
+      ...(form.rentalType === 'Daily' ? { priceMode: price.mode, standardRate, ...(partOn ? { partDayAmount: partOn } : {}) } : {}),
       depositAssetDescription: form.depositType === 'vehicle'
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
@@ -617,6 +621,8 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                 customRate={price.customRate}
                 customTotal={price.customTotal}
                 onChange={(p) => setPrice((x) => ({ ...x, ...p }))}
+                partDay={partDay}
+                onPartDay={setPartDay}
               />
             )}
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, FileText, Loader2, Send, Undo2, Wallet } from 'lucide-react';
 import ApplyCommission from '../components/ui/ApplyCommission';
+import BookingDetailsModal from '../components/ui/BookingDetailsModal';
 import CompanyShareSettings from '../components/ui/CompanyShareSettings';
 import Header from '../components/layout/Header';
 import { useStore } from '../store/useStore';
@@ -31,7 +32,7 @@ const KIND = {
 const fmtDay = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—');
 const money = (n: number) => (n < 0 ? `− ${rs(-n)}` : rs(n));
 
-function Lines({ lines, onClear }: { lines: SettlementLine[]; onClear?: (l: SettlementLine) => void }) {
+function Lines({ lines, onClear, onOpen }: { lines: SettlementLine[]; onClear?: (l: SettlementLine) => void; onOpen?: (bookingId: string) => void }) {
   if (!lines.length) return <p className="text-sm text-navy-400">Nothing for this month.</p>;
   return (
     <div className="space-y-3">
@@ -43,14 +44,18 @@ function Lines({ lines, onClear }: { lines: SettlementLine[]; onClear?: (l: Sett
             <p className="text-[11px] font-semibold text-navy-400 uppercase tracking-wide mb-1">{KIND[k].label} · {money(ls.reduce((s, l) => s + l.amount, 0))}</p>
             <div className="rounded-xl border border-navy-100 divide-y divide-navy-50">
               {ls.map((l) => (
-                <div key={l.kind + l.id} className="flex items-start gap-3 px-3 py-2 text-sm">
+                <div key={l.kind + l.id} role={l.bookingId && onOpen ? 'button' : undefined} tabIndex={l.bookingId && onOpen ? 0 : undefined}
+                     title={l.bookingId && onOpen ? 'Open the booking — payments first' : undefined}
+                     onClick={() => { if (l.bookingId && onOpen) onOpen(l.bookingId); }}
+                     onKeyDown={(e) => { if (l.bookingId && onOpen && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(l.bookingId); } }}
+                     className={`flex items-start gap-3 px-3 py-2 text-sm ${l.bookingId && onOpen ? 'cursor-pointer hover:bg-navy-50/70' : ''}`}>
                   <span className="w-20 flex-shrink-0 text-xs text-navy-400 pt-0.5">{fmtDay(l.date)}{l.carriedOver && <span className="block text-amber-600">earlier month</span>}</span>
                   <span className="flex-1 min-w-0">
-                    <span className="block text-navy-800 truncate">{l.label}</span>
+                    <span className="block text-navy-800 truncate">{l.label}{l.bookingId && onOpen && <span className="ml-1.5 text-[11px] text-navy-400 underline">view payments</span>}</span>
                     {l.detail && <span className="block text-xs text-navy-400">{l.detail}</span>}
                   </span>
                   <span className="text-right"><span className={`block font-semibold whitespace-nowrap ${l.amount < 0 ? 'text-red-600' : KIND[k].cls}`}>{money(l.amount)}</span>
-                    {onClear && l.kind === 'deduction' && <button type="button" onClick={() => onClear(l)} title="The owner already bore this — don't take it from their payout" className="mt-1 text-[11px] font-semibold text-navy-500 hover:text-red-700 underline">Not owed</button>}</span>
+                    {onClear && l.kind === 'deduction' && <button type="button" onClick={(e) => { e.stopPropagation(); onClear(l); }} title="The owner already bore this — don't take it from their payout" className="mt-1 text-[11px] font-semibold text-navy-500 hover:text-red-700 underline">Not owed</button>}</span>
                 </div>
               ))}
             </div>
@@ -166,6 +171,9 @@ export default function Settlements() {
     setBusy(null);
   };
   const pending = rows.filter((r) => r.s?.status === 'pending_approval');
+  // a payout line opens its booking — on the Payments tab (the full record and history are in the other tabs)
+  const [viewing, setViewing] = useState<string | null>(null);
+  const navigate = useNavigate();
   // an owed-back line the owner already bore (paid it themselves / it was already taken off) — set to 0, kept for the record
   const clearOwed = (l: SettlementLine, ownerName: string) => {
     if (!confirm(`Remove this from ${ownerName}'s payout?
@@ -181,6 +189,8 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
 
   return (
     <div>
+      {viewing && <BookingDetailsModal bookingId={viewing} startTab="payments" onClose={() => setViewing(null)}
+        onEdit={(b) => navigate(`/bookings/${b.id}`)} onCancel={(b) => navigate(`/bookings/${b.id}`)} />}
       <Header title="Owner Settlements" subtitle="Each month's payouts to vehicle owners — prepared by Finance, approved by Brian, confirmed by the owner" />
 
       <CompanyShareSettings />
@@ -270,7 +280,7 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
                       {newSince} more line{newSince === 1 ? '' : 's'} came in after this was prepared. {s?.status === 'pending_approval' ? 'Brian can send it back so Finance prepares it again, or they' : 'They'} go into next month.
                     </p>
                   )}
-                  <Lines lines={lines} onClear={mayPrepare && (!s || s.status === 'returned') ? (l) => clearOwed(l, owner.name) : undefined} />
+                  <Lines lines={lines} onOpen={setViewing} onClear={mayPrepare && (!s || s.status === 'returned') ? (l) => clearOwed(l, owner.name) : undefined} />
                   {mayPrepare && s?.status === 'pending_approval' && lines.some((l) => l.kind === 'deduction') && <p className="text-xs text-navy-400">To remove an owed-back line, take this payout back first.</p>}
                   <Totals t={t} />
 

@@ -206,6 +206,9 @@ export interface Booking {
   companyKmRate?: number;
   companyKmKm?: number;
   companyKmCharge?: number;
+  /** A part day (daily rentals): one of the totalDays — e.g. picked up in the evening — charged this agreed amount
+   *  instead of a full day's rate (lib/partDay.ts) */
+  partDayAmount?: number;
   /** How the rent was set when booking (daily rentals): the car's standard rate, an agreed rate per day, or an agreed total */
   priceMode?: 'standard' | 'perDay' | 'total';
   /** The car's standard daily rate at the time of booking */

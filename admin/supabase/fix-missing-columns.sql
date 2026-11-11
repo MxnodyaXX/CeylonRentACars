@@ -40,6 +40,7 @@ alter table bookings add column if not exists company_km_km     numeric(12,2); -
 alter table bookings add column if not exists company_km_charge numeric(12,2); --   the extra-km charge on the bill it comes out of
 alter table bookings add column if not exists price_mode    text;          -- 'standard' | 'perDay' | 'total' — how the rent was set
 alter table bookings add column if not exists standard_rate numeric(12,2); -- the car's standard daily rate when booked
+alter table bookings add column if not exists part_day_amount numeric(12,2); -- a part day (e.g. evening pickup) charged this instead of a full day
 
 -- Customers who should not be rented to again
 alter table customers add column if not exists do_not_rent        boolean not null default false;

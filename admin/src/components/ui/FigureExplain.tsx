@@ -1,6 +1,7 @@
-import { useMemo, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { AlertTriangle, ChevronDown, RefreshCw } from 'lucide-react';
+import BookingDetailsModal from './BookingDetailsModal';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store/useStore';
 import { toast } from '../../store/useToast';
 import Modal from './Modal';
@@ -46,7 +47,55 @@ function List({ title, children, empty }: { title: string; children: ReactNode; 
   );
 }
 
-function Item({ to, title, sub, amount, warn, onGo }: { to?: string; title: ReactNode; sub?: ReactNode; amount: number; warn?: boolean; onGo?: () => void }) {
+/** opens a booking's full record over the panel */
+const OpenBooking = createContext<(id: string) => void>(() => undefined);
+
+/** a clickable row that opens its booking (or a plain row) */
+function Opener({ id, className, children }: { id?: string; className: string; children: ReactNode }) {
+  const open = useContext(OpenBooking);
+  if (!id) return <div className={className}>{children}</div>;
+  return (
+    <div role="button" tabIndex={0} title="Open the booking — payments first" onClick={() => open(id)}
+         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(id); } }}
+         className={`${className} cursor-pointer hover:bg-navy-50/70`}>{children}</div>
+  );
+}
+
+/** a row that opens into a short list of the entries behind it; each entry opens its booking */
+function Group({ title, sub, amount, entries }: { title: ReactNode; sub?: ReactNode; amount: number; entries: LedgerEntry[] }) {
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState(false);
+  const shown = all ? entries : entries.slice(0, 15);
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+              className="w-full text-left flex items-start justify-between gap-3 py-2 px-1 rounded hover:bg-navy-50/70">
+        <div className="min-w-0 flex items-start gap-1.5">
+          <ChevronDown size={15} className={`mt-0.5 flex-shrink-0 text-navy-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <div className="min-w-0"><p className="text-sm text-navy-800">{title}</p>{sub && <p className="text-xs text-navy-400">{sub}{!open && entries.length ? ' · click to see them' : ''}</p>}</div>
+        </div>
+        <p className={`text-sm font-semibold whitespace-nowrap tabular-nums ${amount < 0 ? 'text-red-600' : 'text-navy-800'}`}>{rs(amount)}</p>
+      </button>
+      {open && (
+        <div className="ml-6 mb-2 rounded-lg border border-navy-100 divide-y divide-navy-50">
+          {shown.map((e) => (
+            <Opener key={e.id} id={e.bookingId} className="flex items-start justify-between gap-3 px-2 py-1.5">
+              <div className="min-w-0">
+                <p className="text-xs text-navy-800 truncate">{e.label}</p>
+                <p className="text-[11px] text-navy-400">{fmtDay(e.date)}{e.method ? ` · ${e.method}` : ''}{e.ref ? ` · ref ${e.ref}` : ''}{e.detail ? ` · ${e.detail.split(' · ')[0]}` : ''}</p>
+              </div>
+              <p className={`text-xs font-semibold whitespace-nowrap tabular-nums ${e.amount < 0 ? 'text-red-600' : 'text-navy-800'}`}>{rs(e.amount)}</p>
+            </Opener>
+          ))}
+          {!entries.length && <p className="text-xs text-navy-400 px-2 py-1.5">No entries.</p>}
+          {entries.length > 15 && <button type="button" onClick={() => setAll((a) => !a)} className="w-full text-xs text-navy-500 underline py-1.5">{all ? 'Show fewer' : `Show all ${entries.length}`}</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Item({ to, title, sub, amount, warn }: { to?: string; title: ReactNode; sub?: ReactNode; amount: number; warn?: boolean; onGo?: () => void }) {
   const body = (
     <>
       <div className="min-w-0"><p className="text-sm text-navy-800 truncate">{title}</p>{sub && <p className="text-xs text-navy-400">{sub}</p>}</div>
@@ -54,7 +103,7 @@ function Item({ to, title, sub, amount, warn, onGo }: { to?: string; title: Reac
     </>
   );
   const cls = `flex items-start justify-between gap-3 py-2 px-1 rounded ${warn ? 'bg-red-50/60' : ''}`;
-  return to ? <Link to={to} onClick={onGo} className={`${cls} hover:bg-navy-50/70`}>{body}</Link> : <div className={cls}>{body}</div>;
+  return <Opener id={to?.startsWith('/bookings/') ? to.slice('/bookings/'.length) : undefined} className={cls}>{body}</Opener>;
 }
 
 const Note = ({ children }: { children: ReactNode }) => <p className="text-sm text-navy-600 mb-3">{children}</p>;
@@ -83,7 +132,7 @@ function Step({ n, label, how, v, bold, red }: { n: string; label: string; how?:
 }
 
 /** one completed rental, step by step: the bill → the company's commission → the owner's share → what the company keeps */
-function RentalCard({ r, highlight, onGo }: { r: ProfitRow; highlight: [string, number]; onGo: () => void }) {
+function RentalCard({ r, highlight }: { r: ProfitRow; highlight: [string, number]; onGo?: () => void }) {
   const c = r.check;
   const keeps = r.bill - r.owners - r.fee;
   const comOff = !!c && Math.abs(c.savedCommission - c.commission) >= 0.5;
@@ -92,10 +141,10 @@ function RentalCard({ r, highlight, onGo }: { r: ProfitRow; highlight: [string, 
   return (
     <div className={`rounded-xl border p-3 ${c?.stale ? 'border-red-200 bg-red-50/30' : 'border-navy-100'}`}>
       <div className="flex items-start justify-between gap-3 mb-1">
-        <Link to={`/bookings/${r.b.id}`} onClick={onGo} className="min-w-0 hover:underline">
+        <Opener id={r.b.id} className="min-w-0 rounded px-1 -mx-1">
           <p className="text-sm"><b className="text-navy-900">{r.b.customerName}</b> <span className="text-navy-400">· {bookingNo(r.b)}</span></p>
           <p className="text-xs text-navy-400">{r.car} · completed {fmtDay(r.on)}</p>
-        </Link>
+        </Opener>
         <div className="text-right"><p className="text-[11px] text-navy-400">{highlight[0]}</p><p className={`text-sm font-bold tabular-nums ${highlight[1] < 0 ? 'text-red-600' : 'text-navy-900'}`}>{rs(highlight[1])}</p></div>
       </div>
       <div className="border-t border-navy-100 pt-1">
@@ -142,6 +191,8 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
   const rows = useMemo(() => profitRows(books, start, end), [books, start, end]);
   const held = useMemo(() => heldDetail(books), [books]);
   const bal = useMemo(() => balanceDetail(books, ledger), [books, ledger]);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const navigate = useNavigate();
   if (!k) return null;
 
   const go = onClose;
@@ -183,10 +234,11 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
       <Sum lines={[...bal.accounts.map((x) => [x.a.name, x.balance] as [string, number]), ...(bal.unassigned.length ? [['Not assigned to an account', bal.unassigned.reduce((s, u) => s + u.amount, 0)] as [string, number]] : [])]}
         result={['Money in our accounts', cashTotal]} />
       {bal.accounts.length > 0 && <List title="Accounts">
-        {bal.accounts.map((x) => <Item key={x.a.id} title={<b>{x.a.name}</b>} sub={`opening ${rs(x.a.openingBalance)} on ${fmtDay(x.a.openingDate)} + in ${rs(x.moneyIn)} − out ${rs(x.moneyOut)} · ${x.count} movement${x.count === 1 ? '' : 's'}`} amount={x.balance} />)}
+        {bal.accounts.map((x) => <Group key={x.a.id} title={<b>{x.a.name}</b>} sub={`opening ${rs(x.a.openingBalance)} on ${fmtDay(x.a.openingDate)} + in ${rs(x.moneyIn)} − out ${rs(x.moneyOut)} · ${x.count} movement${x.count === 1 ? '' : 's'}`} amount={x.balance}
+          entries={ledger.filter((e) => e.amount && e.accountId === x.a.id && e.date >= x.a.openingDate)} />)}
       </List>}
       {bal.unassigned.length > 0 && <List title="Not assigned to an account — by type">
-        {bal.unassigned.map((u) => <Item key={u.kind} title={KIND_LABEL[u.kind]} sub={`${u.count} entr${u.count === 1 ? 'y' : 'ies'}`} amount={u.amount} />)}
+        {bal.unassigned.map((u) => <Group key={u.kind} title={KIND_LABEL[u.kind]} sub={`${u.count} entr${u.count === 1 ? 'y' : 'ies'}`} amount={u.amount} entries={bal.looseEntries.filter((e) => e.kind === u.kind)} />)}
       </List>}
       {!bal.accounts.length && <Warn>No company accounts are set up yet, so all of this is "not assigned" — it's every payment, deposit, refund and payout recorded since {fmtDay(books.from)}, not a bank balance. Add the cash box and bank accounts (Accounts tab) with their balances on {fmtDay(books.from)}, and this becomes the real money you hold.</Warn>}
     </>],
@@ -285,6 +337,12 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
     </>],
   };
   const [title, body] = C[k];
-  return <Modal open closeOnOutside onClose={onClose} title={`How it's worked out · ${title}`} width="max-w-2xl">{body}</Modal>;
+  return (
+    <OpenBooking.Provider value={setViewing}>
+      <Modal open closeOnOutside onClose={onClose} title={`How it's worked out · ${title}`} width="max-w-2xl">{body}</Modal>
+      {viewing && <BookingDetailsModal bookingId={viewing} startTab="payments" onClose={() => setViewing(null)}
+        onEdit={(x) => navigate(`/bookings/${x.id}`)} onCancel={(x) => navigate(`/bookings/${x.id}`)} />}
+    </OpenBooking.Provider>
+  );
 }
 

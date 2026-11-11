@@ -16,6 +16,8 @@ import TimePicker from './TimePicker';
 import LocationInput from './LocationInput';
 import { rentalDays, statusForDates, statusDateProblem } from '../../lib/availability';
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
+import { PartDayToggle } from './RentalPriceField';
+import { partDayText, rentFor } from '../../lib/partDay';
 import DoNotRentWarning from './DoNotRentWarning';
 import { CustomerIdFields, MissingDetailsPanel } from './NewBookingDetails';
 import type { Booking, CustomerInfo } from '../../types';
@@ -48,6 +50,8 @@ const emptyForm = () => ({
   unitRate: undefined as number | undefined,
   totalDays: 0,
   dailyRateUsed: 0,
+  /** one of the days is a part day (e.g. an evening pickup) charged this — undefined = none */
+  partDayAmount: undefined as number | undefined,
   totalAmount: 0,
   estimatedAmount: 0,
   paidAmount: 0,
@@ -194,7 +198,7 @@ export default function ManualBookingModal({ onClose }: Props) {
       // Recalculate days + amount when dates, times, the waive-extra-day toggle,
       // or vehicle/rate change. Billing follows actual hours held (24h = 1 day),
       // not inclusive calendar days — see rentalDays() in lib/availability.ts.
-      const affects = ['startDate', 'endDate', 'startTime', 'endTime', 'waiveExtraDay', 'vehicleId', 'dailyRateUsed'].includes(field);
+      const affects = ['startDate', 'endDate', 'startTime', 'endTime', 'waiveExtraDay', 'vehicleId', 'dailyRateUsed', 'partDayAmount'].includes(field);
       if (affects) {
         const s   = updated.startDate;
         const e   = updated.endDate;
@@ -205,7 +209,7 @@ export default function ManualBookingModal({ onClose }: Props) {
           const rate = field === 'dailyRateUsed' ? (value as number) : (updated.dailyRateUsed || v?.dailyRent || 0);
           updated.totalDays   = days;
           updated.dailyRateUsed = rate;
-          updated.totalAmount = days * rate;
+          updated.totalAmount = rentFor(days, rate, updated.partDayAmount);
         }
         if (field === 'vehicleId' && v) updated.dailyRateUsed = v.dailyRent;
         if (!statusTouched && s && e && s <= e && updated.status !== 'Cancelled') updated.status = statusForDates(updated);
@@ -391,6 +395,13 @@ export default function ManualBookingModal({ onClose }: Props) {
                     <Field label="Daily Rate Used (Rs)" required>
                       <input className="input" type="number" min="0" value={form.dailyRateUsed || ''} onChange={(e) => set('dailyRateUsed', +e.target.value)} />
                     </Field>
+                  )}
+                  {form.rentalType === 'Daily' && form.totalDays > 0 && (
+                    <div className="sm:col-span-2">
+                      <PartDayToggle value={form.partDayAmount} days={form.totalDays} rate={form.dailyRateUsed || vehicle?.dailyRent || 0}
+                        onChange={(v) => set('partDayAmount', v)} />
+                      {(form.partDayAmount ?? 0) > 0 && <p className="text-xs text-navy-500 mt-1">Rental: {partDayText(form.totalDays, form.dailyRateUsed || vehicle?.dailyRent || 0, form.partDayAmount!)} = <b>Rs {form.totalAmount.toLocaleString('en-LK')}</b></p>}
+                    </div>
                   )}
                   <Field label="Booking Status" required>
                     <Select value={form.status} onChange={(v) => { setStatusTouched(true); set('status', v as BookingStatus); }}

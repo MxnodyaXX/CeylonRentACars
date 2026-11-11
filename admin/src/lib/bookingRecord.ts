@@ -6,6 +6,7 @@
 import { supabase, supabaseEnabled } from './supabase';
 import { bookingBill, bookingDue, bookingPaid } from './credit';
 import { UNIT, RentalType } from './rentalPeriod';
+import { fullDayRate, partDayText } from './partDay';
 import type { ActivityEntry, Booking, ExtraCharge, PaymentEntry, Vehicle } from '../types';
 
 /** Human booking number for calls, receipts and WhatsApp: CRC-2026-K3F9 */
@@ -60,6 +61,11 @@ export function rentBasis(b: Booking, vehicle?: Vehicle): { label: string; detai
     label: `Agreed price for ${dayWord}`,
     detail: `${how} · works out to ${rs(perDay)}/day${std ? ` · the standard rate would be ${rs(std * days)} (${days} × ${rs(std)})` : ''}`,
   });
+  // 0 · one of the days was a part day (e.g. an evening pickup) at its own amount
+  if ((b.partDayAmount ?? 0) > 0 && b.priceMode !== 'total') {
+    const rate = fullDayRate(b);
+    return { label: partDayText(days, rate, b.partDayAmount!), detail: `one day was a part day (e.g. picked up in the evening), charged ${rs(b.partDayAmount!)} instead of ${rs(rate)}` };
+  }
   // 1 · saved with the booking
   if (b.priceMode) {
     const std = b.standardRate ?? vehicle?.dailyRent;

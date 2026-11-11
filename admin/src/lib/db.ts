@@ -106,7 +106,7 @@ const BOOKING_EXT: [keyof Booking, string][] = [
   ['referralFeeType', 'referral_fee_type'], ['referralFeeValue', 'referral_fee_value'],
   ['companyShareType', 'company_share_type'], ['companyShareValue', 'company_share_value'], ['companyShareMin', 'company_share_min'],
   ['companyKmRate', 'company_km_rate'], ['companyKmKm', 'company_km_km'], ['companyKmCharge', 'company_km_charge'],
-  ['priceMode', 'price_mode'], ['standardRate', 'standard_rate'],
+  ['priceMode', 'price_mode'], ['standardRate', 'standard_rate'], ['partDayAmount', 'part_day_amount'],
 ]
 function bookingExtRow(u: Partial<Booking>) {
   const row: Record<string, unknown> = {}
@@ -164,6 +164,7 @@ function bFromDb(r: Record<string, unknown>): Booking {
     companyKmCharge: numOpt(r.company_km_charge),
     priceMode: (r.price_mode as Booking['priceMode']) ?? undefined,
     standardRate: numOpt(r.standard_rate),
+    partDayAmount: numOpt(r.part_day_amount),
     referralFee: numOpt(r.referral_fee),
     referralPaid: (r.referral_paid as boolean) ?? undefined,
     referralPaidAt: (r.referral_paid_at as string) ?? undefined,

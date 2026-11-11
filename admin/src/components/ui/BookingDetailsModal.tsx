@@ -114,13 +114,15 @@ function useMay() {
    Booking details
    ===================================================================== */
 
-export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCancel, page = false }: {
+export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCancel, page = false, startTab }: {
   bookingId: string;
   onClose: () => void;
   onEdit: (b: Booking) => void;
   onCancel: (b: Booking) => void;
   /** shown as a full page (its own tab) instead of a pop-up */
   page?: boolean;
+  /** the tab it opens on (e.g. 'payments' from Owner payouts) */
+  startTab?: Tab;
 }) {
   const store = useStore();
   const { bookings, vehicles, owners, drivers, customers, commissions, handovers } = store;
@@ -128,7 +130,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const may = useMay();
   const by = currentUser?.name ?? 'Staff';
   const b = bookings.find((x) => x.id === bookingId);
-  const [tab, setTab] = useState<Tab>(page ? 'payments' : 'overview');
+  const [tab, setTab] = useState<Tab>(startTab ?? (page ? 'payments' : 'overview'));
   const [dialog, setDialog] = useState<null | 'pickup' | 'return' | 'recover' | 'extend' | 'swap' | 'exchange'>(null);
 
   if (!b) return null;

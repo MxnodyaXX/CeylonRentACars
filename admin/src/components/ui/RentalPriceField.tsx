@@ -1,14 +1,37 @@
-import { Tag, RotateCcw } from 'lucide-react';
+import { Tag, RotateCcw, Sunset } from 'lucide-react';
+import { rentFor } from '../../lib/partDay';
 
 export type PriceMode = 'standard' | 'perDay' | 'total';
 
 const rs = (n: number) => `Rs ${Math.round(n).toLocaleString('en-LK')}`;
 
-/** The total for a daily booking in each price mode */
-export function priceFor(mode: PriceMode, days: number, standardRate: number, customRate: number, customTotal: number) {
-  if (mode === 'perDay') return days * customRate;
+/** The total for a daily booking in each price mode (one day may be a part day at its own amount) */
+export function priceFor(mode: PriceMode, days: number, standardRate: number, customRate: number, customTotal: number, partDay?: number) {
+  if (mode === 'perDay') return rentFor(days, customRate, partDay);
   if (mode === 'total') return customTotal;
-  return days * standardRate;
+  return rentFor(days, standardRate, partDay);
+}
+
+/** "First day is a part day (e.g. picked up in the evening): Rs __" — one of the days charged a smaller amount */
+export function PartDayToggle({ value, onChange, days, rate }: { value?: number; onChange: (v: number | undefined) => void; days: number; rate: number }) {
+  const on = value !== undefined;
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-sm ${on ? 'border-amber-200 bg-amber-50/70' : 'border-navy-100 bg-white'}`}>
+      <label className="flex items-center gap-2 text-navy-700">
+        <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked ? Math.round(rate * 5 / 7 / 500) * 500 || 0 : undefined)} />
+        <Sunset size={14} className="text-amber-600" /> One day is a part day (e.g. picked up in the evening)
+      </label>
+      {on && (
+        <div className="flex flex-wrap items-center gap-2 mt-2 pl-6">
+          <span className="text-navy-500">Charge that day</span>
+          <span className="text-navy-500">Rs</span>
+          <input className="input !py-1 !w-28" type="number" min={0} step={500} value={value || ''} autoFocus
+                 onChange={(e) => onChange(Math.max(0, Math.round(Number(e.target.value) || 0)))} />
+          <span className="text-xs text-navy-400">instead of {`Rs ${Math.round(rate).toLocaleString('en-LK')}`}{days > 1 ? ` · the other ${days - 1} day${days === 2 ? '' : 's'} at the full rate` : ''}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -16,16 +39,20 @@ export function priceFor(mode: PriceMode, days: number, standardRate: number, cu
  * and lets staff agree a different price — either a custom rate per day (the total follows the
  * dates) or a fixed total for the whole trip.
  */
-export default function RentalPriceField({ days, standardRate, mode, customRate, customTotal, onChange }: {
+export default function RentalPriceField({ days, standardRate, mode, customRate, customTotal, onChange, partDay, onPartDay }: {
   days: number;
   standardRate: number;
   mode: PriceMode;
   customRate: number;
   customTotal: number;
   onChange: (p: { mode: PriceMode; customRate?: number; customTotal?: number }) => void;
+  /** a part day's amount (undefined = none) */
+  partDay?: number;
+  onPartDay?: (v: number | undefined) => void;
 }) {
-  const standard = days * standardRate;
-  const total = priceFor(mode, days, standardRate, customRate, customTotal);
+  const part = mode === 'total' ? undefined : partDay;
+  const standard = rentFor(days, standardRate, part);
+  const total = priceFor(mode, days, standardRate, customRate, customTotal, part);
   const diff = total - standard;
   const custom = mode !== 'standard';
 
@@ -55,7 +82,7 @@ export default function RentalPriceField({ days, standardRate, mode, customRate,
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wide text-navy-400">Standard price</p>
           <p className={`text-sm ${custom ? 'text-navy-400 line-through decoration-navy-300' : 'text-navy-800'}`}>
-            {days} day{days === 1 ? '' : 's'} × {rs(standardRate)} = <b>{rs(standard)}</b>
+            {part !== undefined && part > 0 ? <>{days - 1} day{days - 1 === 1 ? '' : 's'} × {rs(standardRate)} + part day {rs(part)}</> : <>{days} day{days === 1 ? '' : 's'} × {rs(standardRate)}</>} = <b>{rs(standard)}</b>
           </p>
         </div>
         {mode === 'perDay' && (
@@ -73,6 +100,8 @@ export default function RentalPriceField({ days, standardRate, mode, customRate,
           </div>
         )}
       </div>
+
+      {onPartDay && mode !== 'total' && days >= 1 && <PartDayToggle value={partDay} onChange={onPartDay} days={days} rate={mode === 'perDay' ? customRate : standardRate} />}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-navy-100 pt-2">
         <div className="text-sm">

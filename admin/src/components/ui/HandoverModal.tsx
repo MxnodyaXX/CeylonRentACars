@@ -11,6 +11,8 @@ import { SwapReadingsFix } from '../breakdowns/SwapPanel';
 import UsagePhases from '../breakdowns/UsagePhases';
 import { rentalDays } from '../../lib/availability';
 import { companyShareOf, shareBaseOf, shareWorking } from '../../lib/companyShare';
+import { fullDayRate, partDayText, rentFor } from '../../lib/partDay';
+import { PartDayToggle } from './RentalPriceField';
 import { breakdownHooks } from '../../store/useStore';
 import { printInvoice } from '../../lib/printInvoice';
 import type { Booking, ChargeKind, HandoverChecklist, KmMeter, RecoveryReason } from '../../types';
@@ -157,18 +159,35 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   // Returned early / late (daily rentals): the days actually used, from the scheduled start to the return time
   const daily = step === 'return' && !recover && (b.rentalType ?? 'Daily') === 'Daily' && b.totalDays > 0;
   const usedDays = daily ? rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay) : b.totalDays;
-  const dayRate = b.totalDays ? Math.round(b.totalAmount / b.totalDays) : 0;
+  // the full-day rate (a part day on the booking is left out of it)
+  const dayRate = fullDayRate(b);
+  // a part day (e.g. picked up in the evening): one of the days charged a smaller amount — set on the booking, or here
+  const partEditable = step === 'return' && !recover && canPay && (b.rentalType ?? 'Daily') === 'Daily' && b.totalDays > 0;
+  const [partIn, setPartIn] = useState<number | undefined>((b.partDayAmount ?? 0) > 0 ? b.partDayAmount : undefined);
+  const savedPart = b.partDayAmount ?? 0;
+  const part = partEditable ? partIn ?? 0 : savedPart;
+  // the booked days' rent with this part day (the booking's own rent when it isn't changed here)
+  const partAdj = partEditable && part !== savedPart ? rentFor(b.totalDays, dayRate, part) - b.totalAmount : 0;
+  const bookedRent = b.totalAmount + partAdj;
   const exchangedDays = (b.exchanges ?? []).reduce((s, e) => s + e.fromDays, 0);
   const early = daily && usedDays < b.totalDays && usedDays >= Math.max(1, exchangedDays);
   const late = daily && usedDays > b.totalDays;
   // how the rent ends up: 'auto' = early: the days used / late: + the extra days · 'full' = the booked price ·
   // 'rate' = a custom daily rate × the days used · 'total' = a custom amount for the whole trip
-  const [rentOpt, setRentOpt] = useState<'auto' | 'full' | 'rate' | 'total'>('auto');
+  // 'days' = charge for a number of days you enter × the day rate
+  const [rentOpt, setRentOpt] = useState<'auto' | 'full' | 'rate' | 'total' | 'days'>('auto');
+  const [chargeDaysIn, setChargeDaysIn] = useState('');
+  // with the free km for those days (days × included km a day), or without — every km driven is charged
+  const [daysWithKm, setDaysWithKm] = useState(true);
+  const chargeDays = Math.max(0, Math.round(Number(chargeDaysIn) || 0));
+  // the days the customer is charged for (and gets km for): typed days, else the days used
+  const billDays = rentOpt === 'days' && chargeDays > 0 ? chargeDays : usedDays;
   // the km allowance is for the days the customer is charged for: a recovery or an early / late return charged by the
   // days used gets that many days' km; keeping the full booking price keeps the booked days' km
   const kmDays = recover ? Math.max(1, rentalDays(b.startDate, at.slice(0, 10), b.startTime, at.slice(11, 16), b.waiveExtraDay))
-    : (early || late) && rentOpt !== 'full' ? usedDays : b.totalDays;
-  const includedKm = (vehicle?.includedKmPerDay ?? 100) * (kmDays || 1);
+    : (early || late) && rentOpt !== 'full' ? billDays : b.totalDays;
+  const noFreeKm = !recover && (early || late) && rentOpt === 'days' && !daysWithKm;
+  const includedKm = noFreeKm ? 0 : (vehicle?.includedKmPerDay ?? 100) * (kmDays || 1);
   const extraKm = driven !== undefined ? Math.max(0, driven - includedKm) : 0;
   // km given free on top of the included km (agreed with the customer) — only the rest is charged
   const [freeKmIn, setFreeKmIn] = useState('');
@@ -208,13 +227,16 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const [customTotal, setCustomTotal] = useState('');
   const chargeUsedOnly = rentOpt === 'auto';
   const chargeLate = rentOpt === 'auto';
-  const usedValue = early ? Math.round((b.totalAmount * usedDays) / b.totalDays) : b.totalAmount;
-  const earlyCut = early && chargeUsedOnly && canPay ? b.totalAmount - usedValue : 0;
+  const usedValue = early ? (part > 0 || savedPart > 0 ? rentFor(usedDays, dayRate, part) : Math.round((b.totalAmount * usedDays) / b.totalDays)) : bookedRent;
+  const earlyCut = early && chargeUsedOnly && canPay ? bookedRent - usedValue : 0;
   const lateCharge = late && chargeLate && canPay ? (usedDays - b.totalDays) * dayRate : 0;
   const customRent = (early || late) && canPay
-    ? rentOpt === 'rate' ? Math.round((Number(customRate) || 0) * usedDays) : rentOpt === 'total' ? Math.round(Number(customTotal) || 0) : null
+    ? rentOpt === 'rate' ? Math.round((Number(customRate) || 0) * usedDays) : rentOpt === 'total' ? Math.round(Number(customTotal) || 0)
+      : rentOpt === 'days' ? (chargeDays > 0 ? rentFor(chargeDays, dayRate, part) : 0) : null
     : null;
   const customAdj = customRent !== null && customRent > 0 ? customRent - b.totalAmount : 0;
+  // the part-day change counts unless a custom rent replaces the whole rent
+  const partChange = customAdj !== 0 || (customRent ?? 0) > 0 ? 0 : partAdj;
   // Recovery: why, and the rent the customer owes for the time they had the car (any rental type)
   const [rcReason, setRcReason] = useState<RecoveryReason | ''>('');
   const [rcDetails, setRcDetails] = useState('');
@@ -238,7 +260,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const span = (ms: number) => { const m = Math.max(0, Math.round(ms / 60_000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60; return [d && `${d} day${d === 1 ? '' : 's'}`, h && `${h} h`, mi && `${mi} min`].filter(Boolean).join(' ') || '0 min'; };
   const recoverRent = rcRent === 'full' ? b.totalAmount : rcRent === 'custom' ? Math.max(0, Math.round(Number(rcCustom) || 0)) : usedRent;
   const rentChange = recover ? recoverRent - b.totalAmount : 0;
-  const newBill = price.bill - earlyCut + rentChange + customAdj + kmCharge + extrasTotal + lateCharge - dedTotal;
+  const newBill = price.bill + partChange - earlyCut + rentChange + customAdj + kmCharge + extrasTotal + lateCharge - dedTotal;
   const dueNow = Math.max(0, newBill - price.paid);
   const refundDue = Math.max(0, price.paid - newBill);
   const [refundNow, setRefundNow] = useState(true);
@@ -256,9 +278,9 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const writeOff = owedAs === 'writeoff' ? Math.min(remaining, writeOffIn.trim() === '' ? remaining : Math.max(0, Math.round(Number(writeOffIn) || 0))) : 0;
   const creditLeft = owedAs ? remaining - writeOff : 0;
   // the company's commission on the FINAL bill: rent (as it ends up) + charges already on it + the ones added now − discount
-  const finalRent = b.totalAmount - earlyCut + rentChange + customAdj;
+  const finalRent = b.totalAmount + partChange - earlyCut + rentChange + customAdj;
   const shareBase = shareBaseOf(b) - b.totalAmount + finalRent + kmCharge + lateCharge + extrasTotal;
-  const shareDays = early || (customRent ?? 0) > 0 ? usedDays : b.totalDays;
+  const shareDays = early || (customRent ?? 0) > 0 ? billDays : b.totalDays;
   // the commission for this trip — 1 the company rate on the booking · 2 a custom % · 3 a custom amount ·
   // 4 Rs per day + Rs per extra km · (or none)
   const [coOpt, setCoOpt] = useState<CoOpt>('booked');
@@ -336,22 +358,30 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
           changes: [`Company commission: ${shareWorking(shareB, shareBase) ?? 'none'} = Rs ${companyCut.toLocaleString('en-LK')} (was ${shareWorking({ ...b, totalDays: shareDays }, shareBase) ?? 'as booked'})`],
         });
       }
-      if ((rentOpt === 'rate' || rentOpt === 'total') && (early || late) && canPay) {
-        if (!customRent || customRent <= 0) return setError(rentOpt === 'rate' ? 'Enter the daily rate to charge.' : 'Enter the amount for the whole trip.');
+      if ((rentOpt === 'rate' || rentOpt === 'total' || rentOpt === 'days') && (early || late) && canPay) {
+        if (!customRent || customRent <= 0) return setError(rentOpt === 'rate' ? 'Enter the daily rate to charge.' : rentOpt === 'days' ? 'Enter the number of days to charge.' : 'Enter the amount for the whole trip.');
         editBooking(b.id, {
-          endDate: at.slice(0, 10), endTime: at.slice(11, 16), totalDays: usedDays, totalAmount: customRent,
-          priceMode: rentOpt === 'rate' ? 'perDay' : 'total', standardRate: b.standardRate ?? vehicle?.dailyRent,
+          endDate: at.slice(0, 10), endTime: at.slice(11, 16), totalDays: billDays, totalAmount: customRent,
+          priceMode: rentOpt === 'rate' ? 'perDay' : rentOpt === 'days' ? (b.priceMode ?? 'standard') : 'total', standardRate: b.standardRate ?? vehicle?.dailyRent,
+          ...(partEditable ? { partDayAmount: rentOpt === 'days' ? part : 0 } : {}),
         }, {
           by, changes: [`Returned ${early ? 'early' : 'late'}: ${usedDays} day${usedDays === 1 ? '' : 's'} used (${b.totalDays} booked)`,
-            `Price Rs ${b.totalAmount.toLocaleString('en-LK')} → Rs ${customRent.toLocaleString('en-LK')} (${rentOpt === 'rate' ? `${usedDays} × Rs ${(Number(customRate) || 0).toLocaleString('en-LK')} agreed daily rate` : 'agreed amount for the trip'})`],
+            `Price Rs ${b.totalAmount.toLocaleString('en-LK')} → Rs ${customRent.toLocaleString('en-LK')} (${rentOpt === 'rate' ? `${usedDays} × Rs ${(Number(customRate) || 0).toLocaleString('en-LK')} agreed daily rate` : rentOpt === 'days' ? `charged for ${chargeDays} day${chargeDays === 1 ? '' : 's'} × Rs ${dayRate.toLocaleString('en-LK')}` : 'agreed amount for the trip'})`],
           reason: 'Price agreed at the return',
         });
       }
       // returned early and only the days used are charged: shorten the booking first (audited; owner payouts follow)
+      if (partChange !== 0 && earlyCut <= 0) {
+        editBooking(b.id, { partDayAmount: part, totalAmount: bookedRent }, {
+          by, reason: 'Part day set at the return',
+          changes: [part > 0 ? `One day charged as a part day: Rs ${part.toLocaleString('en-LK')} instead of Rs ${dayRate.toLocaleString('en-LK')} — rent Rs ${b.totalAmount.toLocaleString('en-LK')} → Rs ${bookedRent.toLocaleString('en-LK')}`
+            : `Part day removed — rent Rs ${b.totalAmount.toLocaleString('en-LK')} → Rs ${bookedRent.toLocaleString('en-LK')}`],
+        });
+      }
       if (earlyCut > 0) {
         const back = new Date(at);
         editBooking(b.id, {
-          endDate: at.slice(0, 10), endTime: at.slice(11, 16), totalDays: usedDays, totalAmount: usedValue,
+          endDate: at.slice(0, 10), endTime: at.slice(11, 16), totalDays: usedDays, totalAmount: usedValue, ...(partEditable ? { partDayAmount: part } : {}),
         }, {
           by, changes: [`Returned early on ${back.toLocaleDateString('en-GB')}: ${usedDays} day${usedDays === 1 ? '' : 's'} used of ${b.totalDays}`, `Price Rs ${b.totalAmount.toLocaleString('en-LK')} → Rs ${usedValue.toLocaleString('en-LK')}`],
           reason: 'Charged for the days used',
@@ -400,7 +430,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
       if (canPay && saveRate && vehicle && rate !== (vehicle.extraKmRate ?? 50)) updateVehicle(vehicle.id, { extraKmRate: rate });
       if (lateCharge > 0) addCharge(b.id, { kind: 'Late return', amount: lateCharge, date: today(), note: `${usedDays - b.totalDays} extra day${usedDays - b.totalDays === 1 ? '' : 's'} × Rs ${dayRate.toLocaleString('en-LK')} (booked until ${b.endDate})`, by });
       if (kmCharge > 0 && kmMode === 'amount') addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${extraKm.toLocaleString()} km — agreed amount for the km (works out to Rs ${(Math.round((kmCharge / Math.max(1, extraKm)) * 100) / 100).toLocaleString('en-LK')}/km)${carsUsed.length > 1 ? ` (${driven!.toLocaleString()} km driven in ${carsUsed.join(' + ')})` : ''}`, by });
-      else if (kmCharge > 0) addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${billKm.toLocaleString()} km × Rs ${rate.toLocaleString()}${freeKm > 0 ? ` (${extraKm.toLocaleString()} km over the included ${includedKm.toLocaleString()} − ${freeKm.toLocaleString()} km given free)` : ''}${carsUsed.length > 1 ? ` (${driven!.toLocaleString()} km driven in ${carsUsed.join(' + ')})` : ''}`, by });
+      else if (kmCharge > 0) addCharge(b.id, { kind: 'Other', amount: kmCharge, date: today(), note: `Extra km: ${billKm.toLocaleString()} km × Rs ${rate.toLocaleString()}${freeKm > 0 ? ` (${extraKm.toLocaleString()} km over the included ${includedKm.toLocaleString()} − ${freeKm.toLocaleString()} km given free)` : ''}${noFreeKm ? ' (no free km on this trip)' : ''}${carsUsed.length > 1 ? ` (${driven!.toLocaleString()} km driven in ${carsUsed.join(' + ')})` : ''}`, by });
       if (kmCharge === 0 && freeKm > 0 && extraKm > 0 && canPay) useStore.getState().logBookingActivity(b.id, { by, type: 'Note', text: `Extra km not charged: ${Math.min(extraKm, freeKm).toLocaleString()} km given free` });
       extras.forEach((x) => {
         const amount = Math.max(0, Number(x.amount) || 0);
@@ -569,6 +599,14 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                 Record the readings and the car's condition. Finance completes the bill (extra km, late days, charges, payment and deposit) from the booking.</p>
             )}
 
+            {/* a part day (e.g. picked up in the evening): one day charged a smaller amount */}
+            {partEditable && (
+              <div>
+                <PartDayToggle value={partIn} days={b.totalDays} rate={dayRate} onChange={setPartIn} />
+                {partAdj !== 0 && <p className="text-xs text-navy-500 mt-1 pl-1">Rent {rs(b.totalAmount)} → <b>{rs(bookedRent)}</b> ({part > 0 ? partDayText(b.totalDays, dayRate, part) : `${b.totalDays} days × ${rs(dayRate)}`})</p>}
+              </div>
+            )}
+
             {/* returned early / late */}
             {canPay && (early || late) && (
               <div className={`rounded-xl p-3 space-y-2.5 ${early ? 'bg-sky-50 text-sky-900' : 'bg-amber-50 text-amber-900'}`}>
@@ -591,10 +629,23 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                 </div>
                 <div className="flex flex-col gap-1.5 text-sm">
                   <label className="flex items-center gap-2"><input type="radio" checked={rentOpt === 'auto'} onChange={() => setRentOpt('auto')} />
-                    {early ? <>Charge the days used: {usedDays} × {rs(dayRate)} = <b>{rs(usedValue)}</b></>
+                    {early ? <>Charge the days used: {part > 0 ? partDayText(usedDays, dayRate, part) : <>{usedDays} × {rs(dayRate)}</>} = <b>{rs(usedValue)}</b></>
                            : <>Charge the extra days: {usedDays - b.totalDays} × {rs(dayRate)} = <b>{rs((usedDays - b.totalDays) * dayRate)}</b> (total {rs(b.totalAmount + (usedDays - b.totalDays) * dayRate)})</>}</label>
                   <label className="flex items-center gap-2"><input type="radio" checked={rentOpt === 'full'} onChange={() => setRentOpt('full')} />
-                    {early ? <>Keep the full booking price ({rs(b.totalAmount)})</> : <>Don't charge the extra days — keep {rs(b.totalAmount)}</>}</label>
+                    {early ? <>Keep the full booking price ({rs(bookedRent)})</> : <>Don't charge the extra days — keep {rs(bookedRent)}</>}</label>
+                  <label className="flex flex-wrap items-center gap-2"><input type="radio" checked={rentOpt === 'days'} onChange={() => setRentOpt('days')} />
+                    Charge for
+                    <input className="input !py-1 !w-20" type="number" min={1} step={1} placeholder={String(usedDays)} value={chargeDaysIn}
+                           onFocus={() => setRentOpt('days')} onChange={(e) => { setRentOpt('days'); setChargeDaysIn(e.target.value); }} />
+                    days × {rs(dayRate)}{part > 0 && <> (one a part day {rs(part)})</>}{rentOpt === 'days' && chargeDays > 0 && <> = <b>{rs(rentFor(chargeDays, dayRate, part))}</b></>}</label>
+                  {rentOpt === 'days' && (
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 pl-6 text-sm">
+                      <label className="flex items-center gap-1.5"><input type="radio" checked={daysWithKm} onChange={() => setDaysWithKm(true)} />
+                        With free km ({billDays} × {(vehicle?.includedKmPerDay ?? 100).toLocaleString()} = {((vehicle?.includedKmPerDay ?? 100) * billDays).toLocaleString()} km)</label>
+                      <label className="flex items-center gap-1.5"><input type="radio" checked={!daysWithKm} onChange={() => setDaysWithKm(false)} />
+                        Without free km — every km driven is charged</label>
+                    </div>
+                  )}
                   <label className="flex flex-wrap items-center gap-2"><input type="radio" checked={rentOpt === 'rate'} onChange={() => setRentOpt('rate')} />
                     Custom daily rate:
                     <input className="input !py-1 !w-28" type="number" min={0} placeholder={String(dayRate)} value={customRate}
@@ -616,6 +667,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                     bookingSwaps.length > 0 && 'Days in a breakdown replacement count as used — the customer pays for them.',
                     early && chargeUsedOnly && 'The booking is shortened and the change is kept in its history; owner payouts follow.',
                     (rentOpt === 'rate' || rentOpt === 'total') && 'The booking is set to the days used at this price; the change is kept in its history and owner payouts follow.',
+                    rentOpt === 'days' && chargeDays > 0 && `The booking is set to ${chargeDays} day${chargeDays === 1 ? '' : 's'} (${daysWithKm ? `${chargeDays} days' km included` : 'no free km'}); the change is kept in its history and owner payouts follow.`,
                   ].filter(Boolean).map((n) => <li key={n as string} className="flex gap-1.5"><Info size={13} className="mt-0.5 flex-shrink-0" />{n}</li>)}
                 </ul>
               </div>
@@ -689,10 +741,11 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               ] : [{ k: rcRent === 'used' ? `Rent for the time used — ${usedLabel}` : 'Rent agreed at recovery', v: recoverRent }]).map((x) => (
                 <div key={x.k} className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">{x.k}</span><span className="text-navy-800">{rs(x.v)}</span></div>
               ))}
+              {partChange !== 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">{part > 0 ? `Part day — one day charged ${rs(part)} instead of ${rs(dayRate)}` : 'Part day removed — full rate for every day'}</span><span className={partChange < 0 ? 'text-red-600' : 'text-navy-800'}>{partChange < 0 ? `− ${rs(-partChange)}` : rs(partChange)}</span></div>}
               {earlyCut > 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Returned early — {b.totalDays - usedDays} unused day{b.totalDays - usedDays === 1 ? '' : 's'} not charged</span><span className="text-red-600">− {rs(earlyCut)}</span></div>}
               {lateCharge > 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Late return — {usedDays - b.totalDays} extra day{usedDays - b.totalDays === 1 ? '' : 's'}</span><span className="text-navy-800">{rs(lateCharge)}</span></div>}
-              {customAdj !== 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Price agreed at the return — {rentOpt === 'rate' ? `${usedDays} days × ${rs(Number(customRate) || 0)}` : `${rs(customRent ?? 0)} for the trip`}</span><span className={customAdj < 0 ? 'text-red-600' : 'text-navy-800'}>{customAdj < 0 ? `− ${rs(-customAdj)}` : rs(customAdj)}</span></div>}
-              <div className="flex justify-between gap-3 py-0.5 border-t border-navy-50 mt-1"><span className="text-navy-500">Bill</span><b>{rs(price.bill - earlyCut + lateCharge + rentChange + customAdj)}</b></div>
+              {customAdj !== 0 && <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-600">Price agreed at the return — {rentOpt === 'rate' ? `${usedDays} days × ${rs(Number(customRate) || 0)}` : rentOpt === 'days' ? `charged for ${chargeDays} days × ${rs(dayRate)}` : `${rs(customRent ?? 0)} for the trip`}</span><span className={customAdj < 0 ? 'text-red-600' : 'text-navy-800'}>{customAdj < 0 ? `− ${rs(-customAdj)}` : rs(customAdj)}</span></div>}
+              <div className="flex justify-between gap-3 py-0.5 border-t border-navy-50 mt-1"><span className="text-navy-500">Bill</span><b>{rs(price.bill + partChange - earlyCut + lateCharge + rentChange + customAdj)}</b></div>
               <div className="flex justify-between gap-3 py-0.5"><span className="text-navy-500">Already paid</span><span className="text-emerald-700">{rs(price.paid)}</span></div>
             </div>}
 

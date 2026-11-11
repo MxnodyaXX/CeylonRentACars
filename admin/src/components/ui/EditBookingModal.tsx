@@ -17,6 +17,8 @@ import { chargeLine } from '../../lib/bookingRecord';
 import { kmWithMeter } from '../../lib/tripKm';
 import { toast } from '../../store/useToast';
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
+import { PartDayToggle } from './RentalPriceField';
+import { fullDayRate, partDayText, rentFor } from '../../lib/partDay';
 import { RentalType, UNIT } from '../../lib/rentalPeriod';
 
 const REFERRAL_SOURCES = ['WhatsApp', 'Facebook', 'Instagram', 'TikTok', 'Google', 'Word of Mouth'];
@@ -39,7 +41,9 @@ const formOf = (b: Booking) => ({
   rentalUnits: b.rentalUnits as number | undefined,
   unitRate: b.unitRate as number | undefined,
   totalDays: b.totalDays,
-  dailyRate: b.totalDays ? Math.round(b.totalAmount / b.totalDays) : b.totalAmount,
+  dailyRate: b.totalDays ? fullDayRate(b) : b.totalAmount,
+  /** a part day (e.g. an evening pickup) charged this — 0 = none */
+  partDayAmount: b.partDayAmount ?? 0,
   totalAmount: b.totalAmount,
   discount: b.discount ?? 0,
   // the part of the extra charges not tied to a listed charge (extra km, fines, deductions are listed separately)
@@ -75,6 +79,7 @@ const FIELDS: { key: keyof Form; label: string; fmt?: (v: unknown, f: Form, vehi
   { key: 'rentalUnits', label: 'Hours / months' },
   { key: 'unitRate', label: 'Rate per hour / month', fmt: (v) => (v ? rs(v as number) : '—') },
   { key: 'totalDays', label: 'Days' },
+  { key: 'partDayAmount', label: 'Part day', fmt: (v) => ((v as number) > 0 ? rs(v as number) : 'none') },
   { key: 'totalAmount', label: 'Total', fmt: (v) => rs(v as number) },
   { key: 'discount', label: 'Discount', fmt: (v) => rs(v as number) },
   { key: 'extraCharges', label: 'Other extra charges (not itemised)', fmt: (v) => rs(v as number) },
@@ -124,10 +129,10 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
   /** Dates, times, rate or vehicle changed → recalculate days (and the total, unless typed by hand) */
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((cur) => {
     const n = { ...cur, [k]: v };
-    if (n.rentalType === 'Daily' && ['startDate', 'endDate', 'startTime', 'endTime', 'waiveExtraDay', 'dailyRate', 'vehicleId'].includes(k as string) && n.startDate && n.endDate && n.startDate <= n.endDate) {
+    if (n.rentalType === 'Daily' && ['startDate', 'endDate', 'startTime', 'endTime', 'waiveExtraDay', 'dailyRate', 'vehicleId', 'partDayAmount'].includes(k as string) && n.startDate && n.endDate && n.startDate <= n.endDate) {
       if (k === 'vehicleId') n.dailyRate = vehicles.find((x) => x.id === v)?.dailyRent ?? n.dailyRate;
       n.totalDays = rentalDays(n.startDate, n.endDate, n.startTime, n.endTime, n.waiveExtraDay);
-      if (!manualTotal || k === 'dailyRate') n.totalAmount = n.totalDays * n.dailyRate;
+      if (!manualTotal || k === 'dailyRate' || k === 'partDayAmount') n.totalAmount = rentFor(n.totalDays, n.dailyRate, n.partDayAmount);
     }
     return n;
   });
@@ -203,6 +208,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
       customerNIC: f.customerNIC.trim() || undefined, customerEmail: f.customerEmail.trim() || undefined,
       startDate: f.startDate, endDate: f.endDate, startTime: f.startTime || undefined, endTime: f.endTime || undefined,
       waiveExtraDay: f.waiveExtraDay, totalDays: f.totalDays, totalAmount: f.totalAmount,
+      ...(f.rentalType === 'Daily' && f.partDayAmount !== (booking.partDayAmount ?? 0) ? { partDayAmount: f.partDayAmount } : {}),
       rentalType: f.rentalType, rentalUnits: f.rentalType === 'Daily' ? undefined : f.rentalUnits, unitRate: f.rentalType === 'Daily' ? undefined : f.unitRate,
       discount: f.discount, extraCharges: extraTotal, advanceAmount: f.advanceAmount, paidAmount: f.paidAmount,
       creditAmount: f.creditAmount, ...(f.creditAmount === 0 && booking.creditAmount ? { creditSettled: true } : {}),
@@ -333,9 +339,15 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
               </Field>
             </>
           )}
-          <Field label="Total (Rs)" hint={<p className="text-[11px] text-navy-400 mt-1">{manualTotal ? 'Typed by hand' : f.rentalType === 'Daily' ? `${f.totalDays} × ${rs(f.dailyRate)}` : `${f.rentalUnits ?? 0} × ${rs(f.unitRate ?? 0)}`}</p>}>
+          <Field label="Total (Rs)" hint={<p className="text-[11px] text-navy-400 mt-1">{manualTotal ? 'Typed by hand' : f.rentalType === 'Daily' ? (f.partDayAmount > 0 ? partDayText(f.totalDays, f.dailyRate, f.partDayAmount) : `${f.totalDays} × ${rs(f.dailyRate)}`) : `${f.rentalUnits ?? 0} × ${rs(f.unitRate ?? 0)}`}</p>}>
             <input className="input" type="number" min="0" value={f.totalAmount || ''} onChange={(e) => { setManualTotal(true); set('totalAmount', numIn(e.target.value)); }} />
           </Field>
+          {f.rentalType === 'Daily' && f.totalDays > 0 && (
+            <div className="col-span-2 sm:col-span-4">
+              <PartDayToggle value={f.partDayAmount > 0 ? f.partDayAmount : undefined} days={f.totalDays} rate={f.dailyRate}
+                onChange={(v) => { setManualTotal(false); set('partDayAmount', v ?? 0); }} />
+            </div>
+          )}
           <Field label="Other charges, not itemised (Rs)">
             <input className="input" type="number" min="0" value={f.extraCharges || ''} onChange={(e) => set('extraCharges', numIn(e.target.value))} placeholder="0" />
           </Field>
