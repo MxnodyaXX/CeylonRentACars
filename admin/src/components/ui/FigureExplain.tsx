@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronDown, RefreshCw } from 'lucide-react';
 import BookingDetailsModal from './BookingDetailsModal';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store/useStore';
+import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import Modal from './Modal';
 import { bookingNo } from '../../lib/bookingRecord';
@@ -182,6 +183,34 @@ function RentalCard({ r, highlight }: { r: ProfitRow; highlight: [string, number
   );
 }
 
+/** finished / cancelled trips whose deposit was never marked returned or kept — not counted as held; settle them here */
+function UnsettledDeposits({ rows }: { rows: { b: ProfitRow['b']; amount: number; car: string }[] }) {
+  const open = useContext(OpenBooking);
+  const by = useAuthStore((x) => x.currentUser?.name) ?? 'Admin';
+  const returned = (r: { b: ProfitRow['b']; amount: number }) => {
+    if (!confirm(`Was ${r.b.customerName}'s deposit of ${rs(r.amount)} given back at the end of the trip?
+
+It is recorded as returned (cash, today's entry). If part of it was kept, open the booking and settle it there instead.`)) return;
+    useStore.getState().settleDeposit(r.b.id, { returned: r.amount, deduction: 0, method: 'Cash', notes: 'Recorded later — returned at the end of the trip' }, by);
+  };
+  return (
+    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+      <p className="text-sm font-semibold text-amber-900 flex items-center gap-1.5"><AlertTriangle size={14} /> Finished trips with a deposit not settled · {rows.length}</p>
+      <p className="text-xs text-amber-800 mb-2">A deposit is settled when the trip ends, so these are <b>not</b> counted as held. Record what happened to each one.</p>
+      <div className="divide-y divide-amber-100">
+        {rows.map((r) => (
+          <div key={r.b.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+            <span className="flex-1 min-w-[12rem]"><b className="text-navy-900">{r.b.customerName}</b> <span className="text-navy-400">· {bookingNo(r.b)} · {r.b.status}{r.car ? ` · ${r.car}` : ''}</span></span>
+            <b className="tabular-nums text-amber-900">{rs(r.amount)}</b>
+            <button type="button" className="btn-primary !py-1 text-xs" onClick={() => returned(r)}>It was returned</button>
+            <button type="button" className="btn-secondary !py-1 text-xs" onClick={() => open(r.b.id)}>Open to settle</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FixAll({ rows }: { rows: ProfitRow[] }) {
   const fixable = rows.filter((r) => r.check?.fixable);
   if (!fixable.length) return null;
@@ -263,12 +292,13 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
       {held.owners.some((o) => o.net < 0) && <Warn>An owner whose expenses are more than their rentals is counted as 0 here (they owe the company, not the other way).</Warn>}
     </>],
     deposits: ['Customer deposits held', <>
-      <Note>Security deposits received − deposits returned − amounts kept or used for the bill, on every booking that isn't cancelled. This money is the customers' until it's returned.</Note>
+      <Note>Security deposits on bookings that are <b>confirmed or on rent</b> — received − returned − kept or used for the bill. This money is the customers' until it's settled at the end of the trip.</Note>
       <List title={`Bookings holding a deposit · ${held.deposits.length}`} empty={!held.deposits.length}>
         {held.deposits.map((r) => <Item key={r.b.id} to={`/bookings/${r.b.id}`} onGo={go} title={<><b>{r.b.customerName}</b> <span className="text-navy-400">· {bookingNo(r.b)}</span></>}
-          sub={`${r.b.status}${r.car ? ` · ${r.car}` : ''}${r.b.status === 'Completed' ? ' · trip finished — return or settle it' : ''}`} amount={r.amount} warn={r.b.status === 'Completed'} />)}
+          sub={`${r.b.status}${r.car ? ` · ${r.car}` : ''}`} amount={r.amount} />)}
       </List>
       <Sum lines={[['Deposits held', deps]]} result={['Customer deposits held', deps]} />
+      {held.unsettled.length > 0 && <UnsettledDeposits rows={held.unsettled} />}
     </>],
     unpaid: ['Approved expenses not paid', <>
       <Note>Company expenses that were approved but haven't been marked paid yet.</Note>

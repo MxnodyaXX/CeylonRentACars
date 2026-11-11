@@ -206,10 +206,13 @@ export function heldDetail(d: Books) {
   const now = periodOf(new Date());
   const owners = d.owners.map((o) => { const lines = linesFor(o.id, now, data, d.from); return { owner: o, lines, ...totalsOf(lines) }; })
     .filter((o) => o.lines.length).sort((a, b) => b.net - a.net);
-  const deposits = d.bookings.filter((b) => b.status !== 'Cancelled').map((b) => ({ b, amount: depositHeld(b), car: carOf(d, b.vehicleId) }))
-    .filter((r) => r.amount > 0).sort((a, b) => b.amount - a.amount);
+  // a deposit is held only while the trip is confirmed or on rent — it is settled at the end of the trip
+  const withDeposit = d.bookings.map((b) => ({ b, amount: depositHeld(b), car: carOf(d, b.vehicleId) })).filter((r) => r.amount > 0);
+  const deposits = withDeposit.filter((r) => r.b.status === 'Ongoing' || r.b.status === 'Confirmed').sort((a, b) => b.amount - a.amount);
+  /** finished or cancelled trips whose deposit was never marked returned / kept — to settle (not counted as held) */
+  const unsettled = withDeposit.filter((r) => r.b.status === 'Completed' || r.b.status === 'Cancelled');
   const unpaid = d.companyExpenses.filter((e) => e.status === 'approved');
-  return { owners, deposits, unpaid };
+  return { owners, deposits, unpaid, unsettled };
 }
 
 /** Each account's balance worked out: opening + money in − money out since the opening date; and the unassigned money */

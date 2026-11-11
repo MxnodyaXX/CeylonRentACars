@@ -136,6 +136,11 @@ export function ledgerOf(b: Booking): PaymentEntry[] {
   if (b.depositType === 'cash' && (b.depositAmount ?? 0) > depositLogged) {
     list.unshift({ id: 'legacy-deposit', at: b.createdAt, kind: 'Deposit received', amount: (b.depositAmount ?? 0) - depositLogged, method: 'Cash', by: '—', note: 'Recorded before the payment log' });
   }
+  // a deposit given back but saved only as the booking's "returned" figure (no log entry): it left the company too
+  const returnedLogged = list.filter((p) => p.kind === 'Deposit returned').reduce((s, p) => s + p.amount, 0);
+  if (b.depositType === 'cash' && (b.depositReturned ?? 0) > returnedLogged) {
+    list.push({ id: 'legacy-deposit-return', at: b.returnAt ?? `${b.endDate}T12:00:00`, kind: 'Deposit returned', amount: (b.depositReturned ?? 0) - returnedLogged, method: 'Cash', by: '—', note: 'Returned — recorded on the booking without a payment-log entry' });
+  }
   return list.sort((a, c) => a.at.localeCompare(c.at));
 }
 
