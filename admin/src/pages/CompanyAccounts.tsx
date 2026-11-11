@@ -18,6 +18,7 @@ import {
 } from '../lib/ledger';
 import type { CompanyAccount } from '../types';
 import FigureExplain, { type FigureKey } from '../components/ui/FigureExplain';
+import AccountStatement from '../components/accounts/AccountStatement';
 
 /*
  * Finance → Company accounts: the company's books on one page.
@@ -156,6 +157,8 @@ function Overview({ books, ledger, f, fp, bal, held, own, start, end, periodText
   }).filter((r) => r.s || r.net);
   const depositsToReturn = books.bookings.filter((b) => b.status === 'Completed' && depositHeld(b) > 0);
   const [ex, setEx] = useState<FigureKey | null>(null);
+  // the bank-style statement: every movement with money in / out and the running balance
+  const [statement, setStatement] = useState(false);
   const noAccounts = books.accounts.length === 0;
 
   const printSummary = () => {
@@ -172,6 +175,7 @@ function Overview({ books, ledger, f, fp, bal, held, own, start, end, periodText
 
   return (
     <div className="space-y-5">
+      {statement && <AccountStatement books={books} ledger={ledger} onClose={() => setStatement(false)} />}
       <FigureExplain k={ex} onClose={() => setEx(null)} books={books} ledger={ledger} f={f} start={start} end={end} periodText={periodText} admin={admin} />
       {noAccounts && (
         <p className="rounded-xl bg-sky-50 border border-sky-200 px-4 py-3 text-sm text-sky-900 flex gap-2"><Info size={16} className="flex-shrink-0 mt-0.5" />
@@ -182,7 +186,10 @@ function Overview({ books, ledger, f, fp, bal, held, own, start, end, periodText
       <section>
         <div className="flex items-center justify-between mb-2">
           <p className="section-title">Whose money do we hold — today</p>
-          <button type="button" onClick={printSummary} className="btn-secondary !py-1.5 text-xs inline-flex items-center gap-1.5"><Printer size={13} /> Print for the accountant</button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setStatement(true)} className="btn-primary !py-1.5 text-xs inline-flex items-center gap-1.5"><Landmark size={13} /> Account statement</button>
+            <button type="button" onClick={printSummary} className="btn-secondary !py-1.5 text-xs inline-flex items-center gap-1.5"><Printer size={13} /> Print for the accountant</button>
+          </div>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           {[

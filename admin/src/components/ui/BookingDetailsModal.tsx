@@ -2,7 +2,7 @@ import { channelOf, referrerOf } from '../../lib/channels';
 import { referralFeeWorking } from '../../lib/referral';
 import { useCompanyFinance } from '../../lib/companyFinance';
 import { companyShareOf, shareBaseOf, shareBaseParts, shareWorking } from '../../lib/companyShare';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
   FileText, History, Loader2, Receipt, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldAlert, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
@@ -36,7 +36,7 @@ import { sendSms } from '../../lib/sms';
 import { DEFAULT_POLICIES, printRentalAgreement } from '../../lib/printAgreement';
 import { feedbackMessage, linkFor } from '../../pages/Feedback';
 import type {
-  ActivityEntry, Booking, BookingDocument, ChargeKind, CustomerInfo, DocumentKind, HandoverChecklist, PaymentKind, RentalAgreement,
+  ActivityEntry, Booking, BookingDocument, ChargeKind, CustomerInfo, DocumentKind, HandoverChecklist, PaymentEntry, PaymentKind, RentalAgreement,
 } from '../../types';
 
 type Tab = 'overview' | 'payments' | 'vehicle' | 'documents' | 'breakdowns' | 'history';
@@ -587,6 +587,48 @@ function Overview({ b, by, price, extra, narrow }: {
    Payments
    ===================================================================== */
 
+/** Split a "recorded before the payment log" line into what really happened (e.g. Rs 10,000 advance + Rs 160,000 at the pickup) */
+function LegacySplit({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by: string; onDone: () => void }) {
+  const deposit = row.kind === 'Deposit received';
+  const day0 = b.startDate;
+  const [lines, setLines] = useState<{ kind: PaymentKind; date: string; amount: string; method: string; receiptNo: string }[]>(
+    deposit ? [{ kind: 'Deposit received', date: day0, amount: String(row.amount), method: 'Cash', receiptNo: '' }]
+      : [{ kind: 'Advance', date: day0, amount: '', method: 'Cash', receiptNo: '' }, { kind: 'Payment', date: day0, amount: String(row.amount), method: 'Cash', receiptNo: '' }]);
+  const total = lines.reduce((s, l) => s + (Math.round(Number(l.amount) || 0)), 0);
+  const left = row.amount - total;
+  const set = (i: number, k: string, v: string) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  const save = () => {
+    const entries = lines.filter((l) => Number(l.amount) > 0).map((l) => ({ id: newId(), at: new Date(`${l.date}T12:00:00`).toISOString(), kind: l.kind, amount: Math.round(Number(l.amount)), method: l.method, by,
+      ...(l.receiptNo.trim() ? { receiptNo: l.receiptNo.trim() } : {}), note: 'Itemised later' }));
+    const e = useStore.getState().itemiseLegacy(b.id, entries, by);
+    if (e) toast.error('Not saved', e); else onDone();
+  };
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-2 text-sm">
+      <p className="text-xs text-amber-900">What made up this <b>{rs(row.amount)}</b>? Enter each payment with its real date — they must add up to the same amount.</p>
+      {lines.map((l, i) => (
+        <div key={i} className="grid grid-cols-2 sm:grid-cols-[9rem_9rem_8rem_8rem_1fr_auto] gap-2 items-center">
+          <select className="input !py-1 text-sm" value={l.kind} onChange={(e) => set(i, 'kind', e.target.value)}>
+            {(deposit ? ['Deposit received'] : ['Advance', 'Payment']).map((k) => <option key={k}>{k}</option>)}
+          </select>
+          <input className="input !py-1 text-sm" type="date" value={l.date} onChange={(e) => set(i, 'date', e.target.value)} />
+          <input className="input !py-1 text-sm" type="number" min="0" placeholder="Rs" value={l.amount} onChange={(e) => set(i, 'amount', e.target.value)} />
+          <select className="input !py-1 text-sm" value={l.method} onChange={(e) => set(i, 'method', e.target.value)}>{METHODS.map((m) => <option key={m}>{m}</option>)}</select>
+          <input className="input !py-1 text-sm" placeholder="Receipt / ref." value={l.receiptNo} onChange={(e) => set(i, 'receiptNo', e.target.value)} />
+          <button type="button" className="text-xs text-navy-400 hover:text-red-600" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} disabled={lines.length === 1}>Remove</button>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-3">
+        {!deposit && <button type="button" className="text-xs font-semibold text-navy-700 underline" onClick={() => setLines((ls) => [...ls, { kind: 'Payment', date: day0, amount: '', method: 'Cash', receiptNo: '' }])}>+ Add a line</button>}
+        <span className={`text-xs font-semibold ${left === 0 ? 'text-emerald-700' : 'text-red-600'}`}>{left === 0 ? 'Adds up ✓' : left > 0 ? `${rs(left)} still to place` : `${rs(-left)} too much`}</span>
+        <span className="flex-1" />
+        <button type="button" className="btn-secondary !py-1 text-xs" onClick={onDone}>Cancel</button>
+        <button type="button" className="btn-primary !py-1 text-xs disabled:opacity-40" disabled={left !== 0} onClick={save}>Save the entries</button>
+      </div>
+    </div>
+  );
+}
+
 function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmRate }: {
   b: Booking; by: string; canPay: boolean; price: ReturnType<typeof priceBreakdown>; commissionPayout?: number; includedKm: number; extraKmRate: number;
 }) {
@@ -608,6 +650,8 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
   const kmToBill = Math.max(0, extraKm - billedKm);
 
   const sign = (k: PaymentKind) => (k === 'Refund' || k === 'Deposit returned' ? -1 : 1);
+  // a "recorded before the payment log" line being split into the real dated entries
+  const [splitting, setSplitting] = useState<string | null>(null);
   // the bill in parts: rent, extra charges (extra km, fines…), then what came off (deductions, discount)
   const rentLines = price.lines.filter((l) => l.group === 'rent');
   const extraLines = price.lines.filter((l) => l.group === 'charge');
@@ -652,14 +696,19 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
               <thead><tr className="text-[11px] text-navy-400 text-left"><th className="px-1 py-1 font-medium">Date</th><th className="px-1 font-medium">Type</th><th className="px-1 font-medium">Method</th><th className="px-1 font-medium">Receipt / note</th><th className="px-1 font-medium">By</th><th className="px-1 font-medium text-right">Amount</th></tr></thead>
               <tbody>
                 {ledger.map((p) => (
-                  <tr key={p.id} className="border-t border-navy-50">
-                    <td className="px-1 py-1.5 whitespace-nowrap text-navy-600">{fmtDate(p.at)}</td>
+                  <Fragment key={p.id}>
+                  <tr className={`border-t border-navy-50 ${p.id.startsWith('legacy') ? 'bg-amber-50/50' : ''}`}>
+                    <td className="px-1 py-1.5 whitespace-nowrap text-navy-600">{p.id.startsWith('legacy') ? <span className="text-amber-700">date not recorded</span> : fmtDate(p.at)}</td>
                     <td className="px-1 text-navy-800 font-medium whitespace-nowrap">{p.kind}</td>
                     <td className="px-1 text-navy-600">{p.method}</td>
-                    <td className="px-1 text-navy-500 text-xs">{[p.receiptNo, p.note].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="px-1 text-navy-500 text-xs">{[p.receiptNo, p.note].filter(Boolean).join(' · ') || '—'}
+                      {canPay && p.id.startsWith('legacy') && splitting !== p.id && (
+                        <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-xs font-semibold text-amber-800 underline">Split into the real entries</button>)}</td>
                     <td className="px-1 text-navy-500 text-xs">{p.by}</td>
                     <td className={`px-1 text-right font-semibold whitespace-nowrap ${sign(p.kind) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{sign(p.kind) < 0 ? '−' : '+'}{rs(p.amount)}</td>
                   </tr>
+                  {splitting === p.id && <tr><td colSpan={6} className="px-1 pb-2"><LegacySplit b={b} row={p} by={by} onDone={() => setSplitting(null)} /></td></tr>}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

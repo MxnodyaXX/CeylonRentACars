@@ -277,7 +277,9 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
           entries={ledger.filter((e) => e.amount && e.accountId === x.a.id && e.date >= x.a.openingDate)} />)}
       </List>}
       {bal.unassigned.length > 0 && <List title="Not assigned to an account — by type">
-        {bal.unassigned.map((u) => <Group key={u.kind} title={KIND_LABEL[u.kind]} sub={`${u.count} entr${u.count === 1 ? 'y' : 'ies'}`} amount={u.amount} entries={bal.looseEntries.filter((e) => e.kind === u.kind)} />)}
+        {bal.unassigned.map((u) => <Group key={u.kind} title={u.kind === 'deposit_in' ? 'Customer deposits — received − given back − used for bills' : KIND_LABEL[u.kind]}
+          sub={u.kind === 'deposit_in' ? `${u.count} entries · still held: ${rs(deps)} on trips confirmed or on rent${held.unsettled.length ? ` + ${rs(held.unsettled.reduce((s, r) => s + r.amount, 0))} on finished trips not settled` : ''}` : `${u.count} entr${u.count === 1 ? 'y' : 'ies'}`}
+          amount={u.amount} entries={bal.looseEntries.filter((e) => bal.groupOf(e.kind) === u.kind)} />)}
       </List>}
       {!bal.accounts.length && <Warn>No company accounts are set up yet, so all of this is "not assigned" — it's every payment, deposit, refund and payout recorded since {fmtDay(books.from)}, not a bank balance. Add the cash box and bank accounts (Accounts tab) with their balances on {fmtDay(books.from)}, and this becomes the real money you hold.</Warn>}
     </>],

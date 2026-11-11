@@ -144,6 +144,27 @@ export function ledgerOf(b: Booking): PaymentEntry[] {
   return list.sort((a, c) => a.at.localeCompare(c.at));
 }
 
+/**
+ * The payment-log entries for money taken when a booking is made (advance, payment, cash deposit) — so the log
+ * shows each one with its date, method and receipt, instead of a "recorded before the payment log" line.
+ * Only the amounts the booking's log doesn't already explain are added.
+ */
+export function openingPayments(b: Pick<Booking, 'payments' | 'paidAmount' | 'advanceAmount' | 'depositType' | 'depositAmount' | 'paymentMethod'>,
+  by: string, at: string, extra: { receiptNo?: string; note?: string } = {}): PaymentEntry[] {
+  const list = b.payments ?? [];
+  const sum = (k: PaymentEntry['kind']) => list.filter((p) => p.kind === k).reduce((s, p) => s + p.amount, 0);
+  const method = b.paymentMethod || 'Cash';
+  const base = { at, by, ...(extra.receiptNo ? { receiptNo: extra.receiptNo } : {}), note: extra.note ?? 'With the booking' };
+  const out: PaymentEntry[] = [];
+  const adv = (b.advanceAmount ?? 0) - sum('Advance');
+  if (adv > 0) out.push({ ...base, id: newId(), kind: 'Advance', amount: adv, method });
+  const paid = (b.paidAmount ?? 0) - (sum('Payment') - sum('Refund'));
+  if (paid > 0) out.push({ ...base, id: newId(), kind: 'Payment', amount: paid, method });
+  const dep = b.depositType === 'cash' ? (b.depositAmount ?? 0) - sum('Deposit received') : 0;
+  if (dep > 0) out.push({ ...base, id: newId(), kind: 'Deposit received', amount: dep, method: 'Cash', note: 'Security deposit' });
+  return out;
+}
+
 /** Cash deposit still held (collected − returned − deducted) */
 export const depositHeld = (b: Booking) =>
   b.depositType === 'cash' ? Math.max(0, (b.depositAmount ?? 0) - (b.depositReturned ?? 0) - (b.depositDeduction ?? 0)) : 0;

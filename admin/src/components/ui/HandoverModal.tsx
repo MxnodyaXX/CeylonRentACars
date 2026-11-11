@@ -70,6 +70,15 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   // 'recover': the company takes the vehicle back (non-payment, fraud…) — a return with its reason, closed as "Recovered"
   const recover = kind === 'recover';
   const step = recover ? 'return' as const : kind;
+  // money taken at the pickup: the total handed over, and the part of it that is the security deposit
+  const [pkRecv, setPkRecv] = useState('');
+  const [pkMethod, setPkMethod] = useState('Cash');
+  const [pkReceipt, setPkReceipt] = useState('');
+  const [pkDepOn, setPkDepOn] = useState(false);
+  const [pkDep, setPkDep] = useState('');
+  const pkTotal = Math.max(0, Math.round(Number(pkRecv) || 0));
+  const pkDeposit = pkDepOn ? Math.max(0, Math.round(Number(pkDep) || 0)) : 0;
+  const pkRent = Math.max(0, pkTotal - pkDeposit);
   const { vehicles, commissions, recordHandover, addCharge, recordPayment, settleDeposit, updateVehicle, editBooking, updateCommission, addSwapPayout } = useStore();
   const by = useAuthStore((s) => s.currentUser?.name) ?? 'Staff';
   const isAdmin = useAuthStore((s) => s.isAdmin());
@@ -209,7 +218,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const held = depositHeld(b);
   const [depKeep, setDepKeep] = useState('');
   const [depNote, setDepNote] = useState('');
-  const [settleDep, setSettleDep] = useState(held > 0);
+  // a finished trip can't keep a deposit: at the return it always pays the bill, is kept (with a reason) or goes back
+  const settleDep = held > 0;
   const keep = Math.min(held, Math.max(0, Number(depKeep) || 0));
   // a recovery usually collects nothing on the spot — what's unpaid stays owed on the booking
   const [collect, setCollect] = useState<string | null>(recover ? '0' : null);   // null = follow the balance
@@ -405,6 +415,13 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
         });
       }
     }
+    // pickup: the money handed over now — the rent part as a payment, the deposit part as the security deposit
+    if (kind === 'pickup' && canPay && pkTotal > 0) {
+      if (pkDeposit > pkTotal) return setError("The deposit part can't be more than the money received.");
+      const ref = pkReceipt.trim() || undefined;
+      if (pkRent > 0) recordPayment(b.id, { kind: 'Payment', amount: pkRent, method: pkMethod, receiptNo: ref, by, note: 'Paid at the pickup' });
+      if (pkDeposit > 0) recordPayment(b.id, { kind: 'Deposit received', amount: pkDeposit, method: pkMethod, receiptNo: ref, by, note: 'Security deposit taken at the pickup' });
+    }
     recordHandover(b.id, step, list, location.trim() || undefined);
     if (isReturn) {
       // only if the rental really completed (e.g. not blocked by a breakdown replacement still out)
@@ -589,6 +606,40 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
               <SignaturePad onChange={setSignature} />
               <p className="text-[11px] text-navy-400 mt-1">The customer confirms the condition, fuel and km above.</p>
             </Fold>
+
+            {/* money handed over at the pickup — the rent part and the deposit part go into the payment log separately */}
+            {kind === 'pickup' && canPay && (
+              <div className="rounded-xl border border-navy-100 p-3 space-y-2.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5"><Receipt size={15} /> Payment at the pickup</p>
+                  <p className="text-xs text-navy-500">Bill {rs(price.bill)} · paid so far {rs(price.paid)}{price.due > 0 ? <> · <b className="text-red-600">balance {rs(price.due)}</b></> : ' · paid in full'}</p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <label className="text-[11px] text-navy-500">Money received now (Rs)
+                    <input className="input !py-1.5 mt-0.5" type="number" min="0" value={pkRecv} placeholder="0" onChange={(e) => setPkRecv(e.target.value)} />
+                  </label>
+                  <label className="text-[11px] text-navy-500">Method
+                    <select className="input !py-1.5 mt-0.5" value={pkMethod} onChange={(e) => setPkMethod(e.target.value)}>{['Cash', 'Bank transfer', 'Card', 'Online'].map((m) => <option key={m}>{m}</option>)}</select>
+                  </label>
+                  <label className="text-[11px] text-navy-500 col-span-2 sm:col-span-1">Receipt / ref.
+                    <input className="input !py-1.5 mt-0.5" value={pkReceipt} placeholder="optional" onChange={(e) => setPkReceipt(e.target.value)} />
+                  </label>
+                </div>
+                <label className="flex flex-wrap items-center gap-2 text-sm text-navy-700">
+                  <input type="checkbox" checked={pkDepOn} onChange={(e) => { setPkDepOn(e.target.checked); if (e.target.checked && !pkDep) setPkDep(String(Math.min(pkTotal || 50000, 50000))); }} />
+                  Part of it is the security deposit
+                  {pkDepOn && <><span className="text-navy-500">Rs</span>
+                    <input className="input !py-1 !w-28" type="number" min="0" value={pkDep} onChange={(e) => setPkDep(e.target.value)} /></>}
+                </label>
+                {pkTotal > 0 && (
+                  <p className={`text-xs rounded-lg px-2.5 py-1.5 ${pkDeposit > pkTotal ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-800'}`}>
+                    {pkDeposit > pkTotal ? "The deposit part can't be more than the money received."
+                      : <>{rs(pkTotal)} received → <b>{rs(pkRent)}</b> towards the rent{pkDeposit > 0 && <> + <b>{rs(pkDeposit)}</b> security deposit (kept apart, given back at the return)</>}
+                        {pkRent > 0 && <> · balance after: {rs(Math.max(0, price.due - pkRent))}{price.due - pkRent < 0 ? ` (${rs(pkRent - price.due)} more than the bill)` : ''}</>}</>}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
         {isReturn && (
@@ -950,7 +1001,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
             {/* deposit */}
             {held > 0 && (
               <div className="rounded-xl bg-amber-50/70 p-3 space-y-2">
-                <label className="text-sm font-semibold text-amber-900 flex items-center gap-1.5"><input type="checkbox" checked={settleDep} onChange={(e) => setSettleDep(e.target.checked)} /> Settle the deposit now ({rs(held)} held)</label>
+                <p className="text-sm font-semibold text-amber-900">Security deposit {rs(held)} — settled now</p>
+                <p className="text-xs text-amber-800 -mt-1">The trip is ending, so the deposit can't stay with the company: it pays the bill, part is kept (with a reason), and the rest goes back to the customer.</p>
                 {b.depositType === 'cash' && dueNow > 0 && (
                   <label className="text-sm text-amber-900 flex items-start gap-1.5">
                     <input type="checkbox" className="mt-0.5" checked={depForBill} onChange={(e) => { setDepForBill(e.target.checked); setCollect(null); }} />

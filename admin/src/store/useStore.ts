@@ -30,6 +30,7 @@ import cab1234Img from '../data/CAB-1234.png';
 import { METER_LABEL, kmWithMeter, meterOf } from '../lib/tripKm';
 import { bookingCredit } from '../lib/credit';
 import { withoutOlder } from '../lib/recordsFrom';
+import { depositHeld, openingPayments } from '../lib/bookingRecord';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
@@ -309,7 +310,9 @@ export const useStore = create<AppState>()(
           createdAt: now(),
         };
 
-        const newBooking: Booking = { ...b, id, referralFee, createdAt: now() };
+        // money taken with the booking goes into the payment log as dated entries (advance, payment, deposit)
+        const by0 = useAuthStore.getState().currentUser?.name ?? 'Staff';
+        const newBooking: Booking = { ...b, id, referralFee, createdAt: now(), payments: [...(b.payments ?? []), ...openingPayments(b, by0, now())] };
         const vehicleUpdates = {
           status: keepMaintenance(b.vehicleId, 'Reserved'),
           revenue: (vehicle?.revenue ?? 0) + b.totalAmount,
@@ -498,9 +501,19 @@ export const useStore = create<AppState>()(
         const notes = why
           ? [booking?.notes, `[Cancelled ${stamp} by ${why.by}: ${why.reason}${why.details ? ` — ${why.details}` : ''}]`].filter(Boolean).join('\n')
           : booking?.notes;
+        // a cash deposit still on the booking is closed with it: given back to the customer (or never really taken, for a duplicate)
+        const heldDep = booking ? depositHeld(booking) : 0;
+        const dup = !!why && /^Duplicate/i.test(why.reason);
+        const depClose = heldDep > 0 && booking ? {
+          depositReturned: (booking.depositReturned ?? 0) + heldDep,
+          depositNotes: [booking.depositNotes, dup ? `Rs ${heldDep.toLocaleString()} — duplicate booking, no deposit was taken on it` : `Rs ${heldDep.toLocaleString()} returned with the cancellation`].filter(Boolean).join('; '),
+          payments: [...(booking.payments ?? []), { id: uid(), at: now(), kind: 'Deposit returned' as const, amount: heldDep, method: 'Cash', by: why?.by ?? 'Staff', note: dup ? 'Duplicate booking — closed, nothing to give back' : 'Returned with the cancellation' }],
+        } : {};
         const updates: Partial<Booking> = {
           status: 'Cancelled',
-          ...(why ? { notes, activity: [...(booking?.activity ?? []), { at: new Date().toISOString(), by: why.by, type: 'Cancelled' as const, text: `${why.reason}${why.details ? ` — ${why.details}` : ''}` }] } : {}),
+          ...depClose,
+          ...(why ? { notes, activity: [...(booking?.activity ?? []), { at: new Date().toISOString(), by: why.by, type: 'Cancelled' as const, text: `${why.reason}${why.details ? ` — ${why.details}` : ''}` },
+            ...(heldDep > 0 ? [{ at: new Date().toISOString(), by: why.by, type: 'Deposit' as const, text: dup ? `Deposit Rs ${heldDep.toLocaleString()} closed — duplicate booking` : `Deposit Rs ${heldDep.toLocaleString()} returned with the cancellation` }] : [])] } : {}),
         };
         const afterCancel = booking ? keepMaintenance(booking.vehicleId, 'Available') : 'Available';
         set((s) => {
@@ -709,7 +722,10 @@ export const useStore = create<AppState>()(
         // ── 3. Booking record ─────────────────────────────────────────────
         // (payouts for breakdown replacement cars come along with the booking — not a booking field)
         const { extraPayouts = [], ...bookingData } = data as typeof data & { extraPayouts?: { id: string; vehicleId: string; amount: number; note: string }[] };
-        const newBooking: Booking = { ...bookingData, id: bookingId, customerId, referralFee, createdAt: now() };
+        // a past booking: its money is logged at the pickup time (the form can pass its own dated entries)
+        const at0 = bookingData.startDate ? new Date(`${bookingData.startDate}T${bookingData.startTime || '09:00'}:00`).toISOString() : now();
+        const newBooking: Booking = { ...bookingData, id: bookingId, customerId, referralFee, createdAt: now(),
+          payments: [...(bookingData.payments ?? []), ...openingPayments(bookingData, useAuthStore.getState().currentUser?.name ?? 'Admin', at0, { note: 'Entered with the manual booking' })] };
 
         // ── 4. Commission record ──────────────────────────────────────────
         const commissionPaid = (data as { commissionAlreadyPaid?: boolean }).commissionAlreadyPaid ?? false;
@@ -1095,6 +1111,24 @@ export const useStore = create<AppState>()(
 
       // The commission and the owner's share follow the final bill (rent + charges − discount):
       // worked out again when a charge is added or removed — until the owner is paid.
+      itemiseLegacy: (id, entries, by) => {
+        const b = get().bookings.find((x) => x.id === id);
+        if (!b) return 'Booking not found.';
+        if (!entries.length || entries.some((e) => !(e.amount > 0))) return 'Enter an amount on every line.';
+        const all = [...(b.payments ?? []), ...entries];
+        const sum = (k: PaymentEntry['kind']) => all.filter((p) => p.kind === k).reduce((s, p) => s + p.amount, 0);
+        const paidAmount = sum('Payment') - sum('Refund'), advanceAmount = sum('Advance');
+        // the same money, just itemised: the paid total (and the cash deposit) must not change
+        if (Math.abs(paidAmount + advanceAmount - (b.paidAmount + (b.advanceAmount ?? 0))) >= 1 && entries.some((e) => e.kind !== 'Deposit received'))
+          return `The payments must add up to Rs ${(b.paidAmount + (b.advanceAmount ?? 0) - ((b.payments ?? []).filter((p) => p.kind === 'Payment' || p.kind === 'Advance').reduce((s, p) => s + p.amount, 0) - (b.payments ?? []).filter((p) => p.kind === 'Refund').reduce((s, p) => s + p.amount, 0))).toLocaleString()}.`;
+        const depNow = sum('Deposit received');
+        if (entries.some((e) => e.kind === 'Deposit received') && b.depositType === 'cash' && Math.abs(depNow - (b.depositAmount ?? 0)) >= 1)
+          return `The deposit lines must add up to Rs ${((b.depositAmount ?? 0) - (b.payments ?? []).filter((p) => p.kind === 'Deposit received').reduce((s, p) => s + p.amount, 0)).toLocaleString()}.`;
+        get().logBookingActivity(id, { by, type: 'Payment', text: `Payment log itemised: ${entries.map((e) => `${e.kind} Rs ${e.amount.toLocaleString()} on ${e.at.slice(0, 10)}`).join(', ')}` },
+          { payments: all, paidAmount, advanceAmount });
+        toast.success('Payment log updated', `${b.customerName}: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} recorded.`);
+        return null;
+      },
       createPayoutLine: (id) => {
         const st = get();
         const b = st.bookings.find((x) => x.id === id);

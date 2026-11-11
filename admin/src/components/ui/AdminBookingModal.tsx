@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap, rentalDays } from '../../lib/availability';
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
+import { openingPayments } from '../../lib/bookingRecord';
 import RentalPriceField, { PriceMode, priceFor } from './RentalPriceField';
 import DoNotRentWarning from './DoNotRentWarning';
 import { CustomerIdFields, MissingDetailsPanel } from './NewBookingDetails';
@@ -72,6 +73,9 @@ const emptyForm = (vehicleId = '') => ({
   totalDays: 0,
   totalAmount: 0,
   paidAmount: 0,
+  advanceAmount: 0,
+  discount: 0,
+  paymentMethod: 'Cash',
   status: 'Confirmed' as const,
   referral: 'Direct',
   channel: '',
@@ -209,11 +213,13 @@ export default function AdminBookingModal({ open, onClose }: Props) {
   const [price, setPrice] = useState(STANDARD_PRICE);
   // one of the days is a part day (e.g. an evening pickup) charged a smaller amount — undefined = none
   const [partDay, setPartDay] = useState<number | undefined>(undefined);
+  const [receiptNo, setReceiptNo] = useState('');
 
   // Reset everything when modal is opened/closed
   const handleClose = () => {
     setPrice(STANDARD_PRICE);
     setPartDay(undefined);
+    setReceiptNo('');
     setStep('owner');
     setSelectedOwner(null);
     setSelectedVehicle(null);
@@ -371,6 +377,8 @@ export default function AdminBookingModal({ open, onClose }: Props) {
       : [];
     const bookingId = addBooking({
       ...bookingData,
+      // the advance / payment / deposit taken now, as dated entries in the payment log (with the receipt number)
+      payments: openingPayments(bookingData, useAuthStore.getState().currentUser?.name ?? 'Staff', new Date().toISOString(), { receiptNo: receiptNo.trim() || undefined }),
       ...(priceNote.length ? { activity: priceNote } : {}),
       // how the rent was set, for the bill: standard daily rate, an agreed rate per day, or an agreed total
       ...(form.rentalType === 'Daily' ? { priceMode: price.mode, standardRate, ...(partOn ? { partDayAmount: partOn } : {}) } : {}),
@@ -728,9 +736,35 @@ export default function AdminBookingModal({ open, onClose }: Props) {
                 <p className="label">Drop Location</p>
                 <LocationInput value={form.dropLocation} onChange={(v) => set('dropLocation', v)} placeholder="Drop location…" />
               </div>
-              <div>
-                <p className="label">Paid Amount (Rs)</p>
-                <input className="input" type="number" value={form.paidAmount} onChange={(e) => set('paidAmount', +e.target.value)} />
+              {/* money taken now — each goes into the payment log with today's date */}
+              <div className="sm:col-span-2 rounded-xl border border-navy-100 bg-navy-50/40 p-3 space-y-2">
+                <p className="label !mb-0">Payment now</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <label className="text-[11px] text-navy-500">Advance (Rs)
+                    <input className="input !py-1.5 mt-0.5" type="number" min="0" value={form.advanceAmount || ''} placeholder="0" onChange={(e) => set('advanceAmount', Math.max(0, +e.target.value))} />
+                  </label>
+                  <label className="text-[11px] text-navy-500">Paid towards the rent (Rs)
+                    <input className="input !py-1.5 mt-0.5" type="number" min="0" value={form.paidAmount || ''} placeholder="0" onChange={(e) => set('paidAmount', Math.max(0, +e.target.value))} />
+                  </label>
+                  <label className="text-[11px] text-navy-500">Discount (Rs)
+                    <input className="input !py-1.5 mt-0.5" type="number" min="0" value={form.discount || ''} placeholder="0" onChange={(e) => set('discount', Math.max(0, +e.target.value))} />
+                  </label>
+                  <label className="text-[11px] text-navy-500">Method
+                    <select className="input !py-1.5 mt-0.5" value={form.paymentMethod} onChange={(e) => set('paymentMethod', e.target.value)}>
+                      {['Cash', 'Bank transfer', 'Card', 'Online'].map((m) => <option key={m}>{m}</option>)}
+                    </select>
+                  </label>
+                  {(form.advanceAmount > 0 || form.paidAmount > 0) && (
+                    <label className="text-[11px] text-navy-500 col-span-2">Receipt / transfer ref.
+                      <input className="input !py-1.5 mt-0.5" value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} placeholder="optional" />
+                    </label>
+                  )}
+                </div>
+                {form.totalAmount > 0 && (() => {
+                  const bill = Math.max(0, form.totalAmount - (form.discount || 0)), paid = (form.advanceAmount || 0) + (form.paidAmount || 0);
+                  return <p className="text-xs text-navy-500">Bill <b className="text-navy-800">Rs {bill.toLocaleString()}</b>{form.discount ? <> (after Rs {form.discount.toLocaleString()} discount)</> : null} · paid now <b className="text-emerald-700">Rs {paid.toLocaleString()}</b> · {bill - paid > 0 ? <>balance <b className="text-red-600">Rs {(bill - paid).toLocaleString()}</b> (collect at pickup)</> : 'paid in full'}</p>;
+                })()}
+                <p className="text-[11px] text-navy-400">A cash security deposit is entered separately below — it isn't part of the bill.</p>
               </div>
               <div>
                 <p className="label">Assign Driver</p>

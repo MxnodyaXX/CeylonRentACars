@@ -4,6 +4,7 @@ import Modal from './Modal';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import type { Booking } from '../../types';
+import { depositHeld } from '../../lib/bookingRecord';
 
 export const CANCEL_REASONS = [
   'Customer changed plans',
@@ -43,6 +44,12 @@ export default function CancelBookingModal({ booking, onClose, onCancelled }: { 
           </p>
         </div>
 
+        {depositHeld(booking) > 0 && (
+          <p className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+            This booking holds a <b>Rs {depositHeld(booking).toLocaleString('en-LK')}</b> cash deposit. It is closed with the cancellation —
+            {reason.startsWith('Duplicate') ? ' as a duplicate, it is treated as never taken.' : ' recorded as given back to the customer.'}
+          </p>
+        )}
         <div>
           <p className="label">Why is it being cancelled? *</p>
           <div className="space-y-1.5" role="radiogroup" aria-label="Cancellation reason">

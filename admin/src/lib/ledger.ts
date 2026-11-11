@@ -71,20 +71,44 @@ export interface Books {
 const day = (iso?: string) => (iso ?? '').slice(0, 10);
 const carOf = (d: Books, id?: string) => { const v = d.vehicles.find((x) => x.id === id); return v ? `${v.brand} ${v.model} ${v.vehicleNumber}` : ''; };
 
+/** cancelled as a duplicate / entered by mistake: none of its money was real */
+export const isDuplicate = (b: Booking) => b.status === 'Cancelled'
+  && (b.activity ?? []).some((a) => a.type === 'Cancelled' && /^Duplicate/i.test(a.text));
+
 export function buildLedger(d: Books): LedgerEntry[] {
   const out: LedgerEntry[] = [];
   d.bookings.forEach((b) => {
     if (b.status === 'Cancelled' && !(b.payments ?? []).length && !b.paidAmount) return;
+    if (isDuplicate(b)) return;
+    // a cancelled booking's deposit goes back with the cancellation — it is never money the company holds
+    const cancelled = b.status === 'Cancelled';
     const car = carOf(d, b.vehicleId);
+    // A cash deposit that pays the bill (or is kept for damage) is the SAME money that came in as the deposit: the deposit
+    // receipt itself is shown as the customer's payment — once, on the day it was received — not as an extra line later.
+    const usedForBill = (b.payments ?? []).filter((x) => (x.kind === 'Payment' || x.kind === 'Advance') && x.method === 'Security deposit').reduce((s, x) => s + x.amount, 0);
+    const usedOn = day((b.payments ?? []).find((x) => x.method === 'Security deposit')?.at);
+    const kept = b.depositType === 'cash' ? Math.max(0, (b.depositDeduction ?? 0) - usedForBill) : 0;
+    let toBill = cancelled ? 0 : usedForBill, toKeep = cancelled ? 0 : kept;
     ledgerOf(b).forEach((p) => {
       const base = { id: `${b.id}:${p.id}`, date: day(p.at), method: p.method, ref: p.receiptNo, by: p.by, bookingId: b.id,
         detail: [bookingNo(b), b.customerName, car, p.note].filter(Boolean).join(' · ') };
       const acc = accountFor(p.method, p.accountId, d.settings);
+      if (cancelled && (p.kind === 'Deposit received' || p.kind === 'Deposit returned' || p.method === 'Security deposit')) return;
       if (p.kind === 'Payment' || p.kind === 'Advance') {
-        if (p.method === 'Security deposit') out.push({ ...base, kind: 'deposit_used', amount: 0, label: `Deposit used · ${b.customerName}`, detail: `${base.detail} · Rs ${p.amount.toLocaleString('en-LK')} from the deposit` });
-        else out.push({ ...base, kind: 'payment', amount: p.amount, accountId: acc, label: `${p.kind === 'Advance' ? 'Advance' : 'Payment'} · ${b.customerName}` });
+        // paid "from the security deposit": no new money — the deposit receipt below is counted as this payment
+        if (p.method === 'Security deposit') return;
+        out.push({ ...base, kind: 'payment', amount: p.amount, accountId: acc, label: `${p.kind === 'Advance' ? 'Advance' : 'Payment'} · ${b.customerName}` });
       } else if (p.kind === 'Refund') out.push({ ...base, kind: 'refund', amount: -p.amount, accountId: acc, label: `Refund · ${b.customerName}` });
-      else if (p.kind === 'Deposit received') out.push({ ...base, kind: 'deposit_in', amount: p.amount, accountId: acc, label: `Deposit received · ${b.customerName}` });
+      else if (p.kind === 'Deposit received') {
+        let left = p.amount;
+        const bill = Math.min(left, toBill); toBill -= bill; left -= bill;
+        if (bill > 0) out.push({ ...base, id: `${base.id}:bill`, kind: 'payment', amount: bill, accountId: acc, label: `Deposit used for the bill · ${b.customerName}`,
+          detail: `${base.detail} · received as the security deposit${usedOn ? `, used for the bill on ${usedOn}` : ''}` });
+        const keep = Math.min(left, toKeep); toKeep -= keep; left -= keep;
+        if (keep > 0) out.push({ ...base, id: `${base.id}:kept`, kind: 'payment', amount: keep, accountId: acc, label: `Deposit kept · ${b.customerName}`,
+          detail: `${base.detail} · received as the security deposit, kept${b.depositNotes ? ` (${b.depositNotes})` : ''}` });
+        if (left > 0) out.push({ ...base, kind: 'deposit_in', amount: left, accountId: acc, label: `Deposit received · ${b.customerName}` });
+      }
       else if (p.kind === 'Deposit returned') out.push({ ...base, kind: 'deposit_out', amount: -p.amount, accountId: acc, label: `Deposit returned · ${b.customerName}` });
     });
     if ((b.badDebt ?? 0) > 0) out.push({ id: `${b.id}:bad`, date: completedOn(b) || day(b.endDate), kind: 'write_off', amount: 0, bookingId: b.id,
@@ -210,7 +234,7 @@ export function heldDetail(d: Books) {
   const withDeposit = d.bookings.map((b) => ({ b, amount: depositHeld(b), car: carOf(d, b.vehicleId) })).filter((r) => r.amount > 0);
   const deposits = withDeposit.filter((r) => r.b.status === 'Ongoing' || r.b.status === 'Confirmed').sort((a, b) => b.amount - a.amount);
   /** finished or cancelled trips whose deposit was never marked returned / kept — to settle (not counted as held) */
-  const unsettled = withDeposit.filter((r) => r.b.status === 'Completed' || r.b.status === 'Cancelled');
+  const unsettled = withDeposit.filter((r) => r.b.status === 'Completed');
   const unpaid = d.companyExpenses.filter((e) => e.status === 'approved');
   return { owners, deposits, unpaid, unsettled };
 }
@@ -225,8 +249,10 @@ export function balanceDetail(d: Books, ledger: LedgerEntry[]) {
   });
   const loose = ledger.filter((e) => e.amount && e.date >= d.from && !(e.accountId && d.accounts.some((a) => a.id === e.accountId)));
   const byKind = new Map<LedgerKind, { kind: LedgerKind; amount: number; count: number }>();
-  loose.forEach((e) => { const k = byKind.get(e.kind) ?? { kind: e.kind, amount: 0, count: 0 }; k.amount += e.amount; k.count++; byKind.set(e.kind, k); });
-  return { accounts, unassigned: [...byKind.values()].sort((a, b) => b.amount - a.amount), looseEntries: loose };
+  // deposits are shown as one figure: received − given back − used for bills = still held
+  const groupOf = (k: LedgerKind): LedgerKind => (k === 'deposit_out' || k === 'deposit_used' ? 'deposit_in' : k);
+  loose.forEach((e) => { const g = groupOf(e.kind); const k = byKind.get(g) ?? { kind: g, amount: 0, count: 0 }; k.amount += e.amount; k.count++; byKind.set(g, k); });
+  return { accounts, unassigned: [...byKind.values()].sort((a, b) => b.amount - a.amount), looseEntries: loose, groupOf };
 }
 
 /** Money to come in: balances on finished trips (aged), agreed credit, and trips on rent */
@@ -294,7 +320,7 @@ export function checks(d: Books, ledger: LedgerEntry[], payoutDue: Date | null) 
   const t = Date.now(), week = 7 * 864e5;
   const out: { level: 'warn' | 'info'; text: string; count: number; bookingIds?: string[] }[] = [];
   const add = (level: 'warn' | 'info', text: string, ids: string[]) => { if (ids.length) out.push({ level, text, count: ids.length, bookingIds: ids }); };
-  add('warn', 'Bank / card payments with no reference number', ledger.filter((e) => e.kind === 'payment' && e.method && e.method !== 'Cash' && !e.ref && e.date >= d.from).map((e) => e.bookingId!).filter(Boolean));
+  add('warn', 'Bank / card payments with no reference number', ledger.filter((e) => e.kind === 'payment' && e.method && e.method !== 'Cash' && e.method !== 'Security deposit' && !e.ref && e.date >= d.from).map((e) => e.bookingId!).filter(Boolean));
   add('warn', 'Finished trips still unpaid after 7 days', d.bookings.filter((b) => b.status === 'Completed' && completedOn(b) >= d.from && bookingDue(b) - (b.badDebt ?? 0) > 0 && t - new Date(completedOn(b)).getTime() > week).map((b) => b.id));
   add('warn', 'Deposits still held more than 7 days after the return', d.bookings.filter((b) => b.status === 'Completed' && depositHeld(b) > 0 && t - new Date(completedOn(b)).getTime() > week).map((b) => b.id));
   add('warn', 'Commission / owner share out of date — fix it in the profit box', staleShares(d).filter((x) => x.check.fixable && (x.b.status !== 'Completed' || completedOn(x.b) >= d.from)).map((x) => x.b.id));
