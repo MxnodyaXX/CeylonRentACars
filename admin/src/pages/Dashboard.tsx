@@ -1,696 +1,330 @@
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+  AlertTriangle, ArrowDownLeft, ArrowUpRight, CalendarDays, Car, CheckCircle2, ChevronRight, Clock, Info, KeyRound, Megaphone, Undo2, Wrench,
+} from 'lucide-react';
+import Header from '../components/layout/Header';
 import PayoutReminder from '../components/ui/PayoutReminder';
-import { useState, useEffect, useMemo } from 'react';
-import { format } from 'date-fns';
-import { useNavigate } from 'react-router-dom';
+import FigureExplain, { type FigureKey } from '../components/ui/FigureExplain';
+import DashboardClassic from './DashboardClassic';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
-import Header from '../components/layout/Header';
-import Modal from '../components/ui/Modal';
-import StatusBadge from '../components/ui/StatusBadge';
-import { shownStatus } from '../lib/bookingRecord';
-import VehicleImage from '../components/ui/VehicleImage';
+import { bookingNo, depositHeld, missingInfo } from '../lib/bookingRecord';
+import { channelOf } from '../lib/channels';
+import { useSettlements } from '../lib/settlements';
+import { useCompanyFinance } from '../lib/companyFinance';
 import {
-  OperationalAlerts, MoneyInsights, VehiclePerformance,
-  DistributionCharts, CustomerInsights,
-} from '../components/dashboard/AnalyticsSection';
-import { vehicleBodyColor } from '../components/ui/CarSVG';
-import {
-  AreaChart, Area, BarChart, Bar,
-  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-} from 'recharts';
-import {
-  Car, CalendarDays, DollarSign, AlertCircle,
-  Users, CheckSquare, UserCircle, MessageSquare,
-  ArrowUpRight, Crown, TrendingUp, Wallet, CreditCard,
-} from 'lucide-react';
-import { Vehicle, Booking } from '../types';
-import { bookingCredit, bookingDue, creditTotals } from '../lib/credit';
-import { vehicleNetRevenue, totalDiscount } from '../lib/revenue';
+  balances, buildLedger, checks, heldForOthers, monthlyTrend, periodFigures, profitRows, receivables, staleShares, utilisation, type Books,
+} from '../lib/ledger';
+import { payoutDate, dueMonth } from '../lib/settlements';
+import type { Booking } from '../types';
 
-function useIsMobile() {
-  const [v, setV] = useState(typeof window !== 'undefined' && window.innerWidth < 640);
-  useEffect(() => {
-    const fn = () => setV(window.innerWidth < 640);
-    window.addEventListener('resize', fn);
-    return () => window.removeEventListener('resize', fn);
-  }, []);
-  return v;
-}
+/*
+ * Dashboard — built around the company's work today and what it really earns:
+ *   Today            pickups, returns, overdue, cars on rent / free / in repair
+ *   Needs attention  every job waiting, each leading to where it's done
+ *   Company (month)  commission earned, cash in, whose money we hold (click a figure: how it's worked out)
+ *   Cars this month  days on rent and what each car earned the company
+ *   Next 7 days      pickups and returns coming up
+ *   Channels         how this month's customers found us
+ * Each job sees its part: Operations (bookings, handovers), Finance (money), Fleet (cars); admins see all.
+ * Owner logins keep their own dashboard (DashboardClassic).
+ */
 
-
-
-/* Podium display order: 2nd · 1st · 3rd */
-const PODIUM = [
-  {
-    rank: 2, h: 88,  medal: '🥈', size: 76,
-    grad: 'linear-gradient(160deg,#A1A1AA 0%,#71717A 100%)',
-    side: '#71717A',
-    shadow: '0 0 0 3px #D4D4D8,0 0 0 6px rgba(255,255,255,0.85),0 14px 32px rgba(0,0,0,0.22)',
-  },
-  {
-    rank: 1, h: 130, medal: '🥇', size: 96,
-    grad: 'linear-gradient(160deg,#E11D2A 0%,#111114 100%)',
-    side: '#0B0B0D',
-    shadow: null,
-  },
-  {
-    rank: 3, h: 68,  medal: '🥉', size: 76,
-    grad: 'linear-gradient(160deg,#A1A1AA 0%,#52525B 100%)',
-    side: '#3F3F46',
-    shadow: '0 0 0 3px #FB923C,0 0 0 6px rgba(255,255,255,0.85),0 14px 32px rgba(0,0,0,0.22)',
-  },
-];
-
-/* Simple CSS cloud shape */
-function CloudShape({ x, y, scale = 1, delay = '0s', duration = '28s' }: {
-  x: number; y: number; scale?: number; delay?: string; duration?: string;
-}) {
-  return (
-    <div style={{
-      position: 'absolute', left: `${x}%`, top: `${y}%`,
-      transformOrigin: 'left top', pointerEvents: 'none', zIndex: 1,
-    }}>
-      <div
-        className="anim-cloud-drift"
-        style={{ '--cd': duration } as React.CSSProperties & Record<string, string>}
-      >
-        <div style={{ position: 'relative', width: 140, height: 55, transform: `scale(${scale})`, transformOrigin: 'left top' }}>
-          <div style={{ position: 'absolute', width: 75, height: 75, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', left: 22, top: -30 }} />
-          <div style={{ position: 'absolute', width: 55, height: 55, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', left: 73, top: -14 }} />
-          <div style={{ position: 'absolute', width: 55, height: 55, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', left: 5,  top: -14 }} />
-          <div style={{ position: 'absolute', width: 140, height: 40, borderRadius: 22, background: 'rgba(255,255,255,0.05)', left: 0,  top: 12  }} />
-        </div>
-      </div>
-    </div>
-  );
-}
+const rs = (n: number) => `${n < 0 ? '− ' : ''}Rs ${Math.abs(Math.round(n)).toLocaleString('en-LK')}`;
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const hm = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`; };
 
 export default function Dashboard() {
-  const isMobile = useIsMobile();
-  const { vehicles, bookings, inquiries, expenses, owners, notifications } = useStore();
-  const { currentUser, isAdmin } = useAuthStore();
-  const navigate  = useNavigate();
-  const [tab,      setTab]      = useState<'weekly' | 'alltime'>('alltime');
-  const [chartTab, setChartTab] = useState<'revenue' | 'bookings' | 'expenses'>('revenue');
-  const [infoModal, setInfoModal] = useState<'outstanding' | 'profit' | null>(null);
+  const { currentUser, isAdmin, can } = useAuthStore();
+  const owner = !isAdmin() && currentUser?.role === 'owner';
+  if (owner) return <DashboardClassic />;
+  return <CompanyDashboard admin={isAdmin()} staff={currentUser?.role === 'staff'} can={can} name={currentUser?.name} />;
+}
 
-  /* scope data to owner when not admin */
-  const isOwnerRole = !isAdmin() && currentUser?.role === 'owner';
-  const myVehicleIdSet = isOwnerRole
-    ? new Set(vehicles.filter((v) => v.ownerId === currentUser?.ownerId).map((v) => v.id))
-    : null;
-  const scopedVehicles = myVehicleIdSet ? vehicles.filter((v) => myVehicleIdSet.has(v.id)) : vehicles;
-  const scopedBookings = myVehicleIdSet ? bookings.filter((b) => myVehicleIdSet.has(b.vehicleId)) : bookings;
-  const scopedExpenses = myVehicleIdSet ? expenses.filter((e) => myVehicleIdSet.has(e.vehicleId)) : expenses;
+function CompanyDashboard({ admin, staff, can, name }: { admin: boolean; staff: boolean; can: (k: never) => boolean; name?: string }) {
+  const may = (k: string) => admin || !staff || (can as (k: string) => boolean)(k);
+  const money = admin || (staff && may('canViewFinance'));
+  const ops = may('canBook') || may('canViewHandovers');
+  const fleet = may('canChangeStatus') || may('canManageBreakdowns') || may('canEditVehicle');
+  const st = useStore();
+  const fin = useCompanyFinance();
+  const settle = useSettlements();
+  const navigate = useNavigate();
+  useEffect(() => { if (money) { fin.refresh(); settle.refresh(); } }, [money]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* derived from scoped data — revenue is NET of discounts everywhere; the
-     gross (before-discount) figure is surfaced separately in the KPI sub-line. */
-  const netRev         = (v: Vehicle) => vehicleNetRevenue(v, scopedBookings);
-  const byRevenue      = [...scopedVehicles].sort((a, b) => netRev(b) - netRev(a));
-  const grossRevenue   = scopedVehicles.reduce((s, v) => s + v.revenue, 0);
-  const totalDiscounts = totalDiscount(scopedBookings);
-  const totalRevenue   = grossRevenue - totalDiscounts;
-  const totalExpenses  = scopedExpenses.reduce((s, e) => s + e.amount, 0);
-  const activeBookings = scopedBookings.filter((b) => b.status === 'Confirmed' || b.status === 'Ongoing');
-  const unread         = notifications.filter((n) => !n.read).length;
-  /* vehicle availability is always company-wide (owners can see fleet status) */
-  const available      = vehicles.filter((v) => v.status === 'Available');
-  const onRent         = vehicles.filter((v) => v.status === 'Ongoing' || v.status === 'Reserved');
-  const underRepair    = vehicles.filter((v) => v.status === 'Maintenance');
-  /* scoped vehicle lists for the fleet columns */
-  const scopedAvailable   = scopedVehicles.filter((v) => v.status === 'Available');
-  const scopedOnRent      = scopedVehicles.filter((v) => v.status === 'Ongoing' || v.status === 'Reserved');
-  const scopedUnderRepair = scopedVehicles.filter((v) => v.status === 'Maintenance');
-  const completedRentals = scopedBookings.filter((b) => b.status === 'Completed').length;
-  const uniqueCustomers  = new Set(scopedBookings.map((b) => b.customerPhone)).size;
+  const today = iso(new Date());
+  const now = hm();
+  const n = new Date();
+  const start = iso(new Date(n.getFullYear(), n.getMonth(), 1));
+  const end = iso(new Date(n.getFullYear(), n.getMonth() + 1, 0));
+  const monthName = n.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const periodText = `1 – ${new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()} ${n.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`;
 
-  /* business KPIs
-     Outstanding = money actually owed: vehicle is out (Ongoing) or rental finished (Completed)
-     and still unpaid. Confirmed bookings haven't started, so their balance is expected future
-     income, not outstanding. */
-  const receivableBookings = scopedBookings.filter((b) => b.status === 'Ongoing' || b.status === 'Completed');
-  /* Exclude bookings already tracked as formal credit — those appear in the Total Credit card.
-     The two cards are additive: Outstanding + Credit.total = all money owed, no double-counting. */
-  // the balance due on the full bill (extra km, charges, deductions, advance) less the part on credit and any bad debt
-  const unpaidOf = (b: Booking) => Math.max(0, bookingDue(b) - bookingCredit(b) - (b.badDebt ?? 0));
-  const outstandingBalance = receivableBookings.reduce((s, b) => s + unpaidOf(b), 0);
-  /* Credit to be received — balances recorded as customer credit dues. */
-  const credit = creditTotals(scopedBookings);
-  const today = new Date();
-  const thisMonthRevenue = scopedBookings
-    .filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })
-    .reduce((s, b) => s + b.totalAmount, 0);
-  const thisMonthExpenses = scopedExpenses
-    .filter((e) => { const d = new Date(e.date); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })
-    .reduce((s, e) => s + e.amount, 0);
-  const monthlyProfit = thisMonthRevenue - thisMonthExpenses;
+  const books: Books = useMemo(() => ({
+    bookings: st.bookings, commissions: st.commissions, expenses: st.expenses, vehicles: st.vehicles, owners: st.owners,
+    settlements: settle.list, accounts: fin.accounts, companyExpenses: fin.expenses, transfers: fin.transfers, settings: fin.settings, from: settle.from,
+  }), [st.bookings, st.commissions, st.expenses, st.vehicles, st.owners, settle.list, settle.from, fin.accounts, fin.expenses, fin.transfers, fin.settings]);
+  const ledger = useMemo(() => buildLedger(books), [books]);
+  const f = useMemo(() => periodFigures(books, ledger, start, end, admin), [books, ledger, start, end, admin]);
+  const bal = useMemo(() => balances(books, ledger), [books, ledger]);
+  const held = useMemo(() => heldForOthers(books), [books]);
+  const rec = useMemo(() => receivables(books), [books]);
+  const trend = useMemo(() => monthlyTrend(books, ledger, 6, admin), [books, ledger, admin]);
+  const own = bal.total - held.owed - held.deposits - held.unpaidExpenses;
+  const [ex, setEx] = useState<FigureKey | null>(null);
 
-  /* breakdown rows for the info popups */
-  const outstandingRows = receivableBookings
-    .map((b) => ({ ...b, balance: unpaidOf(b) }))
-    .filter((b) => b.balance > 0)
-    .sort((a, b) => b.balance - a.balance);
-  const monthRevenueRows = scopedBookings
-    .filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })
-    .sort((a, b) => b.totalAmount - a.totalAmount);
-  const monthExpenseRows = scopedExpenses
-    .filter((e) => { const d = new Date(e.date); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })
-    .sort((a, b) => b.amount - a.amount);
-  const vehicleLabel = (vehicleId: string) => {
-    const v = vehicles.find((x) => x.id === vehicleId);
-    return v ? `${v.brand} ${v.model} · ${v.vehicleNumber}` : '—';
-  };
+  // ── today ──
+  const live = st.bookings.filter((b) => b.status !== 'Cancelled');
+  const car = (id: string) => { const v = st.vehicles.find((x) => x.id === id); return v ? `${v.model} ${v.vehicleNumber}` : 'Vehicle removed'; };
+  const pickups = live.filter((b) => b.status === 'Confirmed' && b.startDate === today);
+  const returns = live.filter((b) => b.status === 'Ongoing' && b.endDate === today && (b.endTime ?? '23:59') >= now);
+  const overdue = live.filter((b) => b.status === 'Ongoing' && (b.endDate < today || (b.endDate === today && (b.endTime ?? '23:59') < now)));
+  const lateStart = live.filter((b) => b.status === 'Confirmed' && b.startDate < today);
+  const onRent = st.vehicles.filter((v) => v.status === 'Ongoing');
+  const free = st.vehicles.filter((v) => v.status === 'Available');
+  const repair = st.vehicles.filter((v) => v.status === 'Maintenance');
+  const daysLate = (b: Booking) => Math.max(0, Math.round((new Date(`${today}T00:00:00`).getTime() - new Date(`${b.endDate}T00:00:00`).getTime()) / 864e5));
 
-  /* last-5-months chart data — scoped to owner when applicable */
-  const chartData = useMemo(() => {
-    const months = Array.from({ length: 5 }, (_, i) => {
-      const d = new Date();
-      d.setDate(1);
-      d.setMonth(d.getMonth() - (4 - i));
-      return { year: d.getFullYear(), month: d.getMonth(), label: format(d, 'MMM') };
-    });
-    return months.map(({ year, month, label }) => {
-      const rev = scopedBookings
-        .filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === year && d.getMonth() === month; })
-        .reduce((s, b) => s + b.totalAmount, 0);
-      const cnt = scopedBookings.filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === year && d.getMonth() === month; }).length;
-      const exp = scopedExpenses
-        .filter((e) => { const d = new Date(e.date); return d.getFullYear() === year && d.getMonth() === month; })
-        .reduce((s, e) => s + e.amount, 0);
-      return { month: label, revenue: rev, bookings: cnt, expenses: exp };
-    });
-  }, [scopedBookings, scopedExpenses]);
+  // ── commission on trips still running (what the company will earn when they finish) ──
+  const onRentCommission = live.filter((b) => b.status === 'Ongoing')
+    .reduce((s, b) => s + st.commissions.filter((c) => c.bookingId === b.id).reduce((t, c) => t + (c.commissionAmount ?? 0), 0), 0);
 
-  const chartRange = (() => {
-    const first = new Date(); first.setDate(1); first.setMonth(first.getMonth() - 4);
-    return `${format(first, 'MMM')} – ${format(today, 'MMM yyyy')}`;
-  })();
+  // ── needs attention ──
+  const attention: { level: 'red' | 'amber' | 'grey'; text: ReactNode; to: string; count?: number }[] = [];
+  if (ops) {
+    overdue.forEach((b) => attention.push({ level: 'red', to: `/bookings/${b.id}`, text: <><b>{car(b.vehicleId)}</b> is {daysLate(b) ? `${daysLate(b)} day${daysLate(b) === 1 ? '' : 's'}` : 'hours'} overdue — {b.customerName} ({bookingNo(b)})</> }));
+    lateStart.forEach((b) => attention.push({ level: 'amber', to: `/bookings/${b.id}`, text: <><b>{b.customerName}</b> was due to pick up {car(b.vehicleId)} on {new Date(`${b.startDate}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} — start the rental or cancel</> }));
+    const soon = live.filter((b) => b.status === 'Confirmed' && b.startDate <= iso(new Date(Date.now() + 2 * 864e5)) && missingInfo(b).some((m) => m.critical));
+    if (soon.length) attention.push({ level: 'amber', to: '/incomplete', count: soon.length, text: <>Pickups in the next 2 days missing details needed before handover (NIC, licence…)</> });
+  }
+  if (money) {
+    const unpaid = rec.done.filter((x) => x.days > 7);
+    if (unpaid.length) attention.push({ level: 'red', to: '/accounts', count: unpaid.length, text: <>Finished trips still unpaid after 7 days — {rs(unpaid.reduce((s, x) => s + x.due, 0))}</> });
+    const deps = live.filter((b) => b.status === 'Completed' && depositHeld(b) > 0);
+    if (deps.length) attention.push({ level: 'amber', to: '/accounts', count: deps.length, text: <>Deposits still held on finished trips — {rs(deps.reduce((s, b) => s + depositHeld(b), 0))} to return or settle</> });
+    const stale = staleShares(books).filter((x) => x.check.fixable);
+    if (stale.length) attention.push({ level: 'amber', to: '/accounts', count: stale.length, text: <>Commission / owner share out of date — fix in Company accounts → Other rental income</> });
+    checks(books, ledger, payoutDate(dueMonth(), settle.payoutDay))
+      .filter((c) => !/unpaid after 7 days|Deposits still held|out of date/i.test(c.text))
+      .forEach((c) => attention.push({ level: c.level === 'warn' ? 'amber' : 'grey', to: /expenses with no/i.test(c.text) ? '/expenses' : /payouts/i.test(c.text) ? '/settlements' : /no company commission/i.test(c.text) ? '/settlements' : '/accounts', count: c.count, text: c.text }));
+  }
+  if (fleet && repair.length) attention.push({ level: 'grey', to: '/vehicles', count: repair.length, text: <>Cars in repair / not in action: {repair.map((v) => v.vehicleNumber).join(', ')}</> });
+  const order = { red: 0, amber: 1, grey: 2 };
+  attention.sort((a, b) => order[a.level] - order[b.level]);
 
-  /* podium: 2nd · 1st · 3rd */
-  const podiumVehicles = [byRevenue[1], byRevenue[0], byRevenue[2]].filter(Boolean);
+  // ── cars this month ──
+  const util = useMemo(() => utilisation(books, start, end), [books, start, end]);
+  const earned = useMemo(() => {
+    const m = new Map<string, { company: number; owner: number }>();
+    profitRows(books, start, end).forEach((r) => { const e = m.get(r.b.vehicleId) ?? { company: 0, owner: 0 }; e.company += r.commission + r.other; e.owner += r.owners; m.set(r.b.vehicleId, e); });
+    return m;
+  }, [books, start, end]);
+  const cars = st.vehicles.map((v) => {
+    const u = util.find((x) => x.name === `${v.brand} ${v.model} ${v.vehicleNumber}`);
+    return { v, pct: u?.pct ?? 0, days: u?.days ?? 0, ...(earned.get(v.id) ?? { company: 0, owner: 0 }) };
+  }).sort((a, b) => (money ? b.company - a.company : 0) || b.pct - a.pct);
+  const monthDay = n.getDate();
 
+  // ── next 7 days ──
+  const week = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(Date.now() + i * 864e5), k = iso(d);
+    return {
+      k, label: i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
+      out: live.filter((b) => b.status === 'Confirmed' && b.startDate === k),
+      back: live.filter((b) => (b.status === 'Ongoing' || b.status === 'Confirmed') && b.endDate === k),
+    };
+  });
 
-  const kpiCards = [
-    { label: 'Total Fleet',     value: scopedVehicles.length,                     sub: `${scopedAvailable.length} available`, icon: <Car size={18}/>,          color: 'bg-navy-700',    path: '/vehicles'      },
-    { label: 'Active Bookings', value: activeBookings.length,                     sub: 'confirmed + ongoing',                icon: <CalendarDays size={18}/>, color: 'bg-navy-700',    path: '/bookings'      },
-    { label: 'Net Revenue',     value: `Rs ${totalRevenue.toLocaleString()}`,   sub: totalDiscounts > 0 ? `Gross Rs ${grossRevenue.toLocaleString()} · −Rs ${totalDiscounts.toLocaleString()} disc.` : `Gross Rs ${grossRevenue.toLocaleString()}`, icon: <DollarSign size={18}/>, color: 'bg-emerald-500', path: '/commissions' },
-    { label: 'Alerts',          value: unread,                                    sub: 'unread notifications',               icon: <AlertCircle size={18}/>,  color: 'bg-amber-500',   path: '/notifications' },
-  ];
+  // ── how this month's customers found us ──
+  const channels = useMemo(() => {
+    const m = new Map<string, number>();
+    live.filter((b) => (b.createdAt ?? '').slice(0, 10) >= start).forEach((b) => { const c = channelOf(b) ?? 'Not recorded'; m.set(c, (m.get(c) ?? 0) + 1); });
+    const total = [...m.values()].reduce((s, x) => s + x, 0);
+    return { total, rows: [...m.entries()].map(([k, c]) => ({ k, c, pct: total ? Math.round((c / total) * 100) : 0 })).sort((a, b) => b.c - a.c) };
+  }, [live, start]);
 
-  const fleetPills = [
-    { label: 'Available',    count: available.length,   color: '#10B981', bg: 'rgba(16,185,129,0.09)',  border: 'rgba(16,185,129,0.18)' },
-    { label: 'On Rent',      count: onRent.length,      color: '#3B82F6', bg: 'rgba(59,130,246,0.09)',  border: 'rgba(59,130,246,0.18)' },
-    { label: 'Under Repair', count: underRepair.length, color: '#EF4444', bg: 'rgba(239,68,68,0.09)',   border: 'rgba(239,68,68,0.18)'  },
-  ];
+  const hello = n.getHours() < 12 ? 'Good morning' : n.getHours() < 17 ? 'Good afternoon' : 'Good evening';
 
   return (
-    <div className="space-y-5">
-      <Header title="Dashboard" subtitle="Fleet performance at a glance" />
+    <div>
+      <Header title="Dashboard" subtitle={`${hello}${name ? `, ${name.split(' ')[0]}` : ''} — ${n.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}`} />
+      {money && <FigureExplain k={ex} onClose={() => setEx(null)} books={books} ledger={ledger} f={f} start={start} end={end} periodText={periodText} admin={admin} />}
       <PayoutReminder />
 
-      {/* ── KPI Row ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpiCards.map(({ label, value, sub, icon, color, path }, idx) => (
-          <div key={label} className="anim-fade-up" style={{ animationDelay: `${idx * 80}ms` }}>
-            <KpiCard label={label} value={value} sub={sub} icon={icon} color={color}
-              onClick={() => navigate(path)} />
-          </div>
-        ))}
-      </div>
+      {/* ── 1 · today ── */}
+      <section className="grid grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+        <TodayTile icon={<KeyRound size={16} />} label="Pickups today" value={pickups.length} sub={pickups.map((b) => car(b.vehicleId)).join(', ') || 'none'} onClick={() => navigate('/handovers')} />
+        <TodayTile icon={<Undo2 size={16} />} label="Returns today" value={returns.length} sub={returns.map((b) => car(b.vehicleId)).join(', ') || 'none'} onClick={() => navigate('/handovers')} />
+        <TodayTile icon={<Clock size={16} />} label="Overdue" value={overdue.length} tone={overdue.length ? 'red' : undefined}
+          sub={overdue.length ? overdue.map((b) => car(b.vehicleId)).join(', ') : 'all on time'} onClick={() => overdue.length === 1 ? navigate(`/bookings/${overdue[0].id}`) : navigate('/bookings')} />
+        <TodayTile icon={<Car size={16} />} label="On rent" value={onRent.length} sub={`of ${st.vehicles.length} cars`} tone="blue" onClick={() => navigate('/bookings')} />
+        <TodayTile icon={<CheckCircle2 size={16} />} label="Available" value={free.length} sub="ready to rent" tone="green" onClick={() => navigate('/vehicles')} />
+        <TodayTile icon={<Wrench size={16} />} label="In repair" value={repair.length} sub={repair.map((v) => v.vehicleNumber).join(', ') || 'none'} tone={repair.length ? 'amber' : undefined} onClick={() => navigate('/vehicles')} />
+      </section>
 
-      {/* ── Operational Alerts (overdue · upcoming · insurance) ───── */}
-      <OperationalAlerts vehicles={scopedVehicles} bookings={scopedBookings} />
-
-      {/* ── Business KPI Row ─────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <button
-          type="button"
-          onClick={() => setInfoModal('outstanding')}
-          className="card flex items-start gap-4 anim-fade-up text-left w-full hover:shadow-card-hover transition-shadow cursor-pointer"
-          style={{ animationDelay: '80ms' }}
-        >
-          <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white flex-shrink-0 bg-red-500">
-            <Wallet size={20} />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-navy-400 font-medium">Outstanding Balances</p>
-              <ArrowUpRight size={14} className="text-navy-300" />
+      <div className="grid gap-5 lg:grid-cols-5 items-start mb-5">
+        {/* ── 2 · company this month ── */}
+        {money && (
+          <section className="card lg:col-span-3">
+            <div className="flex items-center justify-between mb-1">
+              <p className="section-title">Company · {monthName}</p>
+              <Link to="/accounts" className="text-xs text-navy-500 hover:text-navy-800 inline-flex items-center gap-0.5">Company accounts <ChevronRight size={13} /></Link>
             </div>
-            <p className={`text-2xl font-black leading-tight ${outstandingBalance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-              Rs {outstandingBalance.toLocaleString()}
-            </p>
-            <p className="text-xs text-navy-400 mt-0.5">{outstandingRows.length} unpaid booking{outstandingRows.length !== 1 ? 's' : ''} · excludes tracked credits</p>
-          </div>
-        </button>
-        <button
-          type="button"
-          onClick={() => setInfoModal('profit')}
-          className="card flex items-start gap-4 anim-fade-up text-left w-full hover:shadow-card-hover transition-shadow cursor-pointer"
-          style={{ animationDelay: '160ms' }}
-        >
-          <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-white flex-shrink-0 ${monthlyProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`}>
-            <TrendingUp size={20} />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-navy-400 font-medium">This Month's Profit</p>
-              <ArrowUpRight size={14} className="text-navy-300" />
-            </div>
-            <p className={`text-2xl font-black leading-tight ${monthlyProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              Rs {monthlyProfit.toLocaleString()}
-            </p>
-            <p className="text-xs text-navy-400 mt-0.5">Revenue Rs {thisMonthRevenue.toLocaleString()} − Expenses Rs {thisMonthExpenses.toLocaleString()}</p>
-          </div>
-        </button>
-      </div>
-
-      {/* ── Total Credit To Be Received ──────────────────────────── */}
-      <div
-        className="card anim-fade-up cursor-pointer hover:shadow-card-hover transition-shadow"
-        style={{ animationDelay: '170ms' }}
-        onClick={() => navigate('/credit')}
-        title="View and manage outstanding customer credits"
-      >
-        <div className="flex items-start gap-4">
-          <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white flex-shrink-0 bg-amber-500">
-            <CreditCard size={20} />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-navy-400 font-medium">Total Credit To Be Received</p>
-              <ArrowUpRight size={14} className="text-navy-300" />
-            </div>
-            <p className={`text-2xl font-black leading-tight ${credit.total > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-              Rs {credit.total.toLocaleString()}
-            </p>
-            <div className="flex gap-4 mt-1.5">
-              <span className="text-xs text-navy-500"><span className="font-semibold text-navy-700">{credit.customers}</span> customer{credit.customers !== 1 ? 's' : ''} with credit</span>
-              <span className="text-xs text-navy-500"><span className="font-semibold text-navy-700">{credit.bookings}</span> pending booking{credit.bookings !== 1 ? 's' : ''}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Money Insights (growth · deposits · bad debt) ────────── */}
-      <MoneyInsights bookings={scopedBookings} />
-
-      {/* ── Leaderboard ─────────────────────────────────────────── */}
-      <div className="card anim-fade-up" style={{ animationDelay: '180ms' }}>
-
-        {/* Header + tabs */}
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-navy-700 flex items-center justify-center">
-              <Crown size={15} className="text-amber-400" />
-            </div>
-            <p className="section-title">Leaderboard</p>
-          </div>
-          <div className="flex bg-navy-50 rounded-xl p-0.5 gap-0.5">
-            {(['weekly', 'alltime'] as const).map((t) => (
-              <button key={t} onClick={() => setTab(t)}
-                className={`px-3 py-1 rounded-[10px] text-xs font-semibold transition-all ${
-                  tab === t ? 'bg-white text-navy-800 shadow-sm' : 'text-navy-400 hover:text-navy-600'
-                }`}
-              >
-                {t === 'weekly' ? 'Weekly' : 'All Time'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Sky arena ── */}
-        <div
-          className="relative overflow-hidden flex items-end justify-center gap-6 sm:gap-10 pt-10 pb-0"
-          style={{
-            background: 'linear-gradient(165deg,#0B0B0D 0%,#111114 55%,#111114 100%)',
-            borderRadius: 20,
-            minHeight: 420,
-          }}
-        >
-          {/* Faint moonlit clouds */}
-          <CloudShape x={4}  y={2}  scale={1.05} duration="32s" />
-          <CloudShape x={64} y={1}  scale={1.2}  duration="26s" />
-          <CloudShape x={30} y={0}  scale={0.8}  duration="38s" />
-          <CloudShape x={14} y={26} scale={0.7}  duration="24s" />
-          <CloudShape x={58} y={24} scale={0.75} duration="30s" />
-
-          {/* Centre blue glow */}
-          <div style={{
-            position:'absolute', top:'8%', left:'50%', transform:'translateX(-50%)',
-            width:320, height:320, borderRadius:'50%',
-            background:'radial-gradient(circle,rgba(75,123,229,0.18) 0%,transparent 68%)',
-            pointerEvents:'none',
-          }} />
-
-          {/* Star dots */}
-          {[[8,14],[18,32],[82,16],[76,38],[50,7],[38,48],[66,24],[14,52],[90,42],[55,35]].map(([x,y],i) => (
-            <div key={`s${i}`} style={{
-              position:'absolute', left:`${x}%`, top:`${y}%`,
-              width: i%3===0?3:2, height: i%3===0?3:2, borderRadius:'50%',
-              background:`rgba(255,255,255,${0.18+(i%3)*0.14})`,
-              pointerEvents:'none',
-            }} />
-          ))}
-
-
-          {byRevenue.length === 0 && (
-            <p className="text-navy-500 text-sm py-16">No vehicles yet.</p>
-          )}
-
-          {/* Podium figures */}
-          {podiumVehicles.map((v, i) => {
-            const cfg       = PODIUM[i];
-            const ps        = isMobile ? 0.72 : 1;
-            const rankLabel = cfg.rank === 1 ? '1st' : cfg.rank === 2 ? '2nd' : '3rd';
-            return (
-              <div key={v.id} className="flex flex-col items-center anim-scale-pop"
-                style={{ animationDelay: `${i * 110 + 160}ms` }}
-              >
-                {/* Medal */}
-                <span className={`anim-medal-float ${isMobile ? 'text-xl' : 'text-3xl'}`}
-                  style={{ animationDelay: `${i * 0.38}s`, filter: 'drop-shadow(0 3px 6px rgba(0,0,0,0.22))', marginBottom: 10, display: 'block' }}
-                >
-                  {cfg.medal}
-                </span>
-
-                {/* Car photo */}
-                <div
-                  className={cfg.rank === 1 ? 'anim-pulse-gold' : ''}
-                  style={{
-                    width: Math.round(cfg.size * ps), height: Math.round(cfg.size * ps),
-                    borderRadius: '50%', overflow: 'hidden',
-                    marginBottom: 10, background: '#fff', flexShrink: 0,
-                    ...(cfg.shadow ? { boxShadow: cfg.shadow } : {}),
-                  }}
-                >
-                  <VehicleImage brand={v.brand} model={v.model} color={v.color} imageUrl={v.imageUrl}
-                    circle className="w-full h-full" />
-                </div>
-
-                {/* Name + revenue (on sky — dark text) */}
-                <div className="text-center mb-2" style={{ maxWidth: Math.round(104 * ps) }}>
-                  <p style={{ color: 'white', fontWeight: 800, fontSize: isMobile ? 10 : 13, lineHeight: 1.2, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }} className="truncate">
-                    {v.brand} {v.model}
-                  </p>
-                  <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, fontWeight: 600, marginTop: 1 }}>
-                    Rs {netRev(v).toLocaleString()}
-                  </p>
-                </div>
-
-                {/* 3D Platform */}
-                <div>
-                  <div style={{
-                    width: Math.round(96 * ps), height: Math.round(cfg.h * ps),
-                    background: cfg.grad,
-                    borderRadius: '12px 12px 0 0',
-                    display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', gap: 2,
-                    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22),inset -1px 0 0 rgba(0,0,0,0.09)',
-                  }}>
-                    <span style={{ color:'rgba(255,255,255,0.42)', fontSize:9, fontWeight:700, letterSpacing:3, textTransform:'uppercase' }}>
-                      {rankLabel}
-                    </span>
-                    <span style={{ color:'white', fontWeight:900, fontSize: Math.round(40 * ps), lineHeight:1, textShadow:'0 2px 10px rgba(0,0,0,0.4)' }}>
-                      {cfg.rank}
-                    </span>
-                  </div>
-                  <div style={{ width:Math.round(96 * ps), height:10, background:cfg.side, borderRadius:'0 0 8px 8px', boxShadow:'0 10px 28px rgba(0,0,0,0.25)' }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Fleet summary pills */}
-        <div className="grid grid-cols-3 gap-3 mt-5">
-          {fleetPills.map(({ label, count, color, bg, border }, idx) => (
-            <div key={label} className="anim-fade-up" style={{ animationDelay: `${idx * 80 + 420}ms` }}>
-              <div style={{
-                background: bg, border: `1px solid ${border}`,
-                borderRadius: 16, padding: '18px 12px', textAlign: 'center',
-                boxShadow: '0 2px 10px rgba(0,0,0,0.05),inset 0 1px 0 rgba(255,255,255,0.85)',
-              }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:6, marginBottom:8 }}>
-                  <div style={{ width:8, height:8, borderRadius:'50%', background:color }} />
-                  <span style={{ fontSize:11, fontWeight:600, color:'#71717A' }}>{label}</span>
-                </div>
-                <p style={{ fontSize:32, fontWeight:900, color:'#111114', lineHeight:1 }}>{count}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* ── Vehicle Performance (utilization · profit per vehicle) ── */}
-      <VehiclePerformance vehicles={scopedVehicles} bookings={scopedBookings} expenses={scopedExpenses} />
-
-      {/* ── Charts Card ─────────────────────────────────────────── */}
-      <div className="card anim-fade-up" style={{ animationDelay: '320ms' }}>
-        <div className="flex items-center justify-between mb-5 gap-2">
-          <div className="flex gap-2 overflow-x-auto no-scrollbar">
-            {(['revenue', 'bookings', 'expenses'] as const).map((t) => (
-              <button key={t} onClick={() => setChartTab(t)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors flex-shrink-0 ${
-                  chartTab === t ? 'bg-navy-700 text-white' : 'bg-navy-50 text-navy-500 hover:bg-navy-100'
-                }`}
-              >
-                {t === 'revenue' ? 'Revenue' : t === 'bookings' ? 'Booking Overview' : 'Expenses'}
-              </button>
-            ))}
-          </div>
-          <span className="text-xs text-navy-400 flex-shrink-0 hidden sm:block">{chartRange}</span>
-        </div>
-
-        <ResponsiveContainer width="100%" height={200}>
-          {chartTab === 'revenue' ? (
-            <AreaChart data={chartData} margin={{ top:0,right:0,left:-20,bottom:0 }}>
-              <defs>
-                <linearGradient id="gRev" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#E11D2A" stopOpacity={0.22}/>
-                  <stop offset="95%" stopColor="#E11D2A" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F4F4F5" vertical={false}/>
-              <XAxis dataKey="month" tick={{ fontSize:11,fill:'#71717A' }} axisLine={false} tickLine={false}/>
-              <YAxis tick={{ fontSize:11,fill:'#71717A' }} axisLine={false} tickLine={false} tickFormatter={(v)=>`${v/1000}k`}/>
-              <Tooltip formatter={(v:number) => [`Rs ${v.toLocaleString()}`,'Revenue']} contentStyle={{ borderRadius:10,border:'none',fontSize:12 }}/>
-              <Area type="monotone" dataKey="revenue" stroke="#E11D2A" strokeWidth={2.5} fill="url(#gRev)" dot={false}/>
-            </AreaChart>
-          ) : chartTab === 'bookings' ? (
-            <BarChart data={chartData} margin={{ top:0,right:0,left:-20,bottom:0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F4F4F5" vertical={false}/>
-              <XAxis dataKey="month" tick={{ fontSize:11,fill:'#71717A' }} axisLine={false} tickLine={false}/>
-              <YAxis tick={{ fontSize:11,fill:'#71717A' }} axisLine={false} tickLine={false}/>
-              <Tooltip formatter={(v:number) => [v,'Bookings']} contentStyle={{ borderRadius:10,border:'none',fontSize:12 }}/>
-              <Bar dataKey="bookings" fill="#E11D2A" radius={[6,6,0,0]}/>
-            </BarChart>
-          ) : (
-            <AreaChart data={chartData} margin={{ top:0,right:0,left:-20,bottom:0 }}>
-              <defs>
-                <linearGradient id="gExp" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="#EF4444" stopOpacity={0.2}/>
-                  <stop offset="95%" stopColor="#EF4444" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F4F4F5" vertical={false}/>
-              <XAxis dataKey="month" tick={{ fontSize:11,fill:'#71717A' }} axisLine={false} tickLine={false}/>
-              <YAxis tick={{ fontSize:11,fill:'#71717A' }} axisLine={false} tickLine={false} tickFormatter={(v)=>`${v/1000}k`}/>
-              <Tooltip formatter={(v:number) => [`Rs ${v.toLocaleString()}`,'Expenses']} contentStyle={{ borderRadius:10,border:'none',fontSize:12 }}/>
-              <Area type="monotone" dataKey="expenses" stroke="#EF4444" strokeWidth={2.5} fill="url(#gExp)" dot={false}/>
-            </AreaChart>
-          )}
-        </ResponsiveContainer>
-      </div>
-
-      {/* ── Distribution (lead sources · expenses · payment mix) ──── */}
-      <DistributionCharts bookings={scopedBookings} expenses={scopedExpenses} />
-
-      {/* ── Fleet Section ────────────────────────────────────────── */}
-      <div className="card overflow-hidden p-0 anim-fade-up" style={{ animationDelay: '420ms' }}>
-        <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-navy-50">
-          <FleetColumn title="Available Vehicles"           vehicles={scopedAvailable}   bookings={[]}            expenseMap={{}}                           accent="emerald" onViewAll={() => navigate('/vehicles')} />
-          <FleetColumn title="Vehicles On Rent"             vehicles={scopedOnRent}      bookings={activeBookings} expenseMap={{}}                           accent="blue"    onViewAll={() => navigate('/bookings')} />
-          <FleetColumn title="Under Repair / Not In Action" vehicles={scopedUnderRepair} bookings={[]}            expenseMap={buildExpenseMap(scopedExpenses)} accent="red"  onViewAll={() => navigate('/expenses')} />
-        </div>
-
-        {/* Stats bar */}
-        <div className={`border-t border-navy-50 grid grid-cols-2 ${isOwnerRole ? 'sm:grid-cols-4' : 'sm:grid-cols-5'} divide-x divide-navy-50 bg-navy-50/40`}>
-          {([
-            !isOwnerRole ? { icon:<UserCircle size={18}/>,   label:'Total Owners',      value:owners.length,          sub:'+1 this month'               } : null,
-            { icon:<Car size={18}/>,           label:'Total Vehicles',    value:scopedVehicles.length,  sub:`${scopedAvailable.length} available`  },
-            { icon:<CheckSquare size={18}/>,   label:'Completed Rentals', value:completedRentals,       sub:'+3 this month'               },
-            { icon:<Users size={18}/>,         label:'Total Customers',   value:uniqueCustomers,        sub:`+${uniqueCustomers} tracked` },
-            { icon:<MessageSquare size={18}/>, label:'Total Inquiries',   value:inquiries.length,       sub:'+2 this month'               },
-          ].filter(Boolean) as { icon:React.ReactNode; label:string; value:number; sub:string }[]).map(({ icon, label, value, sub }) => (
-            <div key={label} className="flex items-center gap-3 px-4 py-4">
-              <div className="text-navy-300 flex-shrink-0">{icon}</div>
+            <p className="text-xs text-navy-400 mb-3">Click any figure to see how it's worked out</p>
+            <div className="grid sm:grid-cols-2 gap-x-6">
               <div>
-                <p className="text-navy-800 font-black text-xl leading-tight">{value}</p>
-                <p className="text-navy-500 text-xs mt-0.5">{label}</p>
-                <p className="text-emerald-600 text-xs font-medium">{sub}</p>
+                <Fig label="Commission earned" sub={`${f.bookings} rental${f.bookings === 1 ? '' : 's'} completed this month`} v={f.commission} big onClick={() => setEx('commission')} />
+                <Fig label="+ on trips still running" sub="earned when they finish" v={onRentCommission} muted onClick={() => navigate('/bookings')} />
+                <Fig label={f.profit >= 0 ? 'Company profit' : 'Company loss'} sub="after the company's own costs" v={f.profit} onClick={() => setEx('profit')} />
+                <Fig label="Collected from customers" sub="cash in this month" v={f.collected} onClick={() => setEx('collected')} />
+                <Fig label="To come in" sub={`${rec.done.length} finished trip${rec.done.length === 1 ? '' : 's'} unpaid + on rent now`} v={rec.total + rec.onRentTotal} icon={<ArrowDownLeft size={13} className="text-emerald-600" />} onClick={() => navigate('/accounts')} />
+              </div>
+              <div className="sm:border-l sm:border-navy-100 sm:pl-6">
+                <Fig label="Money in our accounts" sub={books.accounts.length ? `${books.accounts.length} accounts` : 'no accounts set up yet'} v={bal.total} onClick={() => setEx('cash')} />
+                <Fig label="Owed to owners" sub="their share, not paid yet" v={-held.owed} tone="amber" icon={<ArrowUpRight size={13} className="text-amber-600" />} onClick={() => setEx('owed')} />
+                <Fig label="Customer deposits held" sub="to be returned" v={-held.deposits} tone="amber" onClick={() => setEx('deposits')} />
+                {held.unpaidExpenses > 0 && <Fig label="Approved bills to pay" v={-held.unpaidExpenses} tone="amber" onClick={() => setEx('unpaid')} />}
+                <Fig label="Company's own money" sub="what is really the company's" v={own} big tone={own >= 0 ? 'green' : 'red'} onClick={() => setEx('own')} />
               </div>
             </div>
-          ))}
-        </div>
+            {trend.some((t) => t.income || t.costs) && (
+              <div className="mt-4 pt-3 border-t border-navy-100">
+                <p className="text-xs text-navy-400 mb-1">Rental profit by month</p>
+                <ResponsiveContainer width="100%" height={90}>
+                  <BarChart data={trend} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#71717A' }} axisLine={false} tickLine={false} />
+                    <Tooltip formatter={(v: number) => rs(v)} cursor={{ fill: 'rgba(0,0,0,0.04)' }} />
+                    <Bar dataKey="income" name="Rental profit" fill="#111114" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ── 3 · needs attention ── */}
+        <section className={`card ${money ? 'lg:col-span-2' : 'lg:col-span-5'}`}>
+          <p className="section-title flex items-center gap-1.5 mb-3"><AlertTriangle size={15} className="text-amber-600" /> Needs attention</p>
+          {attention.length === 0 && <p className="text-sm text-emerald-700 flex items-center gap-1.5 py-2"><CheckCircle2 size={15} /> Nothing waiting — all clear.</p>}
+          <div className="space-y-1.5 max-h-[26rem] overflow-y-auto">
+            {attention.map((a, i) => (
+              <Link key={i} to={a.to} className={`flex items-start gap-2 rounded-xl px-3 py-2 text-sm transition-colors ${a.level === 'red' ? 'bg-red-50 text-red-900 hover:bg-red-100' : a.level === 'amber' ? 'bg-amber-50 text-amber-900 hover:bg-amber-100' : 'bg-navy-50/70 text-navy-700 hover:bg-navy-100/70'}`}>
+                <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${a.level === 'red' ? 'bg-red-600' : a.level === 'amber' ? 'bg-amber-500' : 'bg-navy-400'}`} />
+                <span className="flex-1 min-w-0">{a.text}</span>
+                {a.count !== undefined && <b className="tabular-nums">{a.count}</b>}
+                <ChevronRight size={14} className="mt-0.5 flex-shrink-0 opacity-50" />
+              </Link>
+            ))}
+          </div>
+        </section>
       </div>
 
-      {/* ── Customer Insights (averages · conversion · top customers) ── */}
-      <CustomerInsights bookings={scopedBookings} inquiries={inquiries} showInquiries={!isOwnerRole} />
+      <div className="grid gap-5 lg:grid-cols-5 items-start mb-5">
+        {/* ── 4 · next 7 days ── */}
+        {ops && (
+          <section className="card lg:col-span-2">
+            <p className="section-title flex items-center gap-1.5 mb-3"><CalendarDays size={15} /> Next 7 days</p>
+            <div className="space-y-2">
+              {week.map((d) => (
+                <div key={d.k} className="flex gap-3">
+                  <p className={`w-20 flex-shrink-0 text-xs pt-1 ${d.k === today ? 'font-bold text-navy-900' : 'text-navy-500'}`}>{d.label}</p>
+                  <div className="flex-1 min-w-0 flex flex-wrap gap-1.5">
+                    {!d.out.length && !d.back.length && <span className="text-xs text-navy-300 pt-1">—</span>}
+                    {d.out.map((b) => <Chip key={`o${b.id}`} to={`/bookings/${b.id}`} kind="out" text={`${car(b.vehicleId)} · ${b.customerName.split(' ')[0]}${b.startTime ? ` ${b.startTime}` : ''}`} />)}
+                    {d.back.map((b) => <Chip key={`b${b.id}`} to={`/bookings/${b.id}`} kind="back" text={`${car(b.vehicleId)} · ${b.customerName.split(' ')[0]}${b.endTime ? ` ${b.endTime}` : ''}`} />)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-navy-400 mt-3"><span className="text-emerald-700 font-semibold">↑ pickup</span> · <span className="text-sky-700 font-semibold">↓ return</span></p>
+          </section>
+        )}
 
-      {/* ── Outstanding Balances breakdown ── */}
-      <Modal open={infoModal === 'outstanding'} onClose={() => setInfoModal(null)} title="Outstanding Balances" width="max-w-lg">
-        <p className="text-xs text-navy-500 mb-4">
-          Money actually owed: <span className="font-semibold text-navy-700">Total − Paid</span> for bookings that are
-          <span className="font-semibold text-navy-700"> ongoing</span> (vehicle is out) or <span className="font-semibold text-navy-700">completed</span> (rental finished).
-          Confirmed bookings haven't started yet, so their balance is upcoming income — not outstanding.
-        </p>
-        {outstandingRows.length === 0 ? (
-          <div className="text-center py-8 text-navy-400 text-sm">No outstanding balances. Every ongoing and completed rental is fully paid.</div>
-        ) : (
-          <div className="space-y-2">
-            {outstandingRows.map((b) => (
-              <div key={b.id} className="flex items-center gap-3 bg-navy-50/60 rounded-xl px-3 py-2.5">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-navy-800 truncate">{b.customerName}</p>
-                  <p className="text-[11px] text-navy-400 truncate">{vehicleLabel(b.vehicleId)}</p>
-                  <p className="text-[11px] text-navy-400">Total Rs {b.totalAmount.toLocaleString()} · Paid Rs {b.paidAmount.toLocaleString()}</p>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="text-sm font-bold text-red-600">Rs {b.balance.toLocaleString()}</p>
-                  <StatusBadge status={shownStatus(b)} />
-                </div>
+        {/* ── 5 · cars this month ── */}
+        <section className={`card ${ops ? 'lg:col-span-3' : 'lg:col-span-5'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <p className="section-title flex items-center gap-1.5"><Car size={15} /> Cars this month</p>
+            <span className="text-[11px] text-navy-400">days on rent so far ({monthDay} day{monthDay === 1 ? '' : 's'}){money ? ' · company earned on completed trips' : ''}</span>
+          </div>
+          <div className="space-y-2 max-h-[26rem] overflow-y-auto pr-1">
+            {cars.map(({ v, pct, days, company }) => {
+              const idle = v.status === 'Available' && pct < 25;
+              return (
+                <Link key={v.id} to="/vehicles" className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[13rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-lg px-1 py-1 hover:bg-navy-50/70">
+                  <span className="text-sm text-navy-800 truncate">{v.model} <span className="text-navy-400">{v.vehicleNumber}</span>
+                    {v.status === 'Maintenance' && <span className="ml-1 text-[10px] font-semibold text-red-600">repair</span>}
+                    {idle && <span className="ml-1 text-[10px] font-semibold text-amber-600">idle</span>}</span>
+                  <span className="order-3 sm:order-none col-span-2 sm:col-span-1 flex items-center gap-2">
+                    <span className="flex-1 h-2 rounded-full bg-navy-100 overflow-hidden"><span className={`block h-full rounded-full ${pct >= 60 ? 'bg-emerald-500' : pct >= 25 ? 'bg-sky-500' : 'bg-amber-400'}`} style={{ width: `${pct}%` }} /></span>
+                    <span className="text-[11px] text-navy-500 tabular-nums w-16 text-right">{pct}% · {days}d</span>
+                  </span>
+                  <span className="text-sm font-semibold tabular-nums text-right text-navy-900">{money ? rs(company) : ''}</span>
+                </Link>
+              );
+            })}
+          </div>
+          {cars.some((c) => c.v.status === 'Available' && c.pct < 25) && (
+            <p className="text-[11px] text-navy-400 mt-3 flex gap-1"><Info size={12} className="mt-0.5 flex-shrink-0" /> "Idle" cars have been on rent less than a quarter of the month — worth a price check or a word with the owner.</p>
+          )}
+        </section>
+      </div>
+
+      {/* ── 6 · how customers found us ── */}
+      {(money || ops) && channels.total > 0 && (
+        <section className="card mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <p className="section-title flex items-center gap-1.5"><Megaphone size={15} /> How this month's customers found us</p>
+            <span className="text-[11px] text-navy-400">{channels.total} booking{channels.total === 1 ? '' : 's'} made in {n.toLocaleDateString('en-GB', { month: 'long' })}</span>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {channels.rows.map((c) => (
+              <div key={c.k} className="flex items-center gap-2 text-sm">
+                <span className="w-28 truncate text-navy-700">{c.k}</span>
+                <span className="flex-1 h-2 rounded-full bg-navy-100 overflow-hidden"><span className="block h-full rounded-full bg-navy-800" style={{ width: `${c.pct}%` }} /></span>
+                <span className="w-16 text-right text-xs text-navy-500 tabular-nums">{c.c} · {c.pct}%</span>
               </div>
             ))}
-            <div className="flex items-center justify-between border-t border-navy-100 pt-3 mt-3">
-              <span className="text-sm font-semibold text-navy-700">Total Outstanding</span>
-              <span className="text-base font-black text-red-600">Rs {outstandingBalance.toLocaleString()}</span>
-            </div>
           </div>
-        )}
-      </Modal>
+        </section>
+      )}
 
-      {/* ── This Month's Profit breakdown ── */}
-      <Modal open={infoModal === 'profit'} onClose={() => setInfoModal(null)} title={`This Month's Profit · ${format(today, 'MMMM yyyy')}`} width="max-w-lg">
-        <p className="text-xs text-navy-500 mb-4">
-          <span className="font-semibold text-navy-700">Revenue − Expenses</span> for bookings created and expenses dated in {format(today, 'MMMM yyyy')}. Cancelled bookings are excluded.
-        </p>
-
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="bg-emerald-50 rounded-xl p-3 text-center">
-            <p className="text-[11px] text-emerald-500 font-medium">Revenue</p>
-            <p className="text-lg font-black text-emerald-700">Rs {thisMonthRevenue.toLocaleString()}</p>
-            <p className="text-[10px] text-emerald-500">{monthRevenueRows.length} bookings</p>
-          </div>
-          <div className="bg-red-50 rounded-xl p-3 text-center">
-            <p className="text-[11px] text-red-400 font-medium">Expenses</p>
-            <p className="text-lg font-black text-red-600">Rs {thisMonthExpenses.toLocaleString()}</p>
-            <p className="text-[10px] text-red-400">{monthExpenseRows.length} entries</p>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between bg-navy-50/60 rounded-xl px-4 py-3 mb-4">
-          <span className="text-sm font-semibold text-navy-700">Net Profit</span>
-          <span className={`text-base font-black ${monthlyProfit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>Rs {monthlyProfit.toLocaleString()}</span>
-        </div>
-
-        {monthRevenueRows.length > 0 && (
-          <>
-            <p className="text-xs font-semibold text-navy-600 mb-2">Revenue — bookings</p>
-            <div className="space-y-1.5 mb-4">
-              {monthRevenueRows.map((b) => (
-                <div key={b.id} className="flex items-center justify-between gap-3 text-xs px-3 py-2 bg-navy-50/60 rounded-lg">
-                  <span className="text-navy-700 truncate">{b.customerName} <span className="text-navy-400">· {vehicleLabel(b.vehicleId)}</span></span>
-                  <span className="font-semibold text-emerald-700 flex-shrink-0">Rs {b.totalAmount.toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {monthExpenseRows.length > 0 && (
-          <>
-            <p className="text-xs font-semibold text-navy-600 mb-2">Expenses</p>
-            <div className="space-y-1.5">
-              {monthExpenseRows.map((e) => (
-                <div key={e.id} className="flex items-center justify-between gap-3 text-xs px-3 py-2 bg-navy-50/60 rounded-lg">
-                  <span className="text-navy-700 truncate">{e.category}<span className="text-navy-400"> · {vehicleLabel(e.vehicleId)}</span></span>
-                  <span className="font-semibold text-red-600 flex-shrink-0">Rs {e.amount.toLocaleString()}</span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </Modal>
+      {!money && staff && (
+        <p className="text-xs text-navy-400">Payments and company figures are shown to Finance and admins.</p>
+      )}
     </div>
   );
 }
 
-/* ── Sub-components ──────────────────────────────────────────── */
-
-function buildExpenseMap(expenses: { vehicleId:string; category:string; date:string }[]) {
-  const map: Record<string,string> = {};
-  expenses.forEach((e) => { if (!map[e.vehicleId]) map[e.vehicleId] = `${e.category} · ${e.date}`; });
-  return map;
-}
-
-function FleetColumn({ title, vehicles, bookings, expenseMap, accent, onViewAll }: {
-  title:string; vehicles:Vehicle[]; bookings:Booking[];
-  expenseMap:Record<string,string>; accent:'emerald'|'blue'|'red'; onViewAll:()=>void;
-}) {
-  const titleColor = { emerald:'text-emerald-600', blue:'text-blue-600', red:'text-red-600' }[accent];
+function TodayTile({ icon, label, value, sub, tone, onClick }: { icon: ReactNode; label: string; value: number; sub: string; tone?: 'red' | 'blue' | 'green' | 'amber'; onClick: () => void }) {
+  const cls = tone === 'red' ? 'bg-red-600 text-white' : tone === 'blue' ? 'bg-navy-800 text-white' : tone === 'green' ? 'bg-emerald-50 text-emerald-900' : tone === 'amber' ? 'bg-amber-50 text-amber-900' : 'bg-white text-navy-900';
   return (
-    <div className="p-5">
-      <div className="flex items-center justify-between mb-4">
-        <p className={`text-xs font-bold uppercase tracking-widest ${titleColor}`}>{title}</p>
-        <button onClick={onViewAll} className="text-xs text-navy-400 hover:text-navy-700 flex items-center gap-1">
-          View All <ArrowUpRight size={11}/>
-        </button>
-      </div>
-      <div className="space-y-2.5">
-        {vehicles.slice(0,4).map((v) => {
-          const booking = bookings.find((b) => b.vehicleId === v.id);
-          const expNote = expenseMap[v.id];
-          return (
-            <div key={v.id} className="flex items-center gap-3 bg-navy-50/60 hover:bg-navy-50 rounded-xl p-3 transition-colors">
-              <div className="w-14 h-9 rounded-lg overflow-hidden flex-shrink-0 bg-white border border-navy-50">
-                <VehicleImage brand={v.brand} model={v.model} color={v.color} imageUrl={v.imageUrl} bodyColor={vehicleBodyColor(v.color)} className="w-full h-full" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-navy-800 truncate">{v.brand} {v.model}</p>
-                <p className="text-xs text-navy-400 truncate">{v.vehicleNumber}</p>
-                {booking  && <p className="text-xs text-navy-500 truncate">{booking.customerName} · {booking.startDate}…</p>}
-                {!booking && expNote && <p className="text-xs text-navy-400 truncate">{expNote}</p>}
-              </div>
-              <StatusBadge status={v.status} />
-            </div>
-          );
-        })}
-        {vehicles.length === 0 && <p className="text-navy-400 text-xs text-center py-6">None at the moment.</p>}
-        {vehicles.length > 4 && (
-          <button onClick={onViewAll} className="w-full text-xs text-navy-400 hover:text-navy-600 py-1.5 text-center">
-            +{vehicles.length - 4} more
-          </button>
-        )}
-      </div>
-    </div>
+    <button type="button" onClick={onClick} className={`rounded-2xl px-3.5 py-3 text-left shadow-card transition hover:shadow-card-hover ${cls}`}>
+      <p className="text-[11px] opacity-75 flex items-center gap-1.5">{icon}{label}</p>
+      <p className="text-2xl font-black leading-tight mt-0.5 tabular-nums">{value}</p>
+      <p className="text-[11px] opacity-70 truncate" title={sub}>{sub}</p>
+    </button>
   );
 }
 
-function KpiCard({ label, value, sub, icon, color, onClick }: {
-  label:string; value:string|number; sub:string;
-  icon:React.ReactNode; color:string; onClick?:()=>void;
-}) {
+function Fig({ label, sub, v, big, muted, tone, icon, onClick }: { label: string; sub?: string; v: number; big?: boolean; muted?: boolean; tone?: 'amber' | 'green' | 'red'; icon?: ReactNode; onClick: () => void }) {
+  const color = tone === 'amber' ? 'text-amber-700' : tone === 'green' ? 'text-emerald-700' : tone === 'red' ? 'text-red-600' : muted ? 'text-navy-500' : 'text-navy-900';
   return (
-    <div onClick={onClick}
-      className="card flex items-start gap-3 cursor-pointer hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-200"
-    >
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white flex-shrink-0 ${color}`}>{icon}</div>
-      <div>
-        <p className="text-xs text-navy-400 font-medium">{label}</p>
-        <p className="text-xl font-bold text-navy-800 leading-tight">{value}</p>
-        <p className="text-xs text-navy-400 mt-0.5">{sub}</p>
-      </div>
-    </div>
+    <button type="button" onClick={onClick} title="How it's worked out" className="group w-full text-left flex items-start justify-between gap-3 py-1.5 px-1.5 -mx-1.5 rounded-lg hover:bg-navy-50/80">
+      <span className="min-w-0">
+        <span className={`flex items-center gap-1 ${big ? 'text-sm font-semibold text-navy-900' : 'text-sm text-navy-700'}`}>{icon}{label}<Info size={11} className="text-navy-300 group-hover:text-navy-600" /></span>
+        {sub && <span className="block text-[11px] text-navy-400">{sub}</span>}
+      </span>
+      <span className={`whitespace-nowrap tabular-nums font-bold ${big ? 'text-lg' : 'text-sm'} ${color}`}>{rs(v)}</span>
+    </button>
+  );
+}
+
+function Chip({ to, kind, text }: { to: string; kind: 'out' | 'back'; text: string }) {
+  return (
+    <Link to={to} className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium ${kind === 'out' ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100' : 'bg-sky-50 text-sky-800 hover:bg-sky-100'}`}>
+      <span className="font-bold">{kind === 'out' ? '↑' : '↓'}</span>{text}
+    </Link>
   );
 }

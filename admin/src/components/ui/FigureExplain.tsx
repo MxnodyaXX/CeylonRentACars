@@ -138,15 +138,23 @@ function RentalCard({ r, highlight }: { r: ProfitRow; highlight: [string, number
   const comOff = !!c && Math.abs(c.savedCommission - c.commission) >= 0.5;
   const ownOff = !!c && Math.abs(c.savedOwner - c.owner) >= 0.5;
   const fix = () => { useStore.getState().refreshPayout(r.b.id); toast.success('Worked out again', `${r.b.customerName}: the commission and the owner's share now follow the final bill.`); };
+  // an accordion: the rental on one line, its working when opened (out-of-date ones start open)
+  const [open, setOpen] = useState(!!c?.stale);
+  const openBooking = useContext(OpenBooking);
   return (
-    <div className={`rounded-xl border p-3 ${c?.stale ? 'border-red-200 bg-red-50/30' : 'border-navy-100'}`}>
-      <div className="flex items-start justify-between gap-3 mb-1">
-        <Opener id={r.b.id} className="min-w-0 rounded px-1 -mx-1">
-          <p className="text-sm"><b className="text-navy-900">{r.b.customerName}</b> <span className="text-navy-400">· {bookingNo(r.b)}</span></p>
-          <p className="text-xs text-navy-400">{r.car} · completed {fmtDay(r.on)}</p>
-        </Opener>
-        <div className="text-right"><p className="text-[11px] text-navy-400">{highlight[0]}</p><p className={`text-sm font-bold tabular-nums ${highlight[1] < 0 ? 'text-red-600' : 'text-navy-900'}`}>{rs(highlight[1])}</p></div>
-      </div>
+    <div className={`rounded-xl border ${c?.stale ? 'border-red-200 bg-red-50/30' : 'border-navy-100'}`}>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+              className="w-full text-left flex items-start justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-navy-50/60">
+        <div className="min-w-0 flex items-start gap-1.5">
+          <ChevronDown size={15} className={`mt-0.5 flex-shrink-0 text-navy-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <div className="min-w-0">
+            <p className="text-sm truncate"><b className="text-navy-900">{r.b.customerName}</b> <span className="text-navy-400">· {bookingNo(r.b)}</span>{c?.stale && <span className="ml-1.5 text-[11px] font-semibold text-red-600">out of date</span>}</p>
+            <p className="text-xs text-navy-400 truncate">{r.car} · completed {fmtDay(r.on)} · bill {rs(r.bill)}</p>
+          </div>
+        </div>
+        <div className="text-right flex-shrink-0"><p className="text-[11px] text-navy-400">{highlight[0]}</p><p className={`text-sm font-bold tabular-nums ${highlight[1] < 0 ? 'text-red-600' : 'text-navy-900'}`}>{rs(highlight[1])}</p></div>
+      </button>
+      {open && <div className="px-3 pb-3">
       <div className="border-t border-navy-100 pt-1">
         <Step n="1" label="Customer's final bill" v={r.bill}
           how={r.charges || r.discount ? <>rent {rs(r.rent)}{r.charges ? <> + charges {rs(r.charges)}</> : null}{r.discount ? <> − discount {rs(r.discount)}</> : null}</> : 'the rent'} />
@@ -158,6 +166,7 @@ function RentalCard({ r, highlight }: { r: ProfitRow; highlight: [string, number
         <Step n="=" label="Company keeps" how="bill − owner's share" v={keeps} bold red={keeps < 0} />
         {Math.abs(keeps - r.commission) >= 0.5 && <p className="text-xs text-navy-500 pl-5">= commission {rs(r.commission)} {keeps - r.commission >= 0 ? '+' : '−'} {rs(Math.abs(keeps - r.commission))} "other income"</p>}
       </div>
+      <button type="button" onClick={() => openBooking(r.b.id)} className="mt-1 text-xs text-navy-500 hover:text-navy-800 underline">View the booking's payments</button>
       {c?.stale && (
         <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-800">
           <p className="flex gap-1.5"><AlertTriangle size={13} className="flex-shrink-0 mt-0.5" /><span>
@@ -168,6 +177,7 @@ function RentalCard({ r, highlight }: { r: ProfitRow; highlight: [string, number
             : <p className="mt-1 font-semibold">{c.why === 'settled' ? 'Already settled with the owner. Add an adjustment on Owner payouts instead.' : 'The payout is marked paid by hand. Reopen it on the booking first, then work it out again.'}</p>}
         </div>
       )}
+      </div>}
     </div>
   );
 }

@@ -127,10 +127,16 @@ export default function ApplyCommission() {
                         <span className="block text-amber-800">
                           {reason === 'paid-by-hand' && `Its owner payout (${rs(c!.ownerPayout)}) is marked as already paid — so it is left alone. If the owner hasn't actually been paid, include it.`}
                           {reason === 'settled' && 'Already paid to the owner in a monthly payout — left as it is.'}
-                          {reason === 'no-line' && 'It has no owner payout line — open the booking and check it.'}
+                          {reason === 'no-line' && "It has no owner payout line (it wasn't saved) — create it first, then add the commission."}
                           {reason === 'exchanged' && 'The car was exchanged mid-trip — each car has its own part, so add the commission by hand on the payout lines.'}
                         </span>
                       </span>
+                      {reason === 'no-line' && (
+                        <button type="button" className="btn-secondary !py-1 text-xs"
+                                onClick={() => { const e = useStore.getState().createPayoutLine(b.id); if (e) toast.error('Not created', e); else toast.success('Payout line created', 'It now shows in the list above.'); }}>
+                          Create the payout line
+                        </button>
+                      )}
                       {reason === 'paid-by-hand' && (
                         <button type="button" className="btn-secondary !py-1 text-xs"
                                 onClick={() => { if (confirm(`Has the owner NOT been paid ${rs(c!.ownerPayout)} for ${b.customerName}'s booking yet? It moves into the list above.`)) reopenPayout(c!.id); }}>

@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { BookingCard } from '../components/ui/BookingCard';
+import BookingDetailsModal from '../components/ui/BookingDetailsModal';
+import HandoverModal from '../components/ui/HandoverModal';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { sendRentalSummary } from '../utils/email';
@@ -66,6 +69,11 @@ const emptyHandover = (type: 'delivery' | 'return', bookingId: string, vehicleId
 export default function Handovers() {
   const { bookings, vehicles, owners, commissions, handovers, addHandover, updateBooking, updateCommission, saveDraft, discardDraft, drafts } = useStore();
   const { currentUser, isAdmin, can } = useAuthStore();
+  // the booking's own handover flow (saved on the booking) and its details, opened from the tiles
+  const mayHandover = currentUser?.role !== 'staff' || can('canViewHandovers');
+  const [viewing, setViewing] = useState<string | null>(null);
+  const [flow, setFlow] = useState<{ booking: Booking; kind: 'pickup' | 'return' } | null>(null);
+  const navigate = useNavigate();
 
   const [tab,              setTab]              = useState<'active' | 'records'>('active');
   const [modal,            setModal]            = useState<'delivery' | 'return' | 'view' | 'payment' | null>(null);
@@ -225,142 +233,43 @@ export default function Handovers() {
 
       {/* ── Active Bookings ── */}
       {tab === 'active' && (
-        <div className="space-y-4">
+        <div className="space-y-6">
           {activeBookings.length === 0 && (
             <div className="card text-center py-16 text-navy-400 text-sm">
               No active bookings requiring handover.
             </div>
           )}
-          {activeBookings.map((b) => {
-            const vehicle  = vehicles.find((v) => v.id === b.vehicleId);
-            const { delivery, return: ret } = getHandovers(b.id);
-            const balance  = bookingDue(b);
-
+          {/* grouped: cars on rent now (returns due soonest first), then confirmed pickups (soonest first).
+              The buttons use the booking's own handover (Hand over & start · Complete rental) — what they record
+              is saved on the booking, so a handed-over car shows here only for its return. */}
+          {([
+            ['Ongoing', 'On rent now — waiting for return', 'bg-amber-500', (a: Booking, c: Booking) => a.endDate.localeCompare(c.endDate)],
+            ['Confirmed', 'Confirmed — waiting for pickup', 'bg-blue-500', (a: Booking, c: Booking) => a.startDate.localeCompare(c.startDate)],
+          ] as const).map(([status, title, dot, sort]) => {
+            const group = activeBookings.filter((x) => x.status === status).sort(sort);
+            if (!group.length) return null;
             return (
-              <div key={b.id} className="card">
-                {/* Booking header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-navy-50 flex items-center justify-center flex-shrink-0">
-                      <Car size={18} className="text-navy-600" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-navy-800">{b.customerName}</p>
-                      <p className="text-xs text-navy-400">{b.customerPhone}</p>
-                    </div>
-                  </div>
-                  <StatusBadge status={shownStatus(b)} size="md" />
+              <section key={status}>
+                <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-navy-500 px-1 mb-2.5">
+                  <span className={`w-2 h-2 rounded-full ${dot}`} />{title} <span className="text-navy-400 font-medium normal-case tracking-normal">· {group.length}</span>
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 min-[1900px]:grid-cols-4 gap-3">
+                  {group.map((b) => {
+                    const vehicle = vehicles.find((v) => v.id === b.vehicleId);
+                    return (
+                      <BookingCard key={b.id} booking={b} vehicle={vehicle} owner={owners.find((o) => o.id === vehicle?.ownerId)}
+                        onOpen={() => setViewing(b.id)}
+                        onStart={mayHandover ? () => setFlow({ booking: b, kind: 'pickup' }) : undefined}
+                        onComplete={mayHandover ? () => setFlow({ booking: b, kind: 'return' }) : undefined} />
+                    );
+                  })}
                 </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                  <InfoChip label="Vehicle" value={`${vehicle?.brand} ${vehicle?.model}`} />
-                  <InfoChip label="Reg No." value={vehicle?.vehicleNumber ?? '—'} />
-                  <InfoChip label="From"    value={b.startDate} />
-                  <InfoChip label="To"      value={b.endDate} />
-                </div>
-
-                {/* Handover timeline */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Delivery */}
-                  <div className={`rounded-xl p-4 border-2 ${delivery ? 'border-emerald-200 bg-emerald-50/50' : 'border-dashed border-navy-200 bg-navy-50/40'}`}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <Truck size={15} className={delivery ? 'text-emerald-600' : 'text-navy-400'} />
-                      <p className={`text-xs font-semibold uppercase tracking-wide ${delivery ? 'text-emerald-700' : 'text-navy-500'}`}>
-                        Vehicle Delivery
-                      </p>
-                      {delivery && <CheckCircle2 size={14} className="text-emerald-500 ml-auto" />}
-                    </div>
-
-                    {delivery ? (
-                      <div className="space-y-1.5">
-                        <HandoverDetail icon={MapPin}  value={delivery.location} />
-                        <HandoverDetail icon={Clock}   value={delivery.dateTime.replace('T', ' ')} />
-                        <HandoverDetail icon={Gauge}   value={delivery.mileage ? `${delivery.mileage.toLocaleString()} km` : 'Not recorded'} />
-                        <HandoverDetail icon={Fuel}    value={delivery.fuelLevel}
-                          className={FUEL_COLOR[delivery.fuelLevel as FuelLevel] ?? ''} />
-                        {delivery.notes && (
-                          <HandoverDetail icon={FileText} value={delivery.notes} />
-                        )}
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="text-xs text-navy-400 mb-3">Not recorded yet</p>
-                        {(isAdmin() || (currentUser?.role === 'owner' && can('canBook'))) && (
-                          <button
-                            onClick={() => openDelivery(b)}
-                            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-navy-700 text-white hover:bg-navy-800 transition-colors"
-                          >
-                            <Truck size={13} />
-                            Record Delivery
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Return */}
-                  <div className={`rounded-xl p-4 border-2 ${ret ? 'border-blue-200 bg-blue-50/50' : delivery ? 'border-dashed border-amber-300 bg-amber-50/30' : 'border-dashed border-navy-100 bg-navy-50/20 opacity-50'}`}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <RotateCcw size={15} className={ret ? 'text-blue-600' : delivery ? 'text-amber-500' : 'text-navy-300'} />
-                      <p className={`text-xs font-semibold uppercase tracking-wide ${ret ? 'text-blue-700' : delivery ? 'text-amber-600' : 'text-navy-300'}`}>
-                        Vehicle Return
-                      </p>
-                      {ret && <CheckCircle2 size={14} className="text-blue-500 ml-auto" />}
-                    </div>
-
-                    {ret ? (
-                      <div className="space-y-1.5">
-                        <HandoverDetail icon={MapPin}  value={ret.location} />
-                        <HandoverDetail icon={Clock}   value={ret.dateTime.replace('T', ' ')} />
-                        <HandoverDetail icon={Gauge}   value={ret.mileage ? `${ret.mileage.toLocaleString()} km` : 'Not recorded'} />
-                        <HandoverDetail icon={Fuel}    value={ret.fuelLevel}
-                          className={FUEL_COLOR[ret.fuelLevel as FuelLevel] ?? ''} />
-                        {(ret.extraKm ?? 0) > 0 && (
-                          <div className="flex items-center gap-2 bg-amber-50 rounded-lg px-2.5 py-1.5 mt-2">
-                            <AlertTriangle size={12} className="text-amber-500 flex-shrink-0" />
-                            <p className="text-xs text-amber-700">
-                              +{ret.extraKm} km · Rs {ret.extraKmCharge?.toLocaleString()}
-                            </p>
-                          </div>
-                        )}
-                        {ret.finalAmount && (
-                          <div className="mt-2 pt-2 border-t border-blue-100 flex justify-between">
-                            <span className="text-xs text-blue-600">Final Amount</span>
-                            <span className="text-xs font-bold text-blue-800">Rs {ret.finalAmount.toLocaleString()}</span>
-                          </div>
-                        )}
-                        {ret.notes && <HandoverDetail icon={FileText} value={ret.notes} />}
-                      </div>
-                    ) : delivery ? (
-                      <div>
-                        <p className="text-xs text-navy-400 mb-3">Awaiting customer return</p>
-                        {(isAdmin() || (currentUser?.role === 'owner' && can('canBook'))) && (
-                          <button
-                            onClick={() => openReturn(b)}
-                            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-amber-500 text-white hover:bg-amber-600 transition-colors"
-                          >
-                            <RotateCcw size={13} />
-                            Record Return
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-navy-300">Record delivery first</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Amount footer */}
-                <div className="flex items-center justify-between mt-4 pt-3 border-t border-navy-50 text-xs">
-                  <div className="flex gap-4">
-                    <span className="text-navy-400">Total: <span className="font-semibold text-navy-700">Rs {b.totalAmount.toLocaleString()}</span></span>
-                    <span className="text-navy-400">Paid: <span className="font-semibold text-emerald-700">Rs {b.paidAmount.toLocaleString()}</span></span>
-                    {balance > 0 && <span className="text-red-600">Balance: <span className="font-semibold">Rs {balance.toLocaleString()}</span></span>}
-                  </div>
-                </div>
-              </div>
+              </section>
             );
           })}
+          {viewing && <BookingDetailsModal bookingId={viewing} onClose={() => setViewing(null)}
+            onEdit={(x) => navigate(`/bookings/${x.id}`)} onCancel={(x) => navigate(`/bookings/${x.id}`)} />}
+          {flow && <HandoverModal booking={flow.booking} kind={flow.kind} onClose={() => setFlow(null)} />}
         </div>
       )}
 

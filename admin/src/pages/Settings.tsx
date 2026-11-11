@@ -18,6 +18,8 @@ import { supabaseEnabled } from '../lib/supabase';
 import LocationInput from '../components/ui/LocationInput';
 import { sendSms } from '../lib/sms';
 import type { Owner } from '../types';
+import { RECORDS_FROM, setShowingOlder, showingOlder } from '../lib/recordsFrom';
+import { Archive } from 'lucide-react';
 
 // ─── OTP helpers ────────────────────────────────────────────────────────────
 
@@ -394,6 +396,8 @@ export default function Settings() {
               </div>
             </button>
           )}
+
+          {admin && supabaseEnabled && <OlderRecordsCard />}
         </div>
       </section>
 
@@ -494,6 +498,34 @@ export default function Settings() {
           onCreated={() => setSuccessId(setupOwner.id)}
         />
       )}
+    </div>
+  );
+}
+
+/** Records before 1 Oct 2026 are hidden (not deleted) — an admin can show them again in this browser */
+function OlderRecordsCard() {
+  const [on, setOn] = useState(showingOlder());
+  const [busy, setBusy] = useState(false);
+  const since = new Date(`${RECORDS_FROM}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const flip = async () => {
+    setBusy(true);
+    setShowingOlder(!on); setOn(!on);
+    await useStore.getState().loadAll();
+    setBusy(false);
+  };
+  return (
+    <div className="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-card border border-gray-100">
+      <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${on ? 'bg-amber-500' : 'bg-navy-400'}`}>
+        <Archive size={20} className="text-white" />
+      </div>
+      <div className="min-w-0">
+        <p className="font-semibold text-navy-800 text-sm">Records before {since}</p>
+        <p className="text-xs text-navy-400 mt-1 leading-relaxed">
+          {on ? 'Showing them now (this browser only) — every page and total includes the older records.'
+              : 'Hidden — not deleted. Pages and totals use records from ' + since + ' only.'}</p>
+        <button type="button" disabled={busy} onClick={flip} className="mt-2 text-xs font-semibold underline text-navy-700 hover:text-navy-900 disabled:opacity-50">
+          {busy ? 'Loading…' : on ? 'Hide them again' : 'Show them for now'}</button>
+      </div>
     </div>
   );
 }

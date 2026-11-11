@@ -771,6 +771,8 @@ export interface AppState {
   deleteBooking: (id: string) => void;
   /** Commission + owner's share worked out again on the final bill (after a charge is added or removed) */
   refreshPayout: (bookingId: string) => void;
+  /** a booking whose owner payout line never got saved: create it from the booking (as a new booking would) */
+  createPayoutLine: (bookingId: string) => string | null;
   /** A payout line marked Paid by hand but never actually paid: back to Pending so the monthly payout includes it */
   reopenPayout: (id: string) => void;
   /** Merge referrer spellings into one name on every booking and payout line (admin) — returns how many were changed */

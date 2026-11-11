@@ -29,6 +29,7 @@ import { useAuthStore } from './useAuthStore';
 import cab1234Img from '../data/CAB-1234.png';
 import { METER_LABEL, kmWithMeter, meterOf } from '../lib/tripKm';
 import { bookingCredit } from '../lib/credit';
+import { withoutOlder } from '../lib/recordsFrom';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const now = () => new Date().toISOString();
@@ -98,12 +99,14 @@ export const useStore = create<AppState>()(
           const timeoutP = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('Database load timed out')), timeoutMs),
           );
-          const data = await Promise.race([dbFetchAll(), timeoutP]);
+          // records before 1 Oct 2026 are left out (not deleted) — with the totals worked out from them (lib/recordsFrom.ts)
+          const raw = await Promise.race([dbFetchAll(), timeoutP]);
+          const { hiddenCount: _hidden, ...data } = withoutOlder(raw);
           set((s) => {
             // Keep locally-added bookings that haven't made it to Supabase yet (e.g. DB
             // insert still in-flight, or it failed silently). They stay visible to the user
             // and are re-attempted on the next explicit save.
-            const dbIds = new Set(data.bookings.map((b) => b.id));
+            const dbIds = new Set(raw.bookings.map((b) => b.id));   // every booking in the database, shown or not
             const pending = s.bookings.filter((b) => !dbIds.has(b.id));
             return { ...data, bookings: [...data.bookings, ...pending], loaded: true };
           });
@@ -1092,6 +1095,29 @@ export const useStore = create<AppState>()(
 
       // The commission and the owner's share follow the final bill (rent + charges − discount):
       // worked out again when a charge is added or removed — until the owner is paid.
+      createPayoutLine: (id) => {
+        const st = get();
+        const b = st.bookings.find((x) => x.id === id);
+        if (!b) return 'Booking not found.';
+        if (b.status === 'Cancelled') return 'The booking is cancelled.';
+        if (b.exchanges?.length) return 'The car was exchanged — its payout lines are made per car.';
+        if (mainCommission(st.commissions, b)) return 'It already has an owner payout line.';
+        const v = st.vehicles.find((x) => x.id === b.vehicleId);
+        if (!v?.ownerId) return 'The car has no owner set.';
+        const base = b.companyShareType ? shareBaseOf(b) : b.totalAmount;
+        const row: Commission = {
+          id: uid(), bookingId: b.id, vehicleId: b.vehicleId, ownerId: v.ownerId, referral: b.referral ?? 'Direct',
+          totalIncome: base, commissionRate: b.companyShareType === 'percent' || b.companyShareType === 'percent_min' ? b.companyShareValue ?? 0 : 0,
+          commissionAmount: companyShareOf(b, base), ownerPayout: legsOf(b)[0].payout, coordinatorFee: b.referralFee ?? 0,
+          status: 'Pending', createdAt: now(), note: 'Payout line created later — it was missing on the booking',
+        };
+        const owner = st.owners.find((o) => o.id === v.ownerId);
+        const ownerU = owner ? { totalEarnings: owner.totalEarnings + row.ownerPayout, pendingPayout: owner.pendingPayout + row.ownerPayout } : null;
+        set((s) => ({ commissions: [...s.commissions, row], owners: ownerU ? s.owners.map((o) => (o.id === owner!.id ? { ...o, ...ownerU } : o)) : s.owners }));
+        sync(() => db.insertCommission(row));
+        if (ownerU) sync(() => db.updateOwner(owner!.id, ownerU));
+        return null;
+      },
       refreshPayout: (id) => {
         const st = get();
         const b = st.bookings.find((x) => x.id === id);

@@ -131,7 +131,39 @@ function inOrder<T>(key: string, run: () => PromiseLike<T>): Promise<T> {
 async function withExt(core: PromiseLike<{ error: unknown }>, id: string, ext: Record<string, unknown>) {
   const a = await core
   if (a.error || !Object.keys(ext).length) return a
-  return await supabase.from('bookings').update(ext).eq('id', id)
+  return await updateExt(id, ext)
+}
+
+/**
+ * The newer booking columns are written together. A database that hasn't run fix-missing-columns.sql may lack
+ * one of them — then only THAT column is left out (and named in a warning); the rest (checklists with the km
+ * readings, charges, payments, history…) is still saved, and a manual booking's save chain carries on.
+ */
+async function updateExt(id: string, ext: Record<string, unknown>) {
+  let rest = { ...ext }
+  const missing: string[] = []
+  for (let i = 0; i < 25; i++) {
+    const r = await supabase.from('bookings').update(rest).eq('id', id)
+    const m = r.error && /Could not find the '([a-z0-9_]+)' column/i.exec((r.error as { message?: string }).message ?? '')
+    if (!m || !(m[1] in rest)) {
+      if (missing.length) warnMissing(missing)
+      return r
+    }
+    missing.push(m[1])
+    const { [m[1]]: _drop, ...others } = rest
+    rest = others
+    if (!Object.keys(rest).length) { warnMissing(missing); return { ...r, error: null } }
+  }
+  return { error: null }
+}
+const warned = new Set<string>()
+function warnMissing(cols: string[]) {
+  const fresh = cols.filter((c) => !warned.has(c))
+  if (!fresh.length) return
+  fresh.forEach((c) => warned.add(c))
+  console.warn('[db] bookings is missing columns:', fresh.join(', '))
+  import('../store/useToast').then(({ toast }) => toast.error('Some booking details were not saved',
+    `The database is missing: ${fresh.join(', ')}. Run admin/supabase/fix-missing-columns.sql in Supabase, then save again.`)).catch(() => undefined)
 }
 
 function bFromDb(r: Record<string, unknown>): Booking {
@@ -579,7 +611,7 @@ export const db = {
     const ext = bookingExtRow(u)
     return inOrder(`bookings:${id}`, () => Object.keys(row).length
       ? withExt(supabase.from('bookings').update(row).eq('id', id), id, ext)
-      : supabase.from('bookings').update(ext).eq('id', id))
+      : updateExt(id, ext))
   },
 
   // ── Inquiries ─────────────────────────────────────────────────────────────

@@ -849,7 +849,12 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
               return Math.abs(commissionPayout - (base - co - fee - adj)) < 1 && (co || fee || adj) ? (
                 <span className="block text-xs font-normal text-navy-400">{rs(base)} {b.companyShareType ? 'final bill income' : 'rental'}{co ? ` − ${rs(co)} company` : ''}{fee ? ` − ${rs(fee)} referral fee` : ''}{adj ? ` − ${rs(adj)} owner's deductions` : ''}</span>
               ) : null;
-            })()}</> : undefined} />
+            })()}</> : !b.exchanges?.length && b.status !== 'Cancelled' && canPay ? (
+              <span className="block"><span className="block text-xs font-normal text-red-600">No owner payout line — it wasn't saved</span>
+                <button type="button" className="btn-secondary !py-1 text-xs mt-1"
+                        onClick={() => { const e = useStore.getState().createPayoutLine(b.id); if (e) toast.error('Not created', e); else toast.success('Payout line created', "The owner's share is now on this booking."); }}>
+                  Create the payout line</button></span>
+            ) : undefined} />
           <KV k="Payment method" v={b.paymentMethod} />
         </div>
       </Card>

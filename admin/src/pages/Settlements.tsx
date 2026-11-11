@@ -348,9 +348,15 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
                     <span className={`block text-xs ${x.reason === 'paid-by-hand' ? 'text-amber-700' : 'text-red-600'}`}>
                       {x.reason === 'paid-by-hand' && `Owner payout ${rs(x.amount)} was marked as paid by hand, so it isn't paid again here.`}
                       {x.reason === 'not-completed' && `Still ${x.booking.status} in the system — complete the rental and it comes into the payouts.`}
-                      {x.reason === 'no-payout-line' && 'This booking has no owner payout line — check the booking.'}
+                      {x.reason === 'no-payout-line' && "This booking has no owner payout line (it wasn't saved) — create it from the booking."}
                     </span>
                   </span>
+                  {x.reason === 'no-payout-line' && mayPrepare && (
+                    <button type="button" className="btn-secondary !py-1.5 text-xs"
+                            onClick={() => { const e = useStore.getState().createPayoutLine(x.booking.id); if (e) toast.error('Not created', e); else toast.success('Payout line created', 'It now shows under the owner above.'); }}>
+                      Create the payout line
+                    </button>
+                  )}
                   {x.reason === 'paid-by-hand' && mayPrepare && (
                     <button type="button" className="btn-secondary !py-1.5 text-xs"
                             onClick={() => { if (confirm(`Was ${o?.name ?? 'the owner'} NOT actually paid ${rs(x.amount)} for this? It will be included in the payout.`)) { x.payoutIds.forEach(reopenPayout); toast.success('Included', 'It now shows under the owner above.'); } }}>
