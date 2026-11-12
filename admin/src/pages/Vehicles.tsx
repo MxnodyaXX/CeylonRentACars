@@ -17,7 +17,7 @@ import DateInput from '../components/ui/DateInput';
 import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle, UserRound } from 'lucide-react';
 import { Vehicle, VehicleStatus } from '../types';
 import { isInsuranceComplete, clearInsuranceReminder } from '../lib/insuranceReminder';
-import { vehicleNetRevenue } from '../lib/revenue';
+import { vehicleMoney } from '../lib/revenue';
 import { VEHICLE_CATEGORIES, categoryLabel, guessCategory } from '../lib/vehicleCategory';
 
 const STATUS_OPTIONS: VehicleStatus[] = ['Available', 'Reserved', 'Ongoing', 'Maintenance'];
@@ -48,7 +48,7 @@ export default function Vehicles() {
   const [viewTab, setViewTab] = useState<'details' | 'breakdowns'>('details');
   const breakdowns = useBreakdownStore();
   useEffect(() => { if (!breakdowns.ready) breakdowns.load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const { vehicles, owners, bookings, expenses, addVehicle, updateVehicle, deleteVehicle } = useStore();
+  const { vehicles, owners, bookings, expenses, commissions, addVehicle, updateVehicle, deleteVehicle } = useStore();
   const { currentUser, can, isAdmin } = useAuthStore();
 
   const [filter,   setFilter]   = useState<VehicleStatus | 'All'>('All');
@@ -57,9 +57,8 @@ export default function Vehicles() {
   const [form,     setForm]     = useState(empty());
   const [typeError, setTypeError] = useState(false);
   const [uploading,       setUploading]       = useState(false);
-  const [savedUrls,       setSavedUrls]       = useState<string[]>([]);
-  const [pendingFiles,    setPendingFiles]    = useState<File[]>([]);
-  const [pendingPreviews, setPendingPreviews] = useState<string[]>([]);
+  // the vehicle photos, in the order shown on the website: saved ones (url) and new ones (file), mixed and re-orderable
+  const [photoItems,      setPhotoItems]      = useState<PhotoItem[]>([]);
   const [galleryIndex,    setGalleryIndex]    = useState(0);
   const [uploadingFor,    setUploadingFor]    = useState<string | null>(null);
   const [cropFile,        setCropFile]        = useState<File | null>(null);
@@ -78,6 +77,8 @@ export default function Vehicles() {
   const uploadTargetRef  = useRef<string | null>(null);
   const cropQueueRef     = useRef<File[]>([]);
   const cropSlotRef      = useRef<ImageSlot>('photos');
+  // re-cropping an image that's already there: which one gets the new crop
+  const recropRef        = useRef<{ slot: ImageSlot; key: string } | null>(null);
 
   const isOwnerRole = !isAdmin() && currentUser?.role === 'owner';
   // team members work on every car (what they may change is set by their abilities); owners on their own
@@ -94,9 +95,8 @@ export default function Vehicles() {
 
   // savedUrls / pendingFiles / pendingPreviews hold the VEHICLE PHOTOS gallery
   const resetImageState = (v?: Vehicle) => {
-    setSavedUrls(v?.photoUrls ?? []);
-    setPendingFiles([]);
-    setPendingPreviews([]);
+    setPhotoItems((v?.photoUrls ?? []).map((u) => ({ key: u, url: u, preview: u })));
+    recropRef.current = null;
     setAdminSaved(v?.imageUrl ?? null);
     setAdminPending(null);
     const heroes = v?.heroImages?.length ? v.heroImages : v?.heroImageUrl ? [v.heroImageUrl] : [];
@@ -122,11 +122,14 @@ export default function Vehicles() {
     setModal('view');
   };
 
-  const addFileToPending = (file: File) => {
+  const newKey = () => `new-${Math.random().toString(36).slice(2, 10)}`;
+  const addFileToPending = (file: File, replaceKey?: string) => {
     const reader = new FileReader();
-    reader.onload = (e) => setPendingPreviews((prev) => [...prev, e.target!.result as string]);
+    reader.onload = (e) => {
+      const item: PhotoItem = { key: newKey(), file, preview: e.target!.result as string };
+      setPhotoItems((prev) => (replaceKey ? prev.map((p) => (p.key === replaceKey ? item : p)) : [...prev, item]));
+    };
     reader.readAsDataURL(file);
-    setPendingFiles((prev) => [...prev, file]);
   };
 
   const startCropFor = (file: File) => {
@@ -145,7 +148,20 @@ export default function Vehicles() {
   // A cropped (or uncropped) file goes to whichever image kind is being edited
   const acceptFile = (file: File) => {
     const slot = cropSlotRef.current;
-    if (slot === 'photos') { addFileToPending(file); return; }
+    const re = recropRef.current; recropRef.current = null;
+    if (slot === 'photos') { addFileToPending(file, re?.key); return; }
+    if (re && slot === 'hero') {
+      // the re-cropped hero takes the old one's place (and stays the shown one if it was)
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const next = { file, preview: e.target!.result as string };
+        if (heroSavedRef.current.includes(re.key)) { setHeroSaved((l) => l.filter((u) => u !== re.key)); setHeroPending((l) => [...l, next]); }
+        else setHeroPending((l) => l.map((h) => (h.preview === re.key ? next : h)));
+        setHeroShown((cur) => (cur === re.key ? next.preview : cur));
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       const next = { file, preview: e.target!.result as string };
@@ -157,7 +173,28 @@ export default function Vehicles() {
     reader.readAsDataURL(file);
   };
   const handleCropSave = (croppedFile: File) => { acceptFile(croppedFile); advanceCropQueue(); };
-  const handleCropSkip = () => { if (cropFile) acceptFile(cropFile); advanceCropQueue(); };
+  // "use as it is": a new file goes in uncropped; a re-crop that's skipped leaves the image as it was
+  const handleCropSkip = () => { if (recropRef.current) recropRef.current = null; else if (cropFile) acceptFile(cropFile); advanceCropQueue(); };
+
+  // open the cropper again on an image that's already there (saved on the website or just added)
+  const recrop = async (slot: ImageSlot, key: string) => {
+    const src = slot === 'photos' ? photoItems.find((p) => p.key === key)?.preview : slot === 'admin' ? (adminPending?.preview ?? adminSaved ?? undefined) : key;
+    if (!src) return;
+    try {
+      const blob = await (await fetch(src)).blob();
+      const file = new File([blob], `${slot}-${Date.now()}.${(blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`, { type: blob.type || 'image/jpeg' });
+      cropSlotRef.current = slot; setCropSlot(slot);
+      recropRef.current = { slot, key };
+      cropQueueRef.current = [];
+      startCropFor(file);
+    } catch {
+      toast.error('Could not open the image', 'Download it and upload it again to crop it.');
+    }
+  };
+  const movePhoto = (from: number, to: number) => setPhotoItems((list) => {
+    if (to < 0 || to >= list.length || from === to) return list;
+    const next = [...list]; const [it] = next.splice(from, 1); next.splice(to, 0, it); return next;
+  });
 
   const handleFileSelect = (slot: ImageSlot, files: FileList | null) => {
     if (!files) return;
@@ -183,11 +220,7 @@ export default function Vehicles() {
     setHeroPending((list) => list.filter((h) => h.preview !== url));
     if (heroShown === url) setHeroShown(rest[0] ?? null);
   };
-  const removeSavedUrl = (url: string) => setSavedUrls((prev) => prev.filter((u) => u !== url));
-  const removePending  = (idx: number) => {
-    setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
-    setPendingPreviews((prev) => prev.filter((_, i) => i !== idx));
-  };
+  const removePhoto = (key: string) => setPhotoItems((prev) => prev.filter((p) => p.key !== key));
 
   const triggerCardUpload = (vehicleId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -268,12 +301,12 @@ export default function Vehicles() {
       const heroList = [...heroSaved, ...uploadedHeroes.map((h) => h.url)].slice(0, MAX_HEROES);
       const shownUrl = uploadedHeroes.find((h) => h.preview === heroShown)?.url ?? heroShown;
       const heroUrl = (shownUrl && heroList.includes(shownUrl) ? shownUrl : heroList[0]) ?? null;
-      const uploadedPhotos: string[] = [];
-      for (const file of pendingFiles) {
-        const url = await upload(file);
-        if (url) uploadedPhotos.push(url);
+      // the photos in the order arranged: saved ones keep their URL, new / re-cropped ones are uploaded in place
+      const photoUrls: string[] = [];
+      for (const p of photoItems) {
+        const url = p.url ?? (p.file ? await upload(p.file) : null);
+        if (url) photoUrls.push(url);
       }
-      const photoUrls = [...savedUrls, ...uploadedPhotos];
 
       // Only send image fields that changed, so vehicles without the new
       // hero/photo columns (migration not run yet) can still be edited.
@@ -499,8 +532,17 @@ export default function Vehicles() {
         {/* Footer: revenue + actions */}
         <div className="flex items-center justify-between border-t border-navy-50 pt-3">
           <div className="min-w-0">
-            <p className="text-xs text-navy-400 whitespace-nowrap">Revenue · {v.rentCount ?? 0} rental{(v.rentCount ?? 0) === 1 ? '' : 's'}</p>
-            <p className="text-sm font-bold text-navy-700 whitespace-nowrap">Rs {vehicleNetRevenue(v, bookings).toLocaleString()}</p>
+            {(() => { const m = vehicleMoney(v.id, bookings, commissions); return (<>
+              <p className="text-xs text-navy-400 whitespace-nowrap" title="Final bills (rent + extra charges − discount) of completed and on-rent trips">Earned · {m.trips} trip{m.trips === 1 ? '' : 's'}{m.onRent ? ` (${m.onRent} on rent)` : ''}</p>
+              <p className="text-sm font-bold text-navy-700 whitespace-nowrap">Rs {m.earned.toLocaleString()}</p>
+              {(m.upcoming > 0 || m.company > 0) && (
+                <p className="text-[11px] text-navy-400 whitespace-nowrap">
+                  {m.upcoming > 0 && <span className="text-sky-600">+ Rs {m.upcoming.toLocaleString()} upcoming ({m.upcomingCount})</span>}
+                  {m.upcoming > 0 && m.company > 0 && ' · '}
+                  {m.company > 0 && <>company Rs {m.company.toLocaleString()}</>}
+                </p>
+              )}
+            </>); })()}
           </div>
           {mine && (
             <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
@@ -756,11 +798,12 @@ export default function Vehicles() {
               heroShown={heroShown}
               onShowHero={setHeroShown}
               onRemoveHero={removeHero}
-              photos={{ saved: savedUrls, pending: pendingPreviews }}
+              photos={photoItems.map((p) => ({ key: p.key, preview: p.preview, isNew: !p.url }))}
               onPick={handleFileSelect}
               onClear={clearSingle}
-              onRemoveSaved={removeSavedUrl}
-              onRemovePending={removePending}
+              onRemovePhoto={removePhoto}
+              onMovePhoto={movePhoto}
+              onRecrop={recrop}
             />
           </Section>
 
@@ -911,11 +954,11 @@ export default function Vehicles() {
                   ['Transmission',  selected.transmission ?? '—'],
                   ['Seats',         selected.seats ?? '—'],
                   ['Mileage',       selected.mileage ? `${selected.mileage.toLocaleString()} km` : '—'],
-                  ['Revenue',       `Rs ${vehicleNetRevenue(selected, bookings).toLocaleString()}`],
-                  ...(selected.revenue !== vehicleNetRevenue(selected, bookings)
-                    ? [['Gross Revenue', `Rs ${selected.revenue.toLocaleString()} (before discounts)`] as [string, string]]
-                    : []),
-                  ['Total Rentals', selected.rentCount ?? 0],
+                  ...(() => { const m = vehicleMoney(selected.id, bookings, commissions); return [
+                    ['Earned', `Rs ${m.earned.toLocaleString()} · ${m.trips} trip${m.trips === 1 ? '' : 's'} (completed + on rent)`],
+                    ['Upcoming', m.upcomingCount ? `Rs ${m.upcoming.toLocaleString()} · ${m.upcomingCount} confirmed` : 'None'],
+                    ['Company commission', `Rs ${m.company.toLocaleString()} on the earned trips`],
+                  ] as [string, string][]; })(),
                 ].map(([label, val]) => (
                   <div key={String(label)} className="bg-navy-50/60 rounded-xl p-3">
                     <p className="text-xs text-navy-400">{label}</p>
@@ -965,6 +1008,9 @@ export default function Vehicles() {
     </div>
   );
 }
+
+/** one vehicle photo in the editor: a saved one (url) or a new / re-cropped one (file) */
+interface PhotoItem { key: string; url?: string; file?: File; preview: string }
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (

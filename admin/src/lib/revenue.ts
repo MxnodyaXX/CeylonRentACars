@@ -45,3 +45,21 @@ export const vehicleNetRevenue = (vehicle: Vehicle, bookings: Booking[]): number
 /** Net revenue summed across many vehicles. */
 export const vehiclesNetRevenue = (vehicles: Vehicle[], bookings: Booking[]): number =>
   vehicles.reduce((s, v) => s + vehicleNetRevenue(v, bookings), 0);
+
+/**
+ * A car's money, on the same basis as the Bookings page (final bills: rent + extra charges − discount):
+ *   earned   = completed and on-rent trips · upcoming = confirmed bookings not started · company = its commission on the earned trips
+ * so the Bookings page total for the car = earned + upcoming.
+ */
+export function vehicleMoney(vehicleId: string, bookings: Booking[], commissions: { bookingId: string; vehicleId: string; commissionAmount?: number }[]) {
+  const mine = bookings.filter((b) => b.vehicleId === vehicleId && b.status !== 'Cancelled');
+  const done = mine.filter((b) => b.status === 'Completed' || b.status === 'Ongoing');
+  const next = mine.filter((b) => b.status === 'Confirmed');
+  const bill = (b: Booking) => Math.max(0, b.totalAmount + (b.extraCharges ?? 0) - (b.discount ?? 0));
+  const ids = new Set(done.map((b) => b.id));
+  return {
+    earned: done.reduce((s, b) => s + bill(b), 0), trips: done.length, onRent: done.filter((b) => b.status === 'Ongoing').length,
+    upcoming: next.reduce((s, b) => s + bill(b), 0), upcomingCount: next.length,
+    company: commissions.filter((c) => ids.has(c.bookingId) && c.vehicleId === vehicleId).reduce((s, c) => s + (c.commissionAmount ?? 0), 0),
+  };
+}

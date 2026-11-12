@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { Camera, Upload, X, ImagePlus, RefreshCw, Trash2, CheckCircle2, Eye } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Camera, Upload, X, ImagePlus, RefreshCw, Trash2, CheckCircle2, Eye, Crop, ChevronLeft, ChevronRight, GripVertical } from 'lucide-react';
 
 export type ImageSlot = 'admin' | 'hero' | 'photos';
 
@@ -22,19 +22,22 @@ interface Props {
   heroShown: string | null;         // url (or new preview) the website shows
   onShowHero: (url: string) => void;
   onRemoveHero: (url: string) => void;
-  photos: { saved: string[]; pending: string[] };
+  /** the vehicle photos in order (key = saved url or a new file's key) */
+  photos: { key: string; preview: string; isNew: boolean }[];
   onPick: (slot: ImageSlot, files: FileList | null) => void;
   onClear: (slot: 'admin') => void;
-  onRemoveSaved: (url: string) => void;
-  onRemovePending: (index: number) => void;
+  onRemovePhoto: (key: string) => void;
+  onMovePhoto: (from: number, to: number) => void;
+  /** open the cropper again on an image already there (admin: any key; hero: its url; photos: its key) */
+  onRecrop: (slot: ImageSlot, key: string) => void;
 }
 
 /* One image (admin cut-out or hero photo) with a preview that mimics where it is shown */
 function SingleSlot({
-  slot, title, hint, value, enabled, onPick, onClear,
+  slot, title, hint, value, enabled, onPick, onClear, onRecrop,
 }: {
   slot: 'admin'; title: string; hint: string; value: Single; enabled: boolean;
-  onPick: Props['onPick']; onClear: Props['onClear'];
+  onPick: Props['onPick']; onClear: Props['onClear']; onRecrop: Props['onRecrop'];
 }) {
   const input = useRef<HTMLInputElement>(null);
   const isHero = false;
@@ -76,6 +79,10 @@ function SingleSlot({
 
         {value.url && enabled && (
           <div className="absolute top-2 right-2 flex gap-1">
+            <button type="button" onClick={() => onRecrop(slot, 'admin')} title="Crop again"
+                    className="w-7 h-7 rounded-lg bg-black/55 text-white flex items-center justify-center hover:bg-black/75">
+              <Crop size={13} />
+            </button>
             <button type="button" onClick={() => input.current?.click()} title="Replace"
                     className="w-7 h-7 rounded-lg bg-black/55 text-white flex items-center justify-center hover:bg-black/75">
               <RefreshCw size={13} />
@@ -96,9 +103,9 @@ function SingleSlot({
 }
 
 /* Up to 3 hero images (16:9) — one is shown on the website, the admin picks which */
-function HeroSlots({ heroes, shown, enabled, onPick, onShow, onRemove }: {
+function HeroSlots({ heroes, shown, enabled, onPick, onShow, onRemove, onRecrop }: {
   heroes: Single[]; shown: string | null; enabled: boolean;
-  onPick: Props['onPick']; onShow: (url: string) => void; onRemove: (url: string) => void;
+  onPick: Props['onPick']; onShow: (url: string) => void; onRemove: (url: string) => void; onRecrop: Props['onRecrop'];
 }) {
   const input = useRef<HTMLInputElement>(null);
   const free = MAX_HEROES - heroes.length;
@@ -124,10 +131,16 @@ function HeroSlots({ heroes, shown, enabled, onPick, onShow, onRemove }: {
                 {h.isNew && <span className="text-[10px] font-semibold bg-amber-600/90 text-white px-1.5 py-0.5 rounded">New</span>}
               </div>
               {enabled && (
-                <button type="button" onClick={() => h.url && onRemove(h.url)} title="Remove"
-                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-lg bg-black/55 text-white flex items-center justify-center hover:bg-brand-600">
-                  <Trash2 size={12} />
-                </button>
+                <div className="absolute top-1.5 right-1.5 flex gap-1">
+                  <button type="button" onClick={() => h.url && onRecrop('hero', h.url)} title="Crop again"
+                          className="w-6 h-6 rounded-lg bg-black/55 text-white flex items-center justify-center hover:bg-black/80">
+                    <Crop size={12} />
+                  </button>
+                  <button type="button" onClick={() => h.url && onRemove(h.url)} title="Remove"
+                          className="w-6 h-6 rounded-lg bg-black/55 text-white flex items-center justify-center hover:bg-brand-600">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
               )}
             </div>
           );
@@ -153,10 +166,13 @@ function HeroSlots({ heroes, shown, enabled, onPick, onShow, onRemove }: {
 }
 
 export default function VehicleImageFields({
-  bare, enabled, admin, heroes, heroShown, onShowHero, onRemoveHero, photos, onPick, onClear, onRemoveSaved, onRemovePending,
+  bare, enabled, admin, heroes, heroShown, onShowHero, onRemoveHero, photos, onPick, onClear, onRemovePhoto, onMovePhoto, onRecrop,
 }: Props) {
   const photoInput = useRef<HTMLInputElement>(null);
-  const count = photos.saved.length + photos.pending.length;
+  const count = photos.length;
+  // dragging a photo onto another moves it there
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
 
   return (
     <div className="sm:col-span-2 flex flex-col gap-5">
@@ -174,37 +190,50 @@ export default function VehicleImageFields({
 
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-4">
         <SingleSlot
-          slot="admin" title="Admin image" value={admin} enabled={enabled} onPick={onPick} onClear={onClear}
+          slot="admin" title="Admin image" value={admin} enabled={enabled} onPick={onPick} onClear={onClear} onRecrop={onRecrop}
           hint="Transparent PNG cut-out (car only). Shown on the admin vehicle cards. Used on the website only if there is no hero image."
         />
-        <HeroSlots heroes={heroes} shown={heroShown} enabled={enabled} onPick={onPick} onShow={onShowHero} onRemove={onRemoveHero} />
+        <HeroSlots heroes={heroes} shown={heroShown} enabled={enabled} onPick={onPick} onShow={onShowHero} onRemove={onRemoveHero} onRecrop={onRecrop} />
       </div>
 
       {/* Real photos for the customer's vehicle details */}
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between gap-2">
           <p className="text-xs font-bold text-navy-700">Vehicle photos <span className="font-normal text-navy-400">({count})</span></p>
-          <p className="text-[10.5px] text-navy-400">Shown in the vehicle details on the website</p>
+          <p className="text-[10.5px] text-navy-400">{count > 1 ? 'Drag to change the order — the first one is the cover' : 'Shown in the vehicle details on the website'}</p>
         </div>
 
         <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-          {photos.saved.map((url, i) => (
-            <div key={url} className="relative group aspect-[4/3] rounded-xl overflow-hidden ring-1 ring-navy-100">
-              <img src={url} alt="" className="w-full h-full object-cover" />
-              <button type="button" onClick={() => onRemoveSaved(url)} title="Remove"
-                      className="absolute top-1 right-1 w-5 h-5 bg-brand-500 text-white rounded-full items-center justify-center hidden group-hover:flex">
-                <X size={10} />
-              </button>
-            </div>
-          ))}
-          {photos.pending.map((preview, i) => (
-            <div key={i} className="relative group aspect-[4/3] rounded-xl overflow-hidden ring-2 ring-amber-300">
-              <img src={preview} alt="" className="w-full h-full object-cover opacity-80" />
-              <span className="absolute bottom-1 left-1 text-[9px] font-semibold bg-amber-600/90 text-white px-1.5 py-0.5 rounded">New</span>
-              <button type="button" onClick={() => onRemovePending(i)} title="Remove"
-                      className="absolute top-1 right-1 w-5 h-5 bg-brand-500 text-white rounded-full items-center justify-center hidden group-hover:flex">
-                <X size={10} />
-              </button>
+          {photos.map((p, i) => (
+            <div key={p.key} draggable={enabled}
+                 onDragStart={(e) => { setDragFrom(i); e.dataTransfer.effectAllowed = 'move'; }}
+                 onDragOver={(e) => { if (dragFrom !== null) { e.preventDefault(); setDragOver(i); } }}
+                 onDragLeave={() => setDragOver((x) => (x === i ? null : x))}
+                 onDrop={(e) => { if (dragFrom !== null) { e.preventDefault(); e.stopPropagation(); onMovePhoto(dragFrom, i); } setDragFrom(null); setDragOver(null); }}
+                 onDragEnd={() => { setDragFrom(null); setDragOver(null); }}
+                 className={`relative group aspect-[4/3] rounded-xl overflow-hidden transition-all ${p.isNew ? 'ring-2 ring-amber-300' : 'ring-1 ring-navy-100'}
+                   ${dragFrom === i ? 'opacity-40' : ''} ${dragOver === i && dragFrom !== i ? 'ring-2 ring-navy-900 scale-[1.03]' : ''} ${enabled ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+              <img src={p.preview} alt="" className="w-full h-full object-cover pointer-events-none" />
+              <span className="absolute top-1 left-1 flex gap-1">
+                {i === 0 && <span className="text-[9px] font-semibold bg-navy-900/80 text-white px-1.5 py-0.5 rounded">Cover</span>}
+                {p.isNew && <span className="text-[9px] font-semibold bg-amber-600/90 text-white px-1.5 py-0.5 rounded">New</span>}
+              </span>
+              {enabled && (<>
+                <span className="absolute top-1 right-1 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                  <button type="button" onClick={() => onRecrop('photos', p.key)} title="Crop again"
+                          className="w-6 h-6 bg-black/60 text-white rounded-md flex items-center justify-center hover:bg-black/80"><Crop size={11} /></button>
+                  <button type="button" onClick={() => onRemovePhoto(p.key)} title="Remove"
+                          className="w-6 h-6 bg-brand-500 text-white rounded-md flex items-center justify-center hover:bg-brand-600"><X size={11} /></button>
+                </span>
+                {/* move without dragging (phones) */}
+                <span className="absolute bottom-1 right-1 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                  <button type="button" disabled={i === 0} onClick={() => onMovePhoto(i, i - 1)} title="Move left"
+                          className="w-6 h-6 bg-black/60 text-white rounded-md flex items-center justify-center hover:bg-black/80 disabled:opacity-30"><ChevronLeft size={12} /></button>
+                  <button type="button" disabled={i === photos.length - 1} onClick={() => onMovePhoto(i, i + 1)} title="Move right"
+                          className="w-6 h-6 bg-black/60 text-white rounded-md flex items-center justify-center hover:bg-black/80 disabled:opacity-30"><ChevronRight size={12} /></button>
+                </span>
+                <GripVertical size={14} className="absolute bottom-1.5 left-1 text-white drop-shadow hidden sm:block sm:opacity-0 sm:group-hover:opacity-90" />
+              </>)}
             </div>
           ))}
 
@@ -221,7 +250,7 @@ export default function VehicleImageFields({
             </label>
           )}
         </div>
-        <p className="text-[10.5px] text-navy-400">Real photos of this exact vehicle — outside, inside, boot. Customers browse them in the vehicle details. JPEG · PNG · WebP, several at once.</p>
+        <p className="text-[10.5px] text-navy-400">Real photos of this exact vehicle — outside, inside, boot. Customers browse them in the vehicle details. JPEG · PNG · WebP, several at once. Use <b>Crop again</b> to re-crop one that's already there — changes are saved with <b>Save changes</b>.</p>
       </div>
     </div>
   );

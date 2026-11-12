@@ -1111,6 +1111,26 @@ export const useStore = create<AppState>()(
 
       // The commission and the owner's share follow the final bill (rent + charges − discount):
       // worked out again when a charge is added or removed — until the owner is paid.
+      correctPayment: (id, entryId, amount, reason, by) => {
+        const b = get().bookings.find((x) => x.id === id);
+        const p = b?.payments?.find((x) => x.id === entryId);
+        if (!b || !p) return 'Payment not found.';
+        if (!(amount >= 0) || !reason.trim()) return 'Enter the right amount and why it is changed.';
+        if (p.method === 'Security deposit') return 'A payment from the deposit is changed by settling the deposit again.';
+        const delta = Math.round(amount) - p.amount;
+        if (!delta) return null;
+        const totals: Partial<Booking> =
+          p.kind === 'Payment' ? { paidAmount: Math.max(0, b.paidAmount + delta) }
+          : p.kind === 'Advance' ? { advanceAmount: Math.max(0, (b.advanceAmount ?? 0) + delta) }
+          : p.kind === 'Refund' ? { paidAmount: Math.max(0, b.paidAmount - delta) }
+          : p.kind === 'Deposit received' ? { depositAmount: Math.max(0, (b.depositAmount ?? 0) + delta) }
+          : { depositReturned: Math.max(0, (b.depositReturned ?? 0) + delta) };
+        const fixed = { ...p, amount: Math.round(amount), note: [p.note, `corrected from Rs ${p.amount.toLocaleString()} — ${reason.trim()}`].filter(Boolean).join(' · ') };
+        get().logBookingActivity(id, { by, type: p.kind.startsWith('Deposit') ? 'Deposit' : 'Payment', text: `${p.kind} corrected: Rs ${p.amount.toLocaleString()} → Rs ${Math.round(amount).toLocaleString()} — ${reason.trim()}` },
+          { ...totals, payments: (b.payments ?? []).map((x) => (x.id === entryId ? fixed : x)) });
+        toast.success('Payment corrected', `${b.customerName}: Rs ${p.amount.toLocaleString()} → Rs ${Math.round(amount).toLocaleString()}.`);
+        return null;
+      },
       itemiseLegacy: (id, entries, by) => {
         const b = get().bookings.find((x) => x.id === id);
         if (!b) return 'Booking not found.';

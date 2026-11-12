@@ -1,6 +1,6 @@
 import type { Booking, Commission, CompanyAccount, CompanyExpense, AccountTransfer, Expense, Owner, OwnerSettlement, Vehicle } from '../types';
 import { bookingNo, depositHeld, ledgerOf } from './bookingRecord';
-import { bookingBill, bookingCredit, bookingDue } from './credit';
+import { bookingBill, bookingCredit, bookingDue, bookingPaid } from './credit';
 import { channelOf } from './channels';
 import { completedOn, linesFor, totalsOf, periodOf } from './settlements';
 import { accountFor, type FinanceSettings } from './companyFinance';
@@ -221,7 +221,7 @@ export function periodFigures(d: Books, ledger: LedgerEntry[], start: string, en
 export function heldForOthers(d: Books) {
   const x = heldDetail(d);
   return { owed: x.owners.reduce((s, o) => s + Math.max(0, o.net), 0), deposits: x.deposits.reduce((s, r) => s + r.amount, 0),
-    unpaidExpenses: x.unpaid.reduce((s, e) => s + e.amount, 0) };
+    unpaidExpenses: x.unpaid.reduce((s, e) => s + e.amount, 0), running: x.running.reduce((s, r) => s + r.share, 0) };
 }
 
 /** What makes up the money held for others — each owner's lines, each deposit, each unpaid expense */
@@ -236,7 +236,16 @@ export function heldDetail(d: Books) {
   /** finished or cancelled trips whose deposit was never marked returned / kept — to settle (not counted as held) */
   const unsettled = withDeposit.filter((r) => r.b.status === 'Completed');
   const unpaid = d.companyExpenses.filter((e) => e.status === 'approved');
-  return { owners, deposits, unpaid, unsettled };
+  // trips still running (or booked with an advance): the owner's share of what the customer has paid so far is held for the
+  // owner too — it becomes due (and goes into the monthly payout) when the trip is completed
+  const running = d.bookings.filter((b) => b.status === 'Ongoing' || b.status === 'Confirmed').map((b) => {
+    const lines = d.commissions.filter((c) => c.bookingId === b.id && c.status !== 'Paid' && !c.settlementId && c.ownerPayout > 0);
+    const payout = lines.reduce((s, c) => s + c.ownerPayout, 0);
+    const bill = bookingBill(b), received = Math.min(bill, bookingPaid(b));
+    const owner = d.owners.find((o) => o.id === lines[0]?.ownerId)?.name ?? 'Owner';
+    return { b, car: carOf(d, b.vehicleId), owner, payout, bill, received, share: bill > 0 ? Math.round((received * payout) / bill) : 0 };
+  }).filter((r) => r.share > 0).sort((a, b) => b.share - a.share);
+  return { owners, deposits, unpaid, unsettled, running };
 }
 
 /** Each account's balance worked out: opening + money in − money out since the opening date; and the unassigned money */

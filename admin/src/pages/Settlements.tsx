@@ -214,6 +214,21 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
       </div>
 
       <p className="text-xs text-navy-400 -mt-2 mb-4">Owner payouts include rentals completed from <b>{fromLabel}</b>. Earlier trips were settled before this system.</p>
+      {/* the next payout is building up: this month's completed trips are paid on the payout day of next month */}
+      {(() => {
+        const next = shiftPeriod(dueMonth(), 1);
+        if (period !== dueMonth()) return null;
+        const data = { bookings, commissions, expenses, vehicles, owners };
+        const lines = owners.flatMap((o) => linesFor(o.id, next, data, from).filter((l) => l.date >= `${next}-01` && l.kind !== 'expense'));
+        if (!lines.length) return null;
+        const due = payoutDate(next, payoutDay);
+        return (
+          <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 flex flex-wrap items-center gap-2">
+            <span className="flex-1 min-w-[16rem]"><b>{lines.length} trip{lines.length === 1 ? '' : 's'} completed in {periodLabel(next)}</b> — owners' share {rs(lines.reduce((t, l) => t + l.amount, 0))} — will be paid on {due.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}.</span>
+            <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={() => setPeriod(next)}>See {periodLabel(next)} →</button>
+          </div>
+        );
+      })()}
       {before && <div className="card text-center py-10 text-sm text-navy-400 mb-4">{periodLabel(period)} is before owner payouts started ({fromLabel}).</div>}
 
       {overdue && !before && (

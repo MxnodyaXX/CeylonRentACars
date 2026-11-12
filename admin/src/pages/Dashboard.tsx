@@ -72,7 +72,7 @@ function CompanyDashboard({ admin, staff, can, name }: { admin: boolean; staff: 
   const held = useMemo(() => heldForOthers(books), [books]);
   const rec = useMemo(() => receivables(books), [books]);
   const trend = useMemo(() => monthlyTrend(books, ledger, 6, admin), [books, ledger, admin]);
-  const own = bal.total - held.owed - held.deposits - held.unpaidExpenses;
+  const own = bal.total - held.owed - held.running - held.deposits - held.unpaidExpenses;
   const [ex, setEx] = useState<FigureKey | null>(null);
 
   // ── today ──
@@ -183,7 +183,7 @@ function CompanyDashboard({ admin, staff, can, name }: { admin: boolean; staff: 
               </div>
               <div className="sm:border-l sm:border-navy-100 sm:pl-6">
                 <Fig label="Money in our accounts" sub={books.accounts.length ? `${books.accounts.length} accounts` : 'no accounts set up yet'} v={bal.total} onClick={() => setEx('cash')} />
-                <Fig label="Owed to owners" sub="their share, not paid yet" v={-held.owed} tone="amber" icon={<ArrowUpRight size={13} className="text-amber-600" />} onClick={() => setEx('owed')} />
+                <Fig label="Owed to owners" sub={`${rs(held.owed)} completed · ${rs(held.running)} on trips running`} v={-(held.owed + held.running)} tone="amber" icon={<ArrowUpRight size={13} className="text-amber-600" />} onClick={() => setEx('owed')} />
                 <Fig label="Customer deposits held" sub="to be returned" v={-held.deposits} tone="amber" onClick={() => setEx('deposits')} />
                 {held.unpaidExpenses > 0 && <Fig label="Approved bills to pay" v={-held.unpaidExpenses} tone="amber" onClick={() => setEx('unpaid')} />}
                 <Fig label="Company's own money" sub="what is really the company's" v={own} big tone={own >= 0 ? 'green' : 'red'} onClick={() => setEx('own')} />

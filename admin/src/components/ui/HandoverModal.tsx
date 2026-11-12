@@ -270,7 +270,10 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const span = (ms: number) => { const m = Math.max(0, Math.round(ms / 60_000)); const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60; return [d && `${d} day${d === 1 ? '' : 's'}`, h && `${h} h`, mi && `${mi} min`].filter(Boolean).join(' ') || '0 min'; };
   const recoverRent = rcRent === 'full' ? b.totalAmount : rcRent === 'custom' ? Math.max(0, Math.round(Number(rcCustom) || 0)) : usedRent;
   const rentChange = recover ? recoverRent - b.totalAmount : 0;
-  const newBill = price.bill + partChange - earlyCut + rentChange + customAdj + kmCharge + extrasTotal + lateCharge - dedTotal;
+  // a discount given at the return (e.g. rounding Rs 46,040 down to Rs 46,000) — off the bill before the payment is taken
+  const [discIn, setDiscIn] = useState('');
+  const discNow = isReturn && canPay ? Math.max(0, Math.round(Number(discIn) || 0)) : 0;
+  const newBill = price.bill + partChange - earlyCut + rentChange + customAdj + kmCharge + extrasTotal + lateCharge - dedTotal - discNow;
   const dueNow = Math.max(0, newBill - price.paid);
   const refundDue = Math.max(0, price.paid - newBill);
   const [refundNow, setRefundNow] = useState(true);
@@ -289,7 +292,7 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const creditLeft = owedAs ? remaining - writeOff : 0;
   // the company's commission on the FINAL bill: rent (as it ends up) + charges already on it + the ones added now − discount
   const finalRent = b.totalAmount + partChange - earlyCut + rentChange + customAdj;
-  const shareBase = shareBaseOf(b) - b.totalAmount + finalRent + kmCharge + lateCharge + extrasTotal;
+  const shareBase = shareBaseOf(b) - b.totalAmount + finalRent + kmCharge + lateCharge + extrasTotal - discNow;
   const shareDays = early || (customRent ?? 0) > 0 ? billDays : b.totalDays;
   // the commission for this trip — 1 the company rate on the booking · 2 a custom % · 3 a custom amount ·
   // 4 Rs per day + Rs per extra km · (or none)
@@ -466,6 +469,12 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
           ...(o?.adjustmentId ? { ownerAdjustmentId: o.adjustmentId } : {}), ...(o?.owedId ? { ownerOwedId: o.owedId } : {}) });
       });
       if (depApplied > 0) useStore.getState().payFromDeposit(b.id, depApplied, by);
+      if (discNow > 0) {
+        editBooking(b.id, { discount: (b.discount ?? 0) + discNow }, {
+          by, reason: 'Discount given at the return', quiet: true,
+          changes: [`Discount Rs ${discNow.toLocaleString('en-LK')} at the return${(b.discount ?? 0) > 0 ? ` (total discount Rs ${((b.discount ?? 0) + discNow).toLocaleString('en-LK')})` : ''}`],
+        });
+      }
       if (collectAmt > 0) recordPayment(b.id, { kind: 'Payment', amount: collectAmt, method, receiptNo: receiptNo.trim() || undefined, note: recover ? 'Collected at recovery' : 'Collected at return', by });
       if (canPay && refundDue > 0 && refundNow) recordPayment(b.id, { kind: 'Refund', amount: refundDue, method, receiptNo: receiptNo.trim() || undefined, note: 'Overpayment refunded at return', by });
       if (canPay && settleDep && held - depApplied > 0) settleDeposit(b.id, { returned: Math.max(0, held - depApplied - keep), deduction: keep, method, notes: depNote.trim() || undefined }, by);
@@ -1083,6 +1092,10 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
             {/* totals and payment collected now */}
             <div className="rounded-xl bg-navy-800 text-white p-3 space-y-2">
               {dedTotal > 0 && <div className="flex justify-between text-sm"><span className="opacity-70">Deductions</span><b className="text-emerald-300">− {rs(dedTotal)}</b></div>}
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="opacity-70">Discount now (Rs){(b.discount ?? 0) > 0 && <span className="text-[11px]"> · Rs {(b.discount ?? 0).toLocaleString()} already given</span>}</span>
+                <input className="input !py-1 !w-28 text-right text-navy-900" type="number" min="0" placeholder="0" value={discIn} onChange={(e) => { setDiscIn(e.target.value); setCollect(null); }} />
+              </div>
               <div className="flex justify-between text-sm"><span className="opacity-70">Final bill</span><b>{rs(newBill)}</b></div>
               <div className="flex justify-between text-sm"><span className="opacity-70">Balance before payment</span><b>{rs(dueNow)}</b></div>
               {depApplied > 0 && <div className="flex justify-between text-sm"><span className="opacity-70">Paid from the deposit</span><b className="text-amber-200">− {rs(depApplied)}</b></div>}
@@ -1097,6 +1110,12 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                   <input className="input !py-1.5 mt-1 text-navy-900" value={receiptNo} onChange={(e) => setReceiptNo(e.target.value)} />
                 </label>
               </div>
+              {collect !== null && collectAmt > 0 && collectAmt < Math.max(0, dueNow - depApplied) && (
+                <button type="button" className="text-xs underline text-amber-200 text-left"
+                        onClick={() => { const gap = Math.max(0, dueNow - depApplied) - collectAmt; setDiscIn(String(discNow + gap)); setCollect(null); }}>
+                  The customer pays {rs(collectAmt)} — give the {rs(Math.max(0, dueNow - depApplied) - collectAmt)} difference as a discount
+                </button>
+              )}
               {refundDue > 0 && (
                 <label className="flex items-center justify-between gap-2 text-sm text-sky-200">
                   <span className="flex items-center gap-2"><input type="checkbox" checked={refundNow} onChange={(e) => setRefundNow(e.target.checked)} /> Refund the overpayment now</span>

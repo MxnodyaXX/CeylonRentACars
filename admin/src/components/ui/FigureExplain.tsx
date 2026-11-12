@@ -4,6 +4,7 @@ import BookingDetailsModal from './BookingDetailsModal';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
+import MoneyByBooking from '../accounts/MoneyByBooking';
 import { toast } from '../../store/useToast';
 import Modal from './Modal';
 import { bookingNo } from '../../lib/bookingRecord';
@@ -235,9 +236,14 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
   if (!k) return null;
 
   const go = onClose;
+  const openBooking = (id: string) => setViewing(id);
   const bk = (r: { b: ProfitRow['b'] }) => `/bookings/${r.b.id}`;
   const cashTotal = bal.accounts.reduce((s, a) => s + a.balance, 0) + bal.unassigned.reduce((s, u) => s + u.amount, 0);
   const owed = held.owners.reduce((s, o) => s + Math.max(0, o.net), 0);
+  const runningShare = held.running.reduce((s, r) => s + r.share, 0);
+  // the owners' completed rentals: due at this payout (completed last month or earlier) or the next one (this month)
+  const monthStart = `${new Date().toISOString().slice(0, 7)}-01`;
+  const payDay = (k: 'now' | 'next') => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth() + (k === 'now' ? 0 : 1), 5).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' }); };
   const deps = held.deposits.reduce((s, r) => s + r.amount, 0);
   const unpaid = held.unpaid.reduce((s, e) => s + e.amount, 0);
   const inP = (x: string) => x >= start && x <= end;
@@ -276,22 +282,29 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
         {bal.accounts.map((x) => <Group key={x.a.id} title={<b>{x.a.name}</b>} sub={`opening ${rs(x.a.openingBalance)} on ${fmtDay(x.a.openingDate)} + in ${rs(x.moneyIn)} − out ${rs(x.moneyOut)} · ${x.count} movement${x.count === 1 ? '' : 's'}`} amount={x.balance}
           entries={ledger.filter((e) => e.amount && e.accountId === x.a.id && e.date >= x.a.openingDate)} />)}
       </List>}
-      {bal.unassigned.length > 0 && <List title="Not assigned to an account — by type">
-        {bal.unassigned.map((u) => <Group key={u.kind} title={u.kind === 'deposit_in' ? 'Customer deposits — received − given back − used for bills' : KIND_LABEL[u.kind]}
-          sub={u.kind === 'deposit_in' ? `${u.count} entries · still held: ${rs(deps)} on trips confirmed or on rent${held.unsettled.length ? ` + ${rs(held.unsettled.reduce((s, r) => s + r.amount, 0))} on finished trips not settled` : ''}` : `${u.count} entr${u.count === 1 ? 'y' : 'ies'}`}
-          amount={u.amount} entries={bal.looseEntries.filter((e) => bal.groupOf(e.kind) === u.kind)} />)}
-      </List>}
+      {/* booking by booking: advance, deposit, part payments, final payment… together, in date order */}
+      <MoneyByBooking books={books} onOpen={openBooking}
+        entries={[...bal.looseEntries, ...bal.accounts.flatMap((x) => ledger.filter((e) => e.amount && e.accountId === x.a.id && e.date >= x.a.openingDate))]} />
       {!bal.accounts.length && <Warn>No company accounts are set up yet, so all of this is "not assigned" — it's every payment, deposit, refund and payout recorded since {fmtDay(books.from)}, not a bank balance. Add the cash box and bank accounts (Accounts tab) with their balances on {fmtDay(books.from)}, and this becomes the real money you hold.</Warn>}
     </>],
     owed: ["Owed to owners", <>
-      <Note>For each owner: their share of every rental completed (and not yet paid) up to now − vehicle expenses the company paid for their cars. These are the lines of their next monthly payout.</Note>
-      <Sum lines={held.owners.map((o) => [o.owner.name, Math.max(0, o.net)] as [string, number])} result={['Owed to owners', owed]} />
+      <Note>The owners' share of the money the company holds. <b>Completed trips</b> are paid once a month (trips completed in a month are paid on the 5th of the next month). On <b>trips still running</b>, the owner's share of what the customer has paid so far is theirs too — it joins their payout when the trip is completed.</Note>
+      <Sum lines={[
+        ['Completed — due at the payout on ' + payDay('now'), held.owners.reduce((s, o) => s + o.lines.filter((l) => l.date < monthStart).reduce((t, l) => t + l.amount, 0), 0)],
+        ['Completed this month — paid on ' + payDay('next'), held.owners.reduce((s, o) => s + o.lines.filter((l) => l.date >= monthStart).reduce((t, l) => t + l.amount, 0), 0)],
+        ['On trips still running — share of what was paid so far', runningShare],
+      ]} result={['Owed to owners', owed + runningShare]} />
+      <p className="text-[11px] text-navy-400 mt-1">Owner payouts opens on the month that is due now — use the › arrow there to see this month's completed trips.</p>
       {held.owners.map((o) => (
         <List key={o.owner.id} title={`${o.owner.name} · rentals ${rs(o.rentals)}${o.deductions ? ` · adjustments ${rs(o.deductions)}` : ''}${o.expenses ? ` − expenses ${rs(o.expenses)}` : ''} = ${rs(o.net)}`}>
           {o.lines.map((l) => <Item key={l.id} to={l.bookingId ? `/bookings/${l.bookingId}` : undefined} onGo={go} title={l.label} sub={`${fmtDay(l.date)} · ${l.detail ?? ''}`} amount={l.amount} />)}
         </List>
       ))}
       {held.owners.some((o) => o.net < 0) && <Warn>An owner whose expenses are more than their rentals is counted as 0 here (they owe the company, not the other way).</Warn>}
+      <List title={`On trips still running · ${held.running.length} — not due yet`} empty={!held.running.length}>
+        {held.running.map((r) => <Item key={r.b.id} to={`/bookings/${r.b.id}`} onGo={go} title={<><b>{r.owner}</b> <span className="text-navy-400">· {r.b.customerName} · {bookingNo(r.b)}</span></>}
+          sub={`${r.b.status} · ${r.car} · customer paid ${rs(r.received)} of ${rs(r.bill)} → owner's share ${rs(r.payout)} × ${Math.round((r.received / Math.max(1, r.bill)) * 100)}%`} amount={r.share} />)}
+      </List>
     </>],
     deposits: ['Customer deposits held', <>
       <Note>Security deposits on bookings that are <b>confirmed or on rent</b> — received − returned − kept or used for the bill. This money is the customers' until it's settled at the end of the trip.</Note>
@@ -310,8 +323,8 @@ export default function FigureExplain({ k, onClose, books, ledger, f, start, end
     </>],
     own: ["Company's own money", <>
       <Note>The money in the accounts that is really the company's: take off what belongs to the owners, the customers' deposits and the bills already approved.</Note>
-      <Sum lines={[['Money in our accounts', cashTotal], ['Owed to owners', owed, '−'], ['Customer deposits held', deps, '−'], ['Approved expenses not paid', unpaid, '−']]}
-        result={["Company's own money", cashTotal - owed - deps - unpaid]} />
+      <Sum lines={[['Money in our accounts', cashTotal], ['Owed to owners — completed trips', owed, '−'], ["Owners' share on trips still running", runningShare, '−'], ['Customer deposits held', deps, '−'], ['Approved expenses not paid', unpaid, '−']]}
+        result={["Company's own money", cashTotal - owed - runningShare - deps - unpaid]} />
       {!books.accounts.length && <Warn>"Money in our accounts" is only the money recorded since {fmtDay(books.from)} (no accounts set up yet), so this figure isn't the real position until the accounts and their opening balances are added.</Warn>}
     </>],
     commission: ['Company commission', <>

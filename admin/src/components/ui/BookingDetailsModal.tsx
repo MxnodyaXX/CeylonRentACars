@@ -587,6 +587,25 @@ function Overview({ b, by, price, extra, narrow }: {
    Payments
    ===================================================================== */
 
+/** Change the amount of a payment that was recorded wrongly — the reason and the old amount are kept on the entry and in History */
+function CorrectPayment({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by: string; onDone: () => void }) {
+  const [amount, setAmount] = useState(String(row.amount));
+  const [why, setWhy] = useState('');
+  const save = () => {
+    const e = useStore.getState().correctPayment(b.id, row.id, Math.round(Number(amount) || 0), why, by);
+    if (e) toast.error('Not saved', e); else onDone();
+  };
+  return (
+    <div className="rounded-xl border border-navy-200 bg-navy-50/60 p-3 flex flex-wrap items-end gap-2 text-sm">
+      <p className="basis-full text-xs text-navy-600">Correct this <b>{row.kind.toLowerCase()}</b> of {rs(row.amount)} — e.g. the customer really paid less after a discount.</p>
+      <label className="text-[11px] text-navy-500">Right amount (Rs)<input className="input !py-1 mt-0.5 !w-32" type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
+      <label className="text-[11px] text-navy-500 flex-1 min-w-[12rem]">Why *<input className="input !py-1 mt-0.5" value={why} placeholder="e.g. Rs 40 discount — customer paid Rs 46,000" onChange={(e) => setWhy(e.target.value)} /></label>
+      <button type="button" className="btn-secondary !py-1 text-xs" onClick={onDone}>Cancel</button>
+      <button type="button" className="btn-primary !py-1 text-xs disabled:opacity-40" disabled={!why.trim() || Number(amount) === row.amount} onClick={save}>Save correction</button>
+    </div>
+  );
+}
+
 /** Split a "recorded before the payment log" line into what really happened (e.g. Rs 10,000 advance + Rs 160,000 at the pickup) */
 function LegacySplit({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by: string; onDone: () => void }) {
   const deposit = row.kind === 'Deposit received';
@@ -703,11 +722,15 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
                     <td className="px-1 text-navy-600">{p.method}</td>
                     <td className="px-1 text-navy-500 text-xs">{[p.receiptNo, p.note].filter(Boolean).join(' · ') || '—'}
                       {canPay && p.id.startsWith('legacy') && splitting !== p.id && (
-                        <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-xs font-semibold text-amber-800 underline">Split into the real entries</button>)}</td>
+                        <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-xs font-semibold text-amber-800 underline">Split into the real entries</button>)}
+                      {canPay && !p.id.startsWith('legacy') && p.method !== 'Security deposit' && splitting !== p.id && (
+                        <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-[11px] text-navy-400 hover:text-navy-800 underline">Correct</button>)}</td>
                     <td className="px-1 text-navy-500 text-xs">{p.by}</td>
                     <td className={`px-1 text-right font-semibold whitespace-nowrap ${sign(p.kind) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{sign(p.kind) < 0 ? '−' : '+'}{rs(p.amount)}</td>
                   </tr>
-                  {splitting === p.id && <tr><td colSpan={6} className="px-1 pb-2"><LegacySplit b={b} row={p} by={by} onDone={() => setSplitting(null)} /></td></tr>}
+                  {splitting === p.id && <tr><td colSpan={6} className="px-1 pb-2">{p.id.startsWith('legacy')
+                    ? <LegacySplit b={b} row={p} by={by} onDone={() => setSplitting(null)} />
+                    : <CorrectPayment b={b} row={p} by={by} onDone={() => setSplitting(null)} />}</td></tr>}
                   </Fragment>
                 ))}
               </tbody>

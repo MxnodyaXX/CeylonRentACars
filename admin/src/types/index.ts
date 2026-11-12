@@ -775,6 +775,8 @@ export interface AppState {
   createPayoutLine: (bookingId: string) => string | null;
   /** replace a "recorded before the payment log" line with the real dated entries (same total) */
   itemiseLegacy: (bookingId: string, entries: PaymentEntry[], by: string) => string | null;
+  /** change the amount of a payment-log entry recorded wrongly (the totals follow; the old amount and the reason are kept) */
+  correctPayment: (bookingId: string, entryId: string, amount: number, reason: string, by: string) => string | null;
   /** A payout line marked Paid by hand but never actually paid: back to Pending so the monthly payout includes it */
   reopenPayout: (id: string) => void;
   /** Merge referrer spellings into one name on every booking and payout line (admin) — returns how many were changed */

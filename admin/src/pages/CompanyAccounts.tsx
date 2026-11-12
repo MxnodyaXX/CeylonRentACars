@@ -92,7 +92,7 @@ export default function CompanyAccounts() {
   const fp = useMemo(() => (compare ? periodFigures(books, ledger, prev.start, prev.end, admin) : undefined), [books, ledger, prev.start, prev.end, compare, admin]);
   const bal = useMemo(() => balances(books, ledger), [books, ledger]);
   const held = useMemo(() => heldForOthers(books), [books]);
-  const own = bal.total - held.owed - held.deposits - held.unpaidExpenses;
+  const own = bal.total - held.owed - held.running - held.deposits - held.unpaidExpenses;
   const periodText = `${fmtDay(start)} – ${fmtDay(end)}`;
 
   const tabs: [Tab, string][] = [['overview', 'Overview'], ['ledger', 'Ledger'], ['expenses', `Company expenses${fin.expenses.some((e) => e.status === 'pending') ? ` · ${fin.expenses.filter((e) => e.status === 'pending').length} to approve` : ''}`], ['accounts', 'Accounts'], ['months', 'Month close']];
@@ -167,7 +167,7 @@ function Overview({ books, ledger, f, fp, bal, held, own, start, end, periodText
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Company accounts ${periodText}</title><style>body{font-family:Segoe UI,Arial,sans-serif;color:#111;font-size:13px;margin:24px}h1{margin:0 0 4px}h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#71717A;margin:20px 0 6px}table{border-collapse:collapse;width:420px}td{padding:5px 4px;border-bottom:1px solid #eee}.n{text-align:right}.b td{font-weight:700;border-top:2px solid #111}</style></head><body>
       <div style="color:#E11D2A;font-weight:800;font-size:12px">CEYLON RENT A CARS</div><h1>Company accounts</h1><div>${periodText} · printed ${new Date().toLocaleString('en-GB')}</div>
       <h2>Profit for the period</h2><table>${line('Company commission', f.commission)}${line('Other rental income', f.otherIncome)}${line('Deposit amounts kept', f.depositKept)}${line('Costs carried on rentals', -f.carried)}${line('Rental profit', f.rentalProfit, true)}${line('Company running costs', -f.running)}${admin ? line('Private costs (salaries…)', -f.runningPrivate) : ''}${line('Bad debt written off', -f.badDebt)}${line('Company profit', f.profit, true)}</table>
-      <h2>Cash today</h2><table>${line('Money in accounts', bal.total)}${line('Owed to owners', -held.owed)}${line('Customer deposits held', -held.deposits)}${line('Approved expenses not paid', -held.unpaidExpenses)}${line("Company's own money", own, true)}</table>
+      <h2>Cash today</h2><table>${line('Money in accounts', bal.total)}${line('Owed to owners — completed trips', -held.owed)}${line("Owners' share on trips running", -held.running)}${line('Customer deposits held', -held.deposits)}${line('Approved expenses not paid', -held.unpaidExpenses)}${line("Company's own money", own, true)}</table>
       <h2>Money to come in</h2><table>${line('Balances on finished trips', rec.total)}${line('On rent now (collect at return)', rec.onRentTotal)}</table>
       <h2>Collected in the period</h2><table>${line('From customers', f.collected)}${line('Deposits received', f.depositsIn)}${line('Deposits returned', -f.depositsOut)}</table></body></html>`);
     w.document.close(); setTimeout(() => w.print(), 300);
@@ -194,7 +194,7 @@ function Overview({ books, ledger, f, fp, bal, held, own, start, end, periodText
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           {[
             ['cash', 'Money in our accounts', bal.total, 'bg-navy-800 text-white', `${books.accounts.length} account${books.accounts.length === 1 ? '' : 's'}${bal.unassigned ? ` + ${rs(bal.unassigned)} not assigned` : ''}`],
-            ['owed', 'Owed to owners', -held.owed, 'bg-amber-50 text-amber-900', 'their share, not paid yet'],
+            ['owed', 'Owed to owners', -(held.owed + held.running), 'bg-amber-50 text-amber-900', `${rs(held.owed)} completed · ${rs(held.running)} on trips running`],
             ['deposits', 'Customer deposits held', -held.deposits, 'bg-amber-50 text-amber-900', 'to be returned — not ours'],
             ['unpaid', 'Approved expenses not paid', -held.unpaidExpenses, 'bg-amber-50 text-amber-900', 'company bills to pay'],
             ['own', "Company's own money", own, own >= 0 ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800', 'what is really the company\'s'],
