@@ -4,8 +4,10 @@ import { supabaseEnabled } from '../lib/supabase';
 import Header from '../components/layout/Header';
 import { Vehicle } from '../types';
 import { VEHICLE_CATEGORIES as CATEGORIES, guessCategory } from '../lib/vehicleCategory';
+import WeddingStageEditor from '../components/website/WeddingStageEditor';
+import type { WeddingStage } from '../lib/weddingStage';
 import {
-  Globe, Plus, X, ArrowUp, ArrowDown, Search, ExternalLink, ImageOff, AlertTriangle, Car, Heart, Check,
+  Globe, Plus, Move, X, ArrowUp, ArrowDown, Search, ExternalLink, ImageOff, AlertTriangle, Car, Heart, Check,
 } from 'lucide-react';
 
 const BADGES = ['', 'Most booked', 'Premium', 'New', 'Best value', 'Family pick'];
@@ -102,8 +104,9 @@ function ListedRow({
 }
 
 /* Which cars show on the website's Wedding Cars page. Any car in the fleet, listed above or not. */
-function WeddingCars({ vehicles, onToggle }: { vehicles: Vehicle[]; onToggle: (v: Vehicle) => void }) {
+function WeddingCars({ vehicles, onToggle, onPlace }: { vehicles: Vehicle[]; onToggle: (v: Vehicle) => void; onPlace: (v: Vehicle, s: WeddingStage | null) => void }) {
   const [query, setQuery] = useState('');
+  const [placing, setPlacing] = useState<Vehicle | null>(null);
   const picked = vehicles.filter((v) => v.webWedding).length;
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -119,7 +122,7 @@ function WeddingCars({ vehicles, onToggle }: { vehicles: Vehicle[]; onToggle: (v
           <h2 className="font-semibold text-navy-800 flex items-center gap-2">
             <Heart size={18} /> Wedding cars <span className="text-navy-400 font-normal">({picked})</span>
           </h2>
-          <p className="text-xs text-navy-400 mt-0.5">Tick the cars to show on the Wedding Cars page. No price is shown there: customers ask for a quote, and requests arrive in Inquiries.</p>
+          <p className="text-xs text-navy-400 mt-0.5">Tick the cars to show on the Wedding Cars page (cars added as wedding cars in Vehicles are always on it). Customers ask for a quote (a price shows only if ticked in the car’s Wedding hire), and requests arrive in Inquiries.</p>
         </div>
         <a href={`${WEBSITE_URL}/wedding-cars`} target="_blank" rel="noreferrer"
            className="text-sm text-navy-500 hover:text-navy-700 flex items-center gap-1">
@@ -133,20 +136,33 @@ function WeddingCars({ vehicles, onToggle }: { vehicles: Vehicle[]; onToggle: (v
       </div>
       <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2 max-h-[420px] overflow-auto">
         {shown.map((v) => (
-          <button key={v.id} type="button" aria-pressed={!!v.webWedding} onClick={() => onToggle(v)}
-                  className={`flex items-center gap-3 rounded-xl border p-2 text-left transition-colors ${v.webWedding ? 'border-brand-300 bg-brand-50' : 'border-navy-100 hover:bg-navy-50'}`}>
+          <div key={v.id} className={`rounded-xl border transition-colors ${v.webWedding ? 'border-brand-300 bg-brand-50' : 'border-navy-100 hover:bg-navy-50'}`}>
+          <button type="button" aria-pressed={!!v.webWedding} onClick={() => !v.weddingOnly && onToggle(v)}
+                  title={v.weddingOnly ? 'A wedding car only — change it in Vehicles → Edit → What is this vehicle for?' : undefined}
+                  className={`w-full flex items-center gap-3 p-2 text-left${v.weddingOnly ? ' cursor-default' : ''}`}>
             <Thumb v={v} />
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold text-navy-800 truncate">{name(v)}</span>
-              <span className="block text-xs text-navy-400 truncate">{v.vehicleNumber} · {v.seats ?? '—'} seats</span>
+              <span className="block text-xs text-navy-400 truncate">{v.vehicleNumber} · {v.seats ?? '—'} seats{v.weddingOnly ? ' · wedding car only' : ''}</span>
             </span>
             <span className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${v.webWedding ? 'bg-brand-500 text-white' : 'border border-navy-200 text-transparent'}`}>
               <Check size={14} />
             </span>
           </button>
+          {v.webWedding && (
+            <div className="flex items-center justify-between gap-2 px-2 pb-2 -mt-1">
+              <span className="text-[11px] text-navy-400">{v.weddingStage ? 'Placed by hand' : 'Placed automatically'}</span>
+              <button type="button" onClick={() => setPlacing(v)}
+                      className="text-xs font-semibold text-brand-600 hover:text-brand-700 flex items-center gap-1 rounded-lg bg-white border border-brand-200 px-2 py-1">
+                <Move size={12} /> Place on stage
+              </button>
+            </div>
+          )}
+          </div>
         ))}
         {shown.length === 0 && <p className="text-sm text-navy-400 py-6 text-center col-span-full">No cars found.</p>}
       </div>
+      {placing && <WeddingStageEditor vehicle={placing} onClose={() => setPlacing(null)} onSave={(s) => onPlace(placing, s)} />}
     </section>
   );
 }
@@ -157,7 +173,7 @@ export default function Website() {
   const [query, setQuery] = useState('');
 
   const listed = useMemo(
-    () => vehicles.filter((v) => v.webFeatured)
+    () => vehicles.filter((v) => v.webFeatured && !v.weddingOnly)   // a wedding-only car never shows on the rental pages
       .sort((a, b) => (a.webOrder ?? 9999) - (b.webOrder ?? 9999) || name(a).localeCompare(name(b))),
     [vehicles],
   );
@@ -165,7 +181,7 @@ export default function Website() {
   const available = useMemo(() => {
     const q = query.trim().toLowerCase();
     return vehicles
-      .filter((v) => !v.webFeatured)
+      .filter((v) => !v.webFeatured && !v.weddingOnly)
       .filter((v) => !q || `${name(v)} ${v.vehicleNumber}`.toLowerCase().includes(q))
       .sort((a, b) => name(a).localeCompare(name(b)));
   }, [vehicles, query]);
@@ -277,7 +293,8 @@ export default function Website() {
         </section>
       </div>
 
-      <WeddingCars vehicles={vehicles} onToggle={(v) => updateWebsiteListing(v.id, { webWedding: !v.webWedding })} />
+      <WeddingCars vehicles={vehicles} onToggle={(v) => updateWebsiteListing(v.id, { webWedding: !v.webWedding })}
+                   onPlace={(v, s) => updateWebsiteListing(v.id, { weddingStage: s })} />
     </div>
   );
 }

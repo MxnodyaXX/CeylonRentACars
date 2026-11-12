@@ -58,6 +58,21 @@ export interface Vehicle {
   webLocation?: string;
   webPrice?: number;
   webWedding?: boolean;             // shown on the website's Wedding Cars page
+  weddingOnly?: boolean;            // a wedding car only: not rented out, kept off the website's rental pages
+  wedding?: WeddingDetails | null;  // its wedding hire terms (wedding cars)
+  weddingStage?: import('../lib/weddingStage').WeddingStage | null;   // its place on that page's podium (null = automatic)
+}
+
+/** A wedding car's hire terms (vehicles.wedding_details). The price shows on the website only when showPrice is on. */
+export interface WeddingDetails {
+  decoration?: 'included' | 'extra' | 'none';   // decoration in the price / for an extra charge / not offered
+  packagePrice?: number | null;                 // Rs for the package
+  hours?: number | null;                        // hours in the package
+  extraHour?: number | null;                    // Rs for each hour over
+  showPrice?: boolean;                          // show "From Rs …" on the Wedding Cars page
+  highlights?: string;                          // e.g. "White ribbons · flower bouquet · red carpet"
+  cutout?: string | null;                       // the decorated car, cut out: the Wedding Cars page shows it (else the admin image)
+  photos?: string[];                            // decorated-car photos, in order
 }
 
 /** Customer review of a vehicle, recorded in the admin and shown on the website when published */

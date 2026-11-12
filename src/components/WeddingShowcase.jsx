@@ -1,267 +1,307 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
+import { Price } from '../context/AppContext';
 
 /*
- * The wedding cars on a revolving stage: the stage picture (public/img/WeddingCarsBG) with the
- * front car standing on its podium and the others waiting round it in the dark, always facing
- * the visitor. Just the car (the admin's cut-out image), no frame. It turns to the next car on
- * its own; drag it to spin it yourself, or tap a car at the side to bring it round. Positions are
- * set straight on the elements every frame, so spinning never re-renders React (only the caption
- * does, when the front car changes).
+ * The wedding cars as a showroom: one car at a time on a lit floor, its name large at the top
+ * left with its details under it. Changing car slides the old one out and the new one in
+ * (600 ms) while the name and details swap in step. Arrows, the dots, the "Next" preview at the
+ * right edge, the ← → keys and swiping on a phone all change car.
+ * Images: the admin's cut-out (trimmed / flipped as set in Website → Wedding cars → Place on stage),
+ * else a photo with its edges faded.
  */
-// Where the podium's top is in the stage picture (1672 × 941), as fractions of its width / height
-const PODIUM = { x: 0.5, y: 0.815, width: 0.6, floor: 0.06 };   // floor: how far below the podium top the floor is
-const HOLD_MS = 3200;      // how long each car stays at the front
-const TURN_MS = 1500;      // turning to the next car
-const IDLE_MS = 9000;      // after the visitor stops, start turning again
-const TAP_PX = 6;
-const CURTAIN_MS = 2600;   // the curtains opening (matches the CSS)
+const SLIDE_MS = 600;
+const SWAP_MS = 210;       // the name and details change part-way through the slide
+const SWIPE_PX = 40;
 
-const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
-const easeOut = (t) => 1 - (1 - t) ** 3;
-const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const pad = (i) => String(i + 1).padStart(2, '0');
+
+/*
+ * The car's picture, with the trim and flip saved in the admin. `shine` (a number that changes on
+ * every arrival) adds a band of light running over the bodywork, cut to the car's own shape.
+ */
+function CarPic({ car, className = '', shine }) {
+  // no cut-out: a wedding photo of the decorated car, else the car's own photo
+  const src = car.cutoutImg || car.wedding?.photos?.[0] || car.img;
+  if (!src) return <span className={`wsr-pic wsr-pic--none ${className}`}><Icon name="car" /></span>;
+  if (!car.cutoutImg) return <img className={`wsr-pic is-photo ${className}`} src={src} alt="" draggable="false" />;
+  const mask = { '--src': `url("${src}")` };
+  const st = car.stage;
+  const c = st?.crop;
+  const trimmed = c && (c.t || c.r || c.b || c.l);
+  if (!trimmed && !st?.flip) {
+    return (
+      <>
+        <img className={`wsr-pic ${className}`} src={src} alt="" draggable="false" />
+        {shine != null && <span key={shine} className="wsr-shine" style={mask} />}
+      </>
+    );
+  }
+  const cw = 1 - (c?.l ?? 0) - (c?.r ?? 0);
+  const ch = 1 - (c?.t ?? 0) - (c?.b ?? 0);
+  const geo = { left: `${(-(c?.l ?? 0) / cw) * 100}%`, top: `${(-(c?.t ?? 0) / ch) * 100}%`, width: `${100 / cw}%`, height: `${100 / ch}%` };
+  return (
+    <span className={`wsr-pic wsr-pic--crop ${className}`} style={{ '--ar': (st.aspect * cw) / Math.max(0.01, ch) }}>
+      <span style={st.flip ? { transform: 'scaleX(-1)' } : undefined}>
+        <img src={src} alt="" draggable="false" style={geo} />
+        {shine != null && <span key={shine} className="wsr-shine wsr-shine--fill" style={{ ...geo, ...mask }} />}
+      </span>
+    </span>
+  );
+}
+
+/* the decorated car's wedding photos, full screen: ← → to move, Esc to close */
+function PhotoViewer({ name, photos, start, onClose }) {
+  const [i, setI] = useState(start);
+  const n = photos.length;
+  const closeRef = useRef(null);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowRight') setI((x) => (x + 1) % n);
+      if (e.key === 'ArrowLeft') setI((x) => (x - 1 + n) % n);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [n, onClose]);
+  return (
+    <div className="wsr-viewer" role="dialog" aria-modal="true" aria-label={`${name} — wedding photos`} onClick={onClose}>
+      <div className="wsr-viewer__top" onClick={(e) => e.stopPropagation()}>
+        <span><b>{name}</b> · {i + 1} / {n}</span>
+        <button ref={closeRef} type="button" onClick={onClose} aria-label="Close photos"><Icon name="x" /></button>
+      </div>
+      <img key={photos[i]} className="wsr-viewer__img" src={photos[i]} alt={`${name}, wedding photo ${i + 1} of ${n}`} onClick={(e) => e.stopPropagation()} />
+      {n > 1 && (
+        <>
+          <button type="button" className="wsr-viewer__nav is-prev" aria-label="Previous photo" onClick={(e) => { e.stopPropagation(); setI((x) => (x - 1 + n) % n); }}><Icon name="left" /></button>
+          <button type="button" className="wsr-viewer__nav is-next" aria-label="Next photo" onClick={(e) => { e.stopPropagation(); setI((x) => (x + 1) % n); }}><Icon name="right" /></button>
+          <div className="wsr-viewer__thumbs" onClick={(e) => e.stopPropagation()}>
+            {photos.map((p, k) => (
+              <button key={p} type="button" className={k === i ? 'is-active' : ''} aria-label={`Photo ${k + 1}`} onClick={() => setI(k)}>
+                <img src={p} alt="" />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* the name rises in letter by letter (read out whole) */
+function Letters({ text }) {
+  let i = 0;
+  return (
+    <span aria-hidden="true">
+      {text.split(' ').map((word, w) => (
+        <span key={w}>
+          {w > 0 && ' '}
+          <span className="wsr-word">
+            {[...word].map((ch, c) => <span key={c} className="wsr-char" style={{ '--i': i++ }}>{ch}</span>)}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
 
 export default function WeddingShowcase({ cars, pickedId, onPick }) {
   const n = cars.length;
-  const step = 360 / Math.max(n, 1);
-  const [front, setFront] = useState(0);
-  const [userLed, setUserLed] = useState(false);       // captions are announced once the visitor is turning it
-  // the curtains: closed until the stage scrolls into view, then they sweep open once
-  // (with "reduce motion" on — e.g. Windows' Animation effects off — they gently fade instead)
-  const [curtain, setCurtain] = useState('closed');
-  const stageRef = useRef(null);
-  const frameRef = useRef(null);
-  const cardRefs = useRef([]);
-  const landRef = useRef(null);
-  const m = useRef({ angle: 0, mode: 'hold', since: 0, from: 0, to: 0, dur: 0, size: { w: 300, r: 240, drop: 0 }, drag: null, lastUser: -Infinity, frontIdx: 0, visible: true, still: false, curtainUp: curtain === 'gone', last: { angle: 0, at: 0 } });
+  // idx: the car on the floor; from: the one sliding out; phase: idle → start (placed) → run (sliding)
+  const [view, setView] = useState({ idx: 0, from: null, dir: 'next', phase: 'idle' });
+  const [meta, setMeta] = useState({ idx: 0, phase: 'center' });
+  const [announce, setAnnounce] = useState(false);
+  const [land, setLand] = useState(0);           // goes up each time a car arrives: replays the light sweep and floor ripple
+  const [moves, setMoves] = useState(0);         // goes up each time a slide starts: replays the floor streak
+  const [viewer, setViewer] = useState(null);    // the wedding photos open full screen: { car, start }
+  const closeViewer = useCallback(() => setViewer(null), []);
+  const busy = useRef(false);
+  const timers = useRef([]);
+  const swipe = useRef(null);
 
-  // a car arrives on the podium: light sweeps over it, a ring ripples out, a flare streaks across
-  const land = () => {
-    const s = m.current;
-    if (s.still) return;
-    // (classes go on elements whose className React never changes, so a re-render can't cut them short)
-    for (const el of [cardRefs.current[s.frontIdx]?.querySelector('.wed-car__shine'), landRef.current]) {
-      if (!el) continue;
-      el.classList.remove('is-landing');
-      void el.offsetWidth;                                  // restart the CSS animations
-      el.classList.add('is-landing');
-    }
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  const later = (fn, ms) => timers.current.push(setTimeout(fn, ms));
+
+  const go = (target, dir) => {
+    if (n < 2 || busy.current) return;
+    const t = ((target % n) + n) % n;
+    if (t === view.idx) return;
+    setAnnounce(true);
+    // (always animated, even with the device's "reduce motion" on — Windows turns that on when
+    // Animation effects is off, and the owner wants the cars to move)
+    busy.current = true;
+    setView({ idx: t, from: view.idx, dir, phase: 'start' });
+    setMoves((x) => x + 1);
+    setMeta((m) => ({ ...m, phase: dir === 'next' ? 'exit-up' : 'exit-down' }));
+    later(() => setMeta({ idx: t, phase: dir === 'next' ? 'enter-below' : 'enter-above' }), SWAP_MS);
+    later(() => setLand((x) => x + 1), SLIDE_MS - 140);   // the light lands just as the car settles
+    later(() => { setView((v) => ({ ...v, from: null, phase: 'idle' })); busy.current = false; }, SLIDE_MS + 20);
   };
+  const step = (dir) => go(view.idx + (dir === 'next' ? 1 : -1), dir);
 
-  // where every car stands for one angle of the turntable
-  const place = () => {
-    const s = m.current;
-    const { r, drop } = s.size;
-    // motion blur from how fast it is turning (degrees per frame at 60 fps)
-    const now = performance.now();
-    const speed = s.last.at ? Math.abs(s.angle - s.last.angle) / Math.max(1, (now - s.last.at) / 16.7) : 0;
-    s.last = { angle: s.angle, at: now };
-    if (frameRef.current) frameRef.current.style.setProperty('--speed', s.still ? '0' : Math.min(1, speed / 4).toFixed(2));
-    for (let i = 0; i < n; i++) {
-      const el = cardRefs.current[i];
-      if (!el) continue;
-      const phi = ((s.angle + i * step) * Math.PI) / 180;
-      const depth = (Math.cos(phi) + 1) / 2;                // 1 at the front, 0 at the back
-      el.style.transform = `translate3d(${(r * Math.sin(phi)).toFixed(1)}px, ${(drop * Math.sin(phi) ** 2).toFixed(1)}px, ${(r * Math.cos(phi)).toFixed(1)}px)`;
-      el.style.setProperty('--depth', depth.toFixed(3));
-    }
-    const idx = ((Math.round(-s.angle / step) % n) + n) % n;
-    if (idx !== s.frontIdx) { s.frontIdx = idx; setFront(idx); }
-  };
-
-  const turnTo = (target, dur, now = performance.now()) => {
-    const s = m.current;
-    Object.assign(s, { mode: 'turn', from: s.angle, to: target, dur: s.still ? 1 : dur, since: now });
-  };
-
-  // shortest way round to car i
-  const bringRound = (i) => {
-    const s = m.current;
-    let delta = ((-i * step - s.angle) % 360 + 540) % 360 - 180;
-    if (Math.abs(delta) < 0.01) delta = 0;
-    s.lastUser = performance.now();
-    setUserLed(true);
-    turnTo(s.angle + delta, 700 + Math.abs(delta) * 6);
-  };
-
-  // size from the stage picture: the front car about fills the podium, the side cars stand just off it
+  // the new car is placed off to the side first, then both cars slide on the next frame
   useLayoutEffect(() => {
-    const frame = frameRef.current;
-    if (!frame) return undefined;
-    const measure = () => {
-      const fw = frame.clientWidth;
-      const w = Math.round(fw * PODIUM.width * 0.62);
-      const sideX = fw * PODIUM.width * (n <= 2 ? 0.5 : 0.66);
-      const r = n < 2 ? 0 : n === 2 ? sideX : Math.min(fw * 0.6, sideX / Math.sin(Math.min(Math.PI / 2, (2 * Math.PI) / n)));
-      m.current.size = { w, r, drop: fw * (941 / 1672) * PODIUM.floor };
-      frame.style.setProperty('--car-w', `${w}px`);
-      frame.style.setProperty('--ring-r', `${Math.round(r)}px`);
-      place();
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(frame);
-    return () => ro.disconnect();
-  }, [n]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (view.phase !== 'start') return undefined;
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setView((v) => (v.phase === 'start' ? { ...v, phase: 'run' } : v))); });
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+  }, [view.phase]);
+  // the same for the name and details
+  useLayoutEffect(() => {
+    if (meta.phase !== 'enter-below' && meta.phase !== 'enter-above') return undefined;
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setMeta((m) => ({ ...m, phase: 'center' }))); });
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+  }, [meta.phase]);
 
-  // the motor: hold, turn, hold … paused off-screen, in a hidden tab, or for reduced motion
+  // keep the list in range if the cars change
   useEffect(() => {
-    const s = m.current;
-    s.still = reducedMotion();
-    s.since = performance.now();
-    let raf = 0;
-    const tick = (now) => {
-      raf = 0;
-      if (s.mode === 'turn') {
-        const t = Math.min(1, (now - s.since) / s.dur);
-        s.angle = s.from + (s.to - s.from) * (s.dur > 900 ? ease(t) : easeOut(t));
-        const done = t >= 1;
-        if (done) { s.angle = s.to; s.mode = 'hold'; s.since = now; }
-        place();
-        if (done) { s.last.at = 0; frameRef.current?.style.setProperty('--speed', '0'); land(); }
-      } else if (s.mode === 'hold' && s.curtainUp && !s.still && n > 1 && now - s.lastUser > IDLE_MS && now - s.since > HOLD_MS && !document.hidden) {
-        const snapped = Math.round(s.angle / step) * step;
-        turnTo(snapped - step, TURN_MS, now);
-      }
-      if (s.visible) raf = requestAnimationFrame(tick);
-    };
-    const io = new IntersectionObserver(([e]) => {
-      s.visible = e.isIntersecting;
-      if (s.visible && !raf) raf = requestAnimationFrame(tick);
-    });
-    if (stageRef.current) io.observe(stageRef.current);
-    raf = requestAnimationFrame(tick);
-    return () => { io.disconnect(); if (raf) cancelAnimationFrame(raf); };
+    if (view.idx >= n) { setView({ idx: 0, from: null, dir: 'next', phase: 'idle' }); setMeta({ idx: 0, phase: 'center' }); }
   }, [n]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // open the curtains when most of the stage is on screen; the stage starts turning once they're open
-  useEffect(() => {
-    if (curtain !== 'closed') return undefined;
-    const stage = stageRef.current;
-    let timer = 0;
-    const io = new IntersectionObserver(([e]) => {
-      if (!e.isIntersecting) return;
-      io.disconnect();
-      setCurtain('opening');
-      timer = setTimeout(() => {
-        setCurtain('gone');
-        Object.assign(m.current, { curtainUp: true, since: performance.now() });
-      }, CURTAIN_MS);
-    }, { threshold: 0.55 });
-    if (stage) io.observe(stage);
-    return () => { io.disconnect(); clearTimeout(timer); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // dragging spins it: one card width ≈ one car
-  const onPointerDown = (e) => {
-    if (n < 2 || (e.pointerType === 'mouse' && e.button !== 0)) return;
-    const s = m.current;
-    s.drag = { x: e.clientX, angle: s.angle, moved: 0, last: [[e.clientX, e.timeStamp]], tapped: e.target.closest('[data-i]')?.dataset.i };
-    s.mode = 'drag';
-    stageRef.current.setPointerCapture?.(e.pointerId);
-  };
-  const onPointerMove = (e) => {
-    const s = m.current;
-    if (!s.drag) return;
-    const dx = e.clientX - s.drag.x;
-    s.drag.moved = Math.max(s.drag.moved, Math.abs(dx));
-    s.drag.last = [...s.drag.last.slice(-4), [e.clientX, e.timeStamp]];
-    s.angle = s.drag.angle + (dx / s.size.w) * step;
-    place();
-  };
-  const onPointerUp = () => {
-    const s = m.current;
-    const d = s.drag;
-    if (!d) return;
-    s.drag = null;
-    s.lastUser = performance.now();
-    if (d.moved < TAP_PX) {
-      s.mode = 'hold';
-      if (d.tapped != null && Number(d.tapped) !== s.frontIdx) bringRound(Number(d.tapped));
-      return;
-    }
-    setUserLed(true);
-    // let it run on a little in the direction it was flicked, then settle on a car
-    const [[x0, t0]] = d.last;
-    const [x1, t1] = d.last[d.last.length - 1];
-    const v = t1 > t0 ? ((x1 - x0) / (t1 - t0)) * (step / s.size.w) : 0;   // degrees per ms
-    const target = Math.round((s.angle + v * 260) / step) * step;
-    turnTo(target, 650 + Math.min(600, Math.abs(target - s.angle) * 5));
-  };
 
   const onKeyDown = (e) => {
-    if (n < 2) return;
-    if (e.key === 'ArrowRight') { e.preventDefault(); bringRound(front + 1); }
-    if (e.key === 'ArrowLeft') { e.preventDefault(); bringRound(front - 1); }
+    if (viewer || e.target.closest('input, textarea, select')) return;   // (the photo viewer has its own keys)
+    if (e.key === 'ArrowRight') { e.preventDefault(); step('next'); }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); step('prev'); }
   };
 
-  const car = cars[Math.min(front, n - 1)];
+  // swiping across the car changes it (vertical scrolling still works: touch-action pan-y)
+  const onPointerDown = (e) => { if (e.pointerType !== 'mouse') swipe.current = { x: e.clientX, y: e.clientY }; };
+  const onPointerUp = (e) => {
+    const s = swipe.current;
+    swipe.current = null;
+    if (!s) return;
+    const dx = e.clientX - s.x;
+    if (Math.abs(dx) > SWIPE_PX && Math.abs(dx) > Math.abs(e.clientY - s.y)) step(dx < 0 ? 'next' : 'prev');
+  };
+
+  const car = cars[Math.min(meta.idx, n - 1)];
+  const next = cars[(view.idx + 1) % n];
+  const enterCls = view.dir === 'next' ? 'is-enter-right' : 'is-enter-left';
+  const exitCls = view.dir === 'next' ? 'is-exit-left' : 'is-exit-right';
+  const run = view.phase === 'run';
+  const picked = pickedId === car.id;
+  const specs = [car.transmission, car.fuel !== '—' && car.fuel, `${car.seats} seats`, 'Driver included'].filter(Boolean);
+  // the car's wedding hire terms from the admin (not set yet = decoration available, as before)
+  const wed = car.wedding ?? {};
+  const deco = { included: 'Decoration included', extra: 'Decoration on request', none: null }[wed.decoration] ?? (wed.decoration ? null : 'Decoration available');
+
+  const pics = wed.photos ?? [];
+  const askBtn = (extra = '') => (
+    <div className={`wsr-btns ${extra}`}>
+      {pics.length > 0 && (
+        <button type="button" className="btn btn--dark" onClick={() => setViewer({ car, start: 0 })}>
+          <Icon name="spark" size="sm" />Photos ({pics.length})
+        </button>
+      )}
+      <button type="button" className={`btn ${picked ? 'btn--red' : 'btn--white'}`} onClick={() => onPick(car.id)}>
+        {picked ? <><Icon name="check" size="sm" />Selected — continue</> : <>Ask about this car <Icon name="arrow" size="sm" /></>}
+      </button>
+    </div>
+  );
 
   return (
-    <div className="wed-show" data-curtain={curtain} role="group" aria-roledescription="carousel" aria-label="Wedding cars" onKeyDown={onKeyDown}>
-      <div className="wed-stage" ref={stageRef} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
-           onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
-        <div className="wed-frame" ref={frameRef} style={{ '--podium-x': PODIUM.x, '--podium-y': PODIUM.y }}>
-          <img className="wed-frame__bg" src="/img/WeddingCarsBG.jpg" alt="" draggable="false" />
-          {/* drawn before the cars, so the ring and flare pass behind them */}
-          <div className="wed-land" ref={landRef} aria-hidden="true"><i /><i /><b /></div>
-          <div className="wed-scene">
-            {cars.map((v, i) => {
-              // the cut-out stands on the podium as it is; a photo with a background is faded at its edges
-              const src = v.cutoutImg || v.img;
-              return (
-                <div key={v.id} data-i={i} ref={(el) => { cardRefs.current[i] = el; }} className={`wed-car${i === front ? ' is-front' : ''}`} aria-hidden={i !== front}>
-                  {src ? <img src={src} alt="" draggable="false" className={v.cutoutImg ? '' : 'is-photo'} /> : <Icon name="car" />}
-                  {/* the light sweep, cut to the car's own shape */}
-                  {v.cutoutImg && <span className="wed-car__shine" style={{ '--src': `url("${v.cutoutImg}")` }} />}
-                </div>
-              );
-            })}
+    <div className="wsr" role="group" aria-roledescription="carousel" aria-label="Wedding cars" onKeyDown={onKeyDown}>
+      {/* the car's name and details, top left; the main action top right */}
+      <div className="wsr-head">
+        <div className={`wsr-meta is-${meta.phase}`} aria-live={announce ? 'polite' : 'off'}>
+          <div className="wsr-badges">
+            <span className="wsr-badge wsr-badge--red">{car.catLabel || 'Wedding car'}</span>
+            {car.year && <span className="wsr-badge">{car.year}</span>}
+            {deco && <span className="wsr-badge wsr-badge--ok"><Icon name="check" size="sm" />{deco}</span>}
           </div>
+          <h3 className="wsr-name" aria-label={car.name}><Letters key={car.id} text={car.name} /></h3>
+          <p className="wsr-specs">{specs.join(' • ')}</p>
+          {(wed.price || wed.highlights) && (
+            <p className="wsr-extra">
+              {wed.price > 0 && (
+                <span className="wsr-price"><small>From</small><Price lkr={wed.price} as="strong" />{wed.hours ? <span>/ {wed.hours} hours</span> : null}</span>
+              )}
+              {wed.highlights && <span className="wsr-hl"><Icon name="spark" size="sm" />{wed.highlights}</span>}
+            </p>
+          )}
         </div>
-        <div className="wed-flare" aria-hidden="true" />
+        <div className="wsr-actions">{askBtn()}</div>
       </div>
 
-      {curtain !== 'gone' && (
-        <div className="wed-curtain" aria-hidden="true">
-          <i className="wed-curtain__l" />
-          <i className="wed-curtain__r" />
-          <b className="wed-curtain__top" />
-        </div>
-      )}
+      <div className={`wsr-stage${run ? ' is-moving' : ''}`} tabIndex={0} aria-label={`${car.name}, car ${meta.idx + 1} of ${n}. Use the arrow keys to change car.`}
+           onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={() => { swipe.current = null; }}>
+        <div key={view.idx} className={`wsr-watermark is-${view.dir}`} aria-hidden="true">Wedding {pad(view.idx)}</div>
 
-      {/* arrows over the stage's sides (outside the stage, so the drag handling never swallows their clicks) */}
+        {/* the floor: soft light and shadow under the tyres, and the curved line */}
+        <div className="wsr-floor" aria-hidden="true">
+          <span className="wsr-floor__glow" />
+          <span className="wsr-floor__shadow" />
+          {land > 0 && <span key={`r${land}`} className="wsr-floor__ring"><i /><i /></span>}
+          {moves > 0 && <span key={`s${moves}`} className={`wsr-floor__streak is-${view.dir}`} />}
+          <svg viewBox="0 0 1000 110" preserveAspectRatio="none" fill="none">
+            <defs>
+              <linearGradient id="wsrArc" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#fff" stopOpacity="0" />
+                <stop offset="18%" stopColor="#fff" stopOpacity=".22" />
+                <stop offset="50%" stopColor="#ff3341" stopOpacity=".95" />
+                <stop offset="82%" stopColor="#fff" stopOpacity=".22" />
+                <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            <path d="M 45 28 C 210 -8, 790 -8, 955 28" stroke="#fff" strokeOpacity=".1" strokeWidth="1" strokeDasharray="4 6" vectorEffect="non-scaling-stroke" />
+            <path d="M 15 36 C 180 96, 820 96, 985 36" stroke="url(#wsrArc)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+          </svg>
+        </div>
+
+        {/* the cars: the one sliding out and the one sliding in */}
+        <div className="wsr-slot">
+          {view.from != null && cars[view.from] && (
+            <div key={cars[view.from].id} className={`wsr-car ${run ? `${exitCls} is-anim` : 'is-center'}`} aria-hidden="true">
+              <CarPic car={cars[view.from]} />
+            </div>
+          )}
+          {cars[view.idx] && (
+            <div key={cars[view.idx].id} className={`wsr-car ${view.phase === 'start' ? enterCls : 'is-center'}${run ? ' is-anim' : ''}`}>
+              <CarPic car={cars[view.idx]} shine={land > 0 ? land : undefined} />
+            </div>
+          )}
+        </div>
+
+        {n > 1 && (
+          <>
+            {/* the next car peeking in at the right edge (large screens) */}
+            <button type="button" className="wsr-peek" onClick={() => step('next')} aria-label={`Next car: ${next.name}`}>
+              <span className="wsr-peek__tag"><em>Next</em>{next.name}<Icon name="right" size="sm" /></span>
+              <span className="wsr-peek__img"><CarPic car={next} /></span>
+            </button>
+            <button type="button" className="wsr-arrow wsr-arrow--prev" onClick={() => step('prev')} aria-label="Previous car"><Icon name="left" /></button>
+            <button type="button" className="wsr-arrow wsr-arrow--next" onClick={() => step('next')} aria-label="Next car"><Icon name="right" /></button>
+          </>
+        )}
+      </div>
+
       {n > 1 && (
-        <div className="wed-nav">
-          <button type="button" aria-label="Turn to the previous car" onClick={() => bringRound(front - 1)}><Icon name="left" /></button>
-          <button type="button" aria-label="Turn to the next car" onClick={() => bringRound(front + 1)}><Icon name="right" /></button>
+        <div className="wsr-controls">
+          <div className="wsr-bar">
+            <button type="button" onClick={() => step('prev')} aria-label="Previous car"><Icon name="left" size="sm" /><span>Prev</span></button>
+            <div className="wsr-bar__mid">
+              <span className="wsr-count">{pad(view.idx)} / {String(n).padStart(2, '0')}</span>
+              <div className="wsr-dots">
+                {cars.map((c, i) => (
+                  <button key={c.id} type="button" className={i === view.idx ? 'is-active' : ''} aria-label={`Show ${c.name}`} aria-current={i === view.idx}
+                          onClick={() => go(i, i > view.idx ? 'next' : 'prev')} />
+                ))}
+              </div>
+            </div>
+            <button type="button" onClick={() => step('next')} aria-label="Next car"><span>Next</span><Icon name="right" size="sm" /></button>
+          </div>
+          <p className="wsr-hint wsr-hint--touch">Swipe left or right on the car to see the next one</p>
+          <p className="wsr-hint wsr-hint--keys"><kbd>←</kbd><kbd>→</kbd> Use the arrow keys, the arrows or the preview on the right</p>
         </div>
       )}
-
-      <div className="wed-cap" key={car.id} aria-live={userLed ? 'polite' : 'off'}>
-        <p className="wed-cap__no">{String(front + 1).padStart(2, '0')}<span> / {String(n).padStart(2, '0')}</span></p>
-        {/* the name rises in letter by letter (read out whole) */}
-        <h3 aria-label={car.name}>
-          {car.name.split(' ').map((word, w, words) => (
-            <Fragment key={w}>
-              {w > 0 && ' '}
-              <span className="wed-word" aria-hidden="true">
-                {[...word].map((ch, c) => (
-                  <span key={c} className="wed-char" style={{ '--i': words.slice(0, w).join('').length + w + c }}>{ch}</span>
-                ))}
-              </span>
-            </Fragment>
-          ))}
-        </h3>
-        <ul>
-          {car.year && <li><Icon name="calendar" size="sm" />{car.year}</li>}
-          <li><Icon name="seat" size="sm" />{car.seats} seats</li>
-          <li><Icon name="gear" size="sm" />{car.transmission}</li>
-        </ul>
-        <button type="button" className={`btn ${pickedId === car.id ? 'btn--red' : 'btn--white'}`} onClick={() => onPick(car.id)}>
-          {pickedId === car.id ? <><Icon name="check" size="sm" />Selected — continue</> : <>Ask about this car <Icon name="arrow" size="sm" /></>}
-        </button>
-      </div>
+      <div className="wsr-mobile-actions">{askBtn('is-block')}</div>
+      {viewer && createPortal(
+        <PhotoViewer name={viewer.car.name} photos={viewer.car.wedding.photos} start={viewer.start} onClose={closeViewer} />,
+        document.body,
+      )}
     </div>
   );
 }

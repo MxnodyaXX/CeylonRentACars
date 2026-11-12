@@ -403,6 +403,8 @@ enforces it (`16_staff_roles.sql`). Hiding buttons is not the only protection.
       password in person. They choose their own password at first sign-in.
 - [ ] Check with each login: the menu shows only their pages. Fleet's "Complete rental" has no payment part.
       Finance can record payments but has no Start/Complete. Nobody on the team sees Permissions or Website.
+- [ ] Finance (Dinithi) has **Edit vehicle prices** ticked: Vehicles → ✏️ opens the car with only the daily rent,
+      km terms (and wedding package) editable. A login made before this tick existed: tick it on Permissions → Team.
 - [ ] Once everyone signs in with their own login: **change the old shared `admin` password** (Supabase →
       Authentication → Users → admin → Reset password / set a new one) and keep it only for emergencies,
       or switch it off. Until then anyone with the old password still has full access.
@@ -447,3 +449,25 @@ Finance → **Company accounts** (admins and Finance only):
       expenses**. Tick **Private** for salaries so only admins see them. Vehicle repairs stay on the Expenses page.
 - [ ] When cash is banked, record it under **Accounts → Move money between accounts**.
 - [ ] Each month, once the accountant has checked it: **Month close → Close month**.
+
+## Part 17 — Wedding stage: place each car on the podium (after Part 4 / file 14)
+
+Website → **Wedding cars** → **Place on stage** on a ticked car: move, resize, rotate, crop and flip its
+picture on the real stage, then Save. The wedding page shows it exactly like that.
+
+- [ ] SQL Editor → run `security/19_wedding_stage.sql` (undo: `rollback/19_rollback_wedding_stage.sql`)
+- [ ] Push the admin and the website
+- [ ] Place each wedding car (tip: **Trim empty edges** first, so the wheels sit on the podium)
+
+## Part 18 — Wedding cars as a kind of vehicle (after Part 12 / file 14)
+
+Vehicles → **Add / Edit** → **What is this vehicle for?**: *Rental car*, *Wedding car* or *Rental & wedding*.
+A wedding car gets a **Wedding hire** section (decoration, package price, hours, extra hour, highlights,
+"show price on the website"). Wedding-only cars show only on `/wedding-cars`, never on the rental pages.
+
+- [ ] SQL Editor → run `security/20_wedding_vehicles.sql` (undo: `rollback/20_rollback_wedding_vehicles.sql`)
+- [ ] Run `security/verify.sql`: no FAIL
+- [ ] Push the admin and the website
+- [ ] Edit each wedding car: choose *Wedding car* or *Rental & wedding*, fill in **Wedding hire**, upload **Wedding car images** (decorated cut-out + wedding photos), Save. A new cut-out resets its stage placement — place it again on the Website page
+- [ ] Open `/wedding-cars`: the decoration badge, highlights (and price, if ticked) show. A *Wedding car* is
+      not on the home page, Popular Vehicles or `/vehicles`

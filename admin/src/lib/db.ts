@@ -1,8 +1,9 @@
 import { supabase } from './supabase'
 import type {
   Vehicle, Owner, Booking, Inquiry, Commission,
-  Expense, Driver, Notification, VehicleHandover, Customer,
+  Expense, Driver, Notification, VehicleHandover, Customer, WeddingDetails,
 } from '../types'
+import { readStage } from './weddingStage'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mappers: DB row (snake_case) ↔ TS types (camelCase)
@@ -44,7 +45,26 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
     webLocation: (r.web_location as string) ?? undefined,
     webPrice: numOpt(r.web_price),
     webWedding: r.web_wedding === true,
+    weddingOnly: r.wedding_only === true,
+    wedding: readWedding(r.wedding_details),
+    weddingStage: readStage(r.wedding_stage),
   }
+}
+
+/** vehicles.wedding_details → WeddingDetails (anything unexpected is dropped) */
+export function readWedding(v: unknown): WeddingDetails | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : null);
+  const deco = o.decoration;
+  return {
+    decoration: deco === 'included' || deco === 'extra' || deco === 'none' ? deco : undefined,
+    packagePrice: n(o.packagePrice), hours: n(o.hours), extraHour: n(o.extraHour),
+    showPrice: o.showPrice === true,
+    highlights: typeof o.highlights === 'string' ? o.highlights.slice(0, 160) : '',
+    cutout: typeof o.cutout === 'string' && o.cutout ? o.cutout : null,
+    photos: Array.isArray(o.photos) ? o.photos.filter((p): p is string => typeof p === 'string' && !!p) : [],
+  };
 }
 
 function vToDb(v: Vehicle) {
@@ -61,6 +81,10 @@ function vToDb(v: Vehicle) {
     ...(v.tankCapacity != null && { tank_capacity: v.tankCapacity }),
     ...(v.hillSuitable != null && { hill_suitable: v.hillSuitable }),
     ...(v.webCategory && { web_category: v.webCategory }),
+    // wedding cars: only sent when set, so plain rental cars still save before 20_wedding_vehicles.sql
+    ...(v.webWedding && { web_wedding: true }),
+    ...(v.weddingOnly && { wedding_only: true }),
+    ...(v.wedding && { wedding_details: v.wedding }),
   }
 }
 
@@ -530,6 +554,9 @@ export const db = {
     if ('webLocation' in u) row.web_location = u.webLocation || null
     if ('webPrice' in u) row.web_price = u.webPrice ?? null
     if (u.webWedding !== undefined) row.web_wedding = u.webWedding
+    if (u.weddingOnly !== undefined) row.wedding_only = u.weddingOnly
+    if ('wedding' in u) row.wedding_details = u.wedding ?? null
+    if ('weddingStage' in u) row.wedding_stage = u.weddingStage ?? null
     return inOrder(`vehicles:${id}`, () => supabase.from('vehicles').update(row).eq('id', id))
   },
   deleteVehicle: (id: string) => supabase.from('vehicles').delete().eq('id', id),

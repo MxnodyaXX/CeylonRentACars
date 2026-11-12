@@ -15,6 +15,7 @@
 --   canViewFinance       commissions, owner payouts, referral fees, credit page
 --   canViewExpenses      Expenses page (view + add + edit)        canAddExpenses  add an expense
 --   canEditVehicle       vehicle details (never its owner, prices or website listing)
+--   canEditPrices        a car's fixed prices: daily rent, included km, extra-km rate (and wedding package prices, file 20)
 --   canViewCustomers     Customers page                            canViewInquiries  Inquiries + Messages
 --   canViewDrivers       Drivers page (manage)                     canManageBreakdowns  Breakdowns
 --   canViewOwners        Owners page (view)                        canViewFeedback  Feedback page
@@ -78,7 +79,7 @@ begin
   perform private.staff_rule('customers', 'UPDATE', $q$private.staff_may_any(array['canBook','canViewCustomers','canViewInquiries','canTakePayments'])$q$);
 
   perform private.staff_rule('vehicles', 'SELECT', any_staff);
-  perform private.staff_rule('vehicles', 'UPDATE', $q$private.staff_may_any(array['canEditVehicle','canChangeStatus','canViewHandovers','canBook','canManageBreakdowns'])$q$);
+  perform private.staff_rule('vehicles', 'UPDATE', $q$private.staff_may_any(array['canEditVehicle','canEditPrices','canChangeStatus','canViewHandovers','canBook','canManageBreakdowns'])$q$);
 
   perform private.staff_rule('owners', 'SELECT', any_staff);
   perform private.staff_rule('owners', 'UPDATE', $q$private.staff_may('canViewFinance')$q$);
@@ -205,11 +206,17 @@ begin
     end if;
 
   elsif tg_table_name = 'vehicles' then
-    -- nobody on staff changes a car's owner, prices or website listing (Brian does)
-    new := private.keep_cols(new, old, array['id', 'owner_id', 'daily_rent', 'extra_km_rate', 'included_km_per_day',
+    -- nobody on staff changes a car's owner or website listing (Brian does)
+    new := private.keep_cols(new, old, array['id', 'owner_id',
       'web_price', 'web_badge', 'web_category', 'web_featured', 'web_location', 'web_order', 'web_wedding']);
+    -- its fixed prices: only with canEditPrices (Finance)
+    if not private.staff_may('canEditPrices') then
+      new := private.keep_cols(new, old, array['daily_rent', 'extra_km_rate', 'included_km_per_day']);
+    end if;
     if not private.staff_may('canEditVehicle') then
-      new := private.only_cols(new, old, array['status', 'mileage', 'revenue', 'rent_count']);
+      new := private.only_cols(new, old, array['status', 'mileage', 'revenue', 'rent_count']
+        || case when private.staff_may('canEditPrices') then array['daily_rent', 'extra_km_rate', 'included_km_per_day', 'wedding_details'] else '{}'::text[] end);
+      -- (wedding_details: file 20's guard_wedding_cols has already kept everything in it but the prices)
     end if;
 
   elsif tg_table_name = 'owners' then

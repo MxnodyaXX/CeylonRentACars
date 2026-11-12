@@ -9,13 +9,14 @@ import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import CropModal from '../components/ui/CropModal';
 import VehicleImageFields, { ImageSlot, SLOT_ASPECT } from '../components/ui/VehicleImageFields';
+import WeddingImageFields from '../components/ui/WeddingImageFields';
 import VehicleBreakdownHistory from '../components/breakdowns/VehicleBreakdownHistory';
 import { useBreakdownStore } from '../store/useBreakdownStore';
 import VehicleReviews from '../components/ui/VehicleReviews';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
-import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle, UserRound } from 'lucide-react';
-import { Vehicle, VehicleStatus } from '../types';
+import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle, UserRound, Heart } from 'lucide-react';
+import { Vehicle, VehicleStatus, WeddingDetails } from '../types';
 import { isInsuranceComplete, clearInsuranceReminder } from '../lib/insuranceReminder';
 import { vehicleMoney } from '../lib/revenue';
 import { VEHICLE_CATEGORIES, categoryLabel, guessCategory } from '../lib/vehicleCategory';
@@ -24,6 +25,13 @@ const STATUS_OPTIONS: VehicleStatus[] = ['Available', 'Reserved', 'Ongoing', 'Ma
 const FUEL_TYPES    = ['Petrol', 'Diesel', 'Hybrid', 'Electric', 'CNG'];
 const TRANSMISSIONS = ['Manual', 'Automatic', 'CVT', 'Semi-Automatic'];
 const MAX_HEROES = 3;   // hero images per vehicle — the admin picks which one the website shows
+
+type VehicleUse = 'rental' | 'wedding' | 'both';
+const VEHICLE_USES: { id: VehicleUse; label: string; hint: string }[] = [
+  { id: 'rental',  label: 'Rental car',         hint: 'Hired out by the day. Shown on the website’s vehicle pages.' },
+  { id: 'wedding', label: 'Wedding car',        hint: 'Weddings and events only, with a driver. Shown only on the Wedding Cars page.' },
+  { id: 'both',    label: 'Rental & wedding',   hint: 'Hired out by the day and also offered for weddings.' },
+];
 
 const empty = (): Omit<Vehicle, 'id' | 'createdAt' | 'revenue' | 'rentCount'> => ({
   vehicleNumber: '',
@@ -73,6 +81,10 @@ export default function Vehicles() {
   const heroSavedRef = useRef<string[]>([]);
   heroSavedRef.current = heroSaved;   // read inside the async file reader
   const [cropSlot,        setCropSlot]        = useState<ImageSlot>('photos');
+  // the wedding car's own pictures: the decorated cut-out and the wedding photos (saved url or a new file)
+  const [wedCutSaved,     setWedCutSaved]     = useState<string | null>(null);
+  const [wedCutPending,   setWedCutPending]   = useState<{ file: File; preview: string } | null>(null);
+  const [wedPhotos,       setWedPhotos]       = useState<PhotoItem[]>([]);
   const cardFileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef  = useRef<string | null>(null);
   const cropQueueRef     = useRef<File[]>([]);
@@ -84,8 +96,11 @@ export default function Vehicles() {
   // team members work on every car (what they may change is set by their abilities); owners on their own
   const teamLogin   = currentUser?.role === 'staff';
   const canActOn    = (v: Vehicle) => isAdmin() || teamLogin || v.ownerId === currentUser?.ownerId;
-  // the owner, rent and km terms are Brian's — shown to the team, not editable (the database keeps them too)
-  const termsLocked = teamLogin;
+  // a car's fixed prices (rent, km terms, wedding package): admins, or a team member with "Edit prices" (Finance);
+  // its other details need "Edit vehicle details"; its owner and use stay Brian's (the database keeps the same rules)
+  const termsLocked   = teamLogin && !can('canEditPrices');
+  const detailsLocked = teamLogin && !can('canEditVehicle');
+  const canEditCar    = can('canEditVehicle') || (teamLogin && can('canEditPrices'));
 
   const filtered = filter === 'All' ? vehicles : vehicles.filter((v) => v.status === filter);
 
@@ -104,7 +119,24 @@ export default function Vehicles() {
     setHeroPending([]);
     setHeroShown(v?.heroImageUrl ?? heroes[0] ?? null);
     setGalleryIndex(0);
+    setWedCutSaved(v?.wedding?.cutout ?? null);
+    setWedCutPending(null);
+    setWedPhotos((v?.wedding?.photos ?? []).map((u) => ({ key: u, url: u, preview: u })));
   };
+
+  // wedding pictures go in as they are (no crop), so a cut-out keeps its transparency
+  const readPreview = (file: File) => new Promise<string>((res) => {
+    const r = new FileReader(); r.onload = (e) => res(e.target!.result as string); r.readAsDataURL(file);
+  });
+  const pickWedCutout = async (file: File) => setWedCutPending({ file, preview: await readPreview(file) });
+  const addWedPhotos = async (files: File[]) => {
+    const items = await Promise.all(files.map(async (file) => ({ key: newKey(), file, preview: await readPreview(file) })));
+    setWedPhotos((l) => [...l, ...items]);
+  };
+  const moveWedPhoto = (from: number, to: number) => setWedPhotos((list) => {
+    if (to < 0 || to >= list.length || from === to) return list;
+    const next = [...list]; const [it] = next.splice(from, 1); next.splice(to, 0, it); return next;
+  });
 
   const openAdd = () => { setForm(empty()); setTypeError(false); resetImageState(); setModal('add'); };
   const openEdit = (v: Vehicle) => {
@@ -256,6 +288,22 @@ export default function Vehicles() {
       toast.error('Vehicle under maintenance', `Breakdown ${hold.ref} is holding it — use "Mark vehicle as ready" on that breakdown.`);
       return;
     }
+    // a team member who may change only the prices: send just those (the rest is read-only for them)
+    if (modal === 'edit' && selected && detailsLocked) {
+      if (termsLocked) { setModal(null); return; }
+      const u: Partial<Vehicle> = {};
+      if (form.dailyRent !== selected.dailyRent) u.dailyRent = form.dailyRent;
+      if ((form.includedKmPerDay ?? null) !== (selected.includedKmPerDay ?? null)) u.includedKmPerDay = form.includedKmPerDay;
+      if ((form.extraKmRate ?? null) !== (selected.extraKmRate ?? null)) u.extraKmRate = form.extraKmRate;
+      if (selected.webWedding) {
+        const w = form.wedding ?? {};
+        const next = { ...(selected.wedding ?? {}), packagePrice: w.packagePrice ?? null, hours: w.hours ?? null, extraHour: w.extraHour ?? null, showPrice: !!w.showPrice && !!w.packagePrice };
+        if (JSON.stringify(next) !== JSON.stringify(selected.wedding ?? {})) u.wedding = next;
+      }
+      if (Object.keys(u).length) updateVehicle(selected.id, u);
+      setModal(null);
+      return;
+    }
     const missing = [
       !form.vehicleNumber.trim() && 'vehicle number',
       !form.brand.trim() && 'brand',
@@ -308,9 +356,21 @@ export default function Vehicles() {
         if (url) photoUrls.push(url);
       }
 
+      // the wedding pictures (wedding cars only): upload the new ones, keep the order
+      const orig = modal === 'edit' ? selected : null;
+      let weddingNext = form.wedding ?? null;
+      if (form.webWedding) {
+        const cutout = wedCutPending ? (await upload(wedCutPending.file)) ?? wedCutSaved : wedCutSaved;
+        const photos: string[] = [];
+        for (const p of wedPhotos) {
+          const url = p.url ?? (p.file ? await upload(p.file) : null);
+          if (url) photos.push(url);
+        }
+        weddingNext = { ...(form.wedding ?? {}), cutout, photos };
+      }
+
       // Only send image fields that changed, so vehicles without the new
       // hero/photo columns (migration not run yet) can still be edited.
-      const orig = modal === 'edit' ? selected : null;
       const imageUpdates: Partial<Vehicle> = {};
       if (adminUrl !== (orig?.imageUrl ?? null)) {
         imageUpdates.imageUrl = adminUrl ?? undefined;
@@ -320,12 +380,23 @@ export default function Vehicles() {
       const origHeroes = orig?.heroImages?.length ? orig.heroImages : orig?.heroImageUrl ? [orig.heroImageUrl] : [];
       if (JSON.stringify(heroList) !== JSON.stringify(origHeroes)) imageUpdates.heroImages = heroList;
       if (JSON.stringify(photoUrls) !== JSON.stringify(orig?.photoUrls ?? [])) imageUpdates.photoUrls = photoUrls;
+      const wedBefore = orig ? orig.wedding ?? null : form.wedding ?? null;
+      if (JSON.stringify(weddingNext) !== JSON.stringify(wedBefore)) {
+        imageUpdates.wedding = weddingNext;
+        // a new showroom picture: its old place on the stage no longer fits
+        if (orig?.weddingStage && (weddingNext?.cutout ?? null) !== (orig.wedding?.cutout ?? null)) imageUpdates.weddingStage = null;
+      }
 
       // Delete replaced/removed files from storage (best-effort)
       if (orig) {
         if (orig.imageUrl && orig.imageUrl !== adminUrl) deleteVehicleImage(orig.imageUrl);
         origHeroes.filter((u) => !heroList.includes(u)).forEach(deleteVehicleImage);
         (orig.photoUrls ?? []).filter((u) => !photoUrls.includes(u)).forEach(deleteVehicleImage);
+        if (imageUpdates.wedding) {
+          const was = orig.wedding;
+          if (was?.cutout && was.cutout !== weddingNext?.cutout) deleteVehicleImage(was.cutout);
+          (was?.photos ?? []).filter((u) => !(weddingNext?.photos ?? []).includes(u)).forEach(deleteVehicleImage);
+        }
       }
 
       if (modal === 'edit') {
@@ -335,6 +406,10 @@ export default function Vehicles() {
         if (details.fuelEfficiency === (selected?.fuelEfficiency ?? undefined)) delete details.fuelEfficiency;
         if (details.tankCapacity === (selected?.tankCapacity ?? undefined)) delete details.tankCapacity;
         if ((details.hillSuitable ?? null) === (selected?.hillSuitable ?? null)) delete details.hillSuitable;
+        // the wedding fields too (keeps edits working before 20_wedding_vehicles.sql adds them)
+        if (!!details.weddingOnly === !!selected?.weddingOnly) delete details.weddingOnly;
+        if (JSON.stringify(details.wedding ?? null) === JSON.stringify(selected?.wedding ?? null)) delete details.wedding;
+        delete details.weddingStage;   // set on the Website page, not here
         updateVehicle(vehicleId, { ...details, ...imageUpdates });
       } else if (Object.keys(imageUpdates).length > 0) {
         updateVehicle(vehicleId, imageUpdates);
@@ -358,6 +433,17 @@ export default function Vehicles() {
   };
 
   const set    = (field: string, value: unknown) => setForm((f) => ({ ...f, [field]: value }));
+  // what the vehicle is for: rented out, wedding car only, or both
+  const use: VehicleUse = form.webWedding ? (form.weddingOnly ? 'wedding' : 'both') : 'rental';
+  const setUse = (u: VehicleUse) => setForm((f) => ({
+    ...f,
+    webWedding: u !== 'rental',
+    weddingOnly: u === 'wedding',
+    // a new wedding car starts with decoration included
+    wedding: u !== 'rental' ? (f.wedding ?? { decoration: 'included', showPrice: false, highlights: '' }) : f.wedding,
+  }));
+  const setWed = (field: keyof WeddingDetails, value: unknown) =>
+    setForm((f) => ({ ...f, wedding: { ...(f.wedding ?? {}), [field]: value } }));
   const setIns = (field: string, value: unknown) =>
     setForm((f) => ({ ...f, insurance: { ...f.insurance, [field]: value } }));
 
@@ -366,6 +452,7 @@ export default function Vehicles() {
     const activeBooking = bookings.find((b) => b.vehicleId === v.id && (b.status === 'Confirmed' || b.status === 'Ongoing'));
     const mainExp       = expenses.find((e) => e.vehicleId === v.id);
     const mine          = canActOn(v);
+    const cardImg       = v.imageUrl || v.wedding?.cutout;   // a wedding-only car may have only its wedding cut-out
 
     return (
       <div
@@ -374,7 +461,7 @@ export default function Vehicles() {
         onClick={() => clickable && openView(v)}
       >
         {/* Vehicle image */}
-        {v.imageUrl ? (
+        {cardImg ? (
           /*
            * clip-path allows the car to overflow 28 px above the platform (pop-out)
            * while keeping sides and bottom clipped to the rounded platform edge.
@@ -397,7 +484,7 @@ export default function Vehicles() {
             />
             {/* Car — anchored to platform floor, rises above it */}
             <img
-              src={v.imageUrl}
+              src={cardImg}
               alt={`${v.brand} ${v.model}`}
               className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full pointer-events-none select-none"
               style={{
@@ -462,7 +549,14 @@ export default function Vehicles() {
               <Car size={16} className="text-navy-600" />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-navy-800 truncate">{v.brand} {v.model}</p>
+              <p className="text-sm font-semibold text-navy-800 truncate flex items-center gap-1.5">
+                <span className="truncate">{v.brand} {v.model}</span>
+                {v.webWedding && (
+                  <span className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-full">
+                    <Heart size={10} />{v.weddingOnly ? 'Wedding' : 'Rental + wedding'}
+                  </span>
+                )}
+              </p>
               <p className="text-xs text-navy-400">
                 {v.vehicleNumber} · {v.year} ·{' '}
                 {categoryLabel(v.webCategory)
@@ -546,7 +640,7 @@ export default function Vehicles() {
           </div>
           {mine && (
             <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-              {can('canEditVehicle') && (
+              {canEditCar && (
                 <button
                   onClick={() => openEdit(v)}
                   className="w-8 h-8 rounded-lg hover:bg-navy-50 flex items-center justify-center text-navy-400 hover:text-navy-700 transition-colors"
@@ -652,8 +746,14 @@ export default function Vehicles() {
         width="max-w-5xl"
       >
         <div className="flex flex-col gap-4">
+          {modal === 'edit' && detailsLocked && !termsLocked && (
+            <div className="flex items-start gap-2 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2.5 text-xs text-sky-800">
+              <TrendingUp size={14} className="flex-shrink-0 mt-0.5" />
+              <p>You can change this car’s <b>prices</b>: the daily rent and km terms{use !== 'rental' ? ' and the wedding package' : ''}. Its other details are read-only for you.</p>
+            </div>
+          )}
           {/* ── 1 · Identity ── */}
-          <Section icon={<Car size={16} />} title="Vehicle details" hint="How the vehicle is identified in bookings, invoices and on the website.">
+          <Section locked={detailsLocked} icon={<Car size={16} />} title="Vehicle details" hint="How the vehicle is identified in bookings, invoices and on the website.">
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
               <Field label="Vehicle number" required>
                 <input className="input" value={form.vehicleNumber} onChange={(e) => set('vehicleNumber', e.target.value)} placeholder="CAB-1234" />
@@ -699,13 +799,88 @@ export default function Vehicles() {
               </div>
               {typeError && <p className="text-[11px] text-red-600 mt-1.5">Choose the vehicle type — it decides where the car shows on the website.</p>}
             </div>
+            <div className="mt-4">
+              <p className="label !mb-1.5">What is this vehicle for?</p>
+              <div role="radiogroup" aria-label="What is this vehicle for" className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {VEHICLE_USES.map((u) => {
+                  const on = use === u.id;
+                  return (
+                    <button key={u.id} type="button" role="radio" aria-checked={on} onClick={() => setUse(u.id)} disabled={teamLogin}
+                      title={teamLogin ? 'Set by the Managing Director' : undefined}
+                      className={`text-left rounded-xl border px-3 py-2.5 transition-colors flex gap-2.5 disabled:cursor-not-allowed ${on
+                        ? 'border-navy-800 bg-navy-800 text-white shadow-sm'
+                        : 'border-navy-100 bg-white hover:border-navy-300 hover:bg-navy-50/60'}`}>
+                      <span className={`mt-0.5 flex-shrink-0 ${on ? 'text-white' : 'text-navy-400'}`}>{u.id === 'rental' ? <Car size={16} /> : <Heart size={16} />}</span>
+                      <span>
+                        <span className={`block text-sm font-semibold ${on ? 'text-white' : 'text-navy-800'}`}>{u.label}</span>
+                        <span className={`block text-[11px] leading-snug mt-0.5 ${on ? 'text-white/70' : 'text-navy-400'}`}>{u.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </Section>
 
+          {/* ── Wedding hire (wedding cars) ── */}
+          {use !== 'rental' && (
+            <Section icon={<Heart size={16} />} title="Wedding hire" hint="Used by the team to quote. The Wedding Cars page shows the decoration and highlights, and the price only if you tick it.">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Field label="Decoration">
+                  <Select value={form.wedding?.decoration ?? 'included'} onChange={(v) => setWed('decoration', v)} disabled={detailsLocked}
+                    options={[
+                      { value: 'included', label: 'Included', sub: 'In the package price' },
+                      { value: 'extra', label: 'Extra charge', sub: 'Available on request' },
+                      { value: 'none', label: 'Not offered' },
+                    ]} />
+                </Field>
+                <Field label="Package price">
+                  <Affix prefix="Rs">
+                    <input className="input pl-10" type="number" min="0" placeholder="e.g. 25000" disabled={termsLocked} value={form.wedding?.packagePrice ?? ''}
+                           onChange={(e) => setWed('packagePrice', e.target.value === '' ? null : Math.max(0, +e.target.value))} />
+                  </Affix>
+                </Field>
+                <Field label="Hours in package">
+                  <Affix suffix="hours">
+                    <input className="input pr-16" type="number" min="0" step="0.5" placeholder="e.g. 5" disabled={termsLocked} value={form.wedding?.hours ?? ''}
+                           onChange={(e) => setWed('hours', e.target.value === '' ? null : Math.max(0, +e.target.value))} />
+                  </Affix>
+                </Field>
+                <Field label="Extra hour">
+                  <Affix prefix="Rs" suffix="/ hour">
+                    <input className="input pl-10 pr-16" type="number" min="0" placeholder="e.g. 3000" disabled={termsLocked} value={form.wedding?.extraHour ?? ''}
+                           onChange={(e) => setWed('extraHour', e.target.value === '' ? null : Math.max(0, +e.target.value))} />
+                  </Affix>
+                </Field>
+              </div>
+              <div className="mt-4">
+                <Field label="Highlights (shown on the Wedding Cars page)">
+                  <input className="input" maxLength={160} disabled={detailsLocked} placeholder="e.g. White ribbons · flower bouquet · red carpet"
+                         value={form.wedding?.highlights ?? ''} onChange={(e) => setWed('highlights', e.target.value)} />
+                </Field>
+              </div>
+              <label className="mt-3 flex items-center gap-2 text-sm text-navy-700 cursor-pointer select-none">
+                <input type="checkbox" className="w-4 h-4 accent-navy-800" checked={!!form.wedding?.showPrice}
+                       disabled={termsLocked || !form.wedding?.packagePrice} onChange={(e) => setWed('showPrice', e.target.checked)} />
+                Show “From Rs {(form.wedding?.packagePrice ?? 0).toLocaleString()}” on the Wedding Cars page
+                {!form.wedding?.packagePrice && <span className="text-[11px] text-navy-400">(enter a package price first)</span>}
+              </label>
+              {!!form.wedding?.packagePrice && (
+                <p className="text-xs text-navy-500 bg-navy-50/70 rounded-lg px-3 py-2 mt-3">
+                  Customer pays <b className="text-navy-800">Rs {form.wedding.packagePrice.toLocaleString()}</b>
+                  {form.wedding.hours ? <> for <b className="text-navy-800">{form.wedding.hours} hours</b></> : null} with a driver
+                  {form.wedding.decoration === 'included' ? ', decoration included' : ''}
+                  {form.wedding.extraHour ? <>; each extra hour costs <b className="text-navy-800">Rs {form.wedding.extraHour.toLocaleString()}</b></> : null}.
+                </p>
+              )}
+            </Section>
+          )}
+
           {/* ── 2 · Owner & availability ── */}
-          <Section icon={<UserRound size={16} />} title="Owner & availability" hint="Who the car belongs to and whether it can be booked.">
+          <Section locked={detailsLocked} icon={<UserRound size={16} />} title="Owner & availability" hint="Who the car belongs to and whether it can be booked.">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Owner">
-                <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable searchable disabled={termsLocked}
+                <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable searchable disabled={teamLogin}
                   options={owners.map((o) => ({ value: o.id, label: o.name }))} />
               </Field>
               <Field label="Status">
@@ -719,8 +894,8 @@ export default function Vehicles() {
             </div>
           </Section>
 
-          {/* ── 3 · Pricing & km terms ── */}
-          <Section icon={<TrendingUp size={16} />} title="Rent & mileage terms" hint={termsLocked ? 'Set by the Managing Director — ask Brian to change the owner, rent or km terms.' : 'Used to price every booking and the extra-km charge at return.'}>
+          {/* ── 3 · Pricing & km terms (not for a wedding-only car) ── */}
+          {use !== 'wedding' && <Section icon={<TrendingUp size={16} />} title="Rent & mileage terms" hint={termsLocked ? 'Set by the Managing Director (or a team member with “Edit prices”) — ask Brian to change the rent or km terms.' : 'Used to price every booking and the extra-km charge at return.'}>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Field label="Daily rent">
                 <Affix prefix="Rs">
@@ -738,7 +913,7 @@ export default function Vehicles() {
                 </Affix>
               </Field>
               <Field label="Hill country">
-                <Select value={form.hillSuitable == null ? '' : form.hillSuitable ? 'yes' : 'no'}
+                <Select value={form.hillSuitable == null ? '' : form.hillSuitable ? 'yes' : 'no'} disabled={detailsLocked}
                   onChange={(v) => set('hillSuitable', v === '' ? null : v === 'yes')} placeholder="Not set" nullable
                   options={[{ value: 'yes', label: 'Suitable', sub: 'Kandy, Nuwara Eliya, Ella…' }, { value: 'no', label: 'Not suitable', sub: 'Flat roads only' }]} />
               </Field>
@@ -750,10 +925,10 @@ export default function Vehicles() {
                 <b className="text-navy-800">Rs {(form.extraKmRate ?? 50).toLocaleString()}</b>.
               </p>
             )}
-          </Section>
+          </Section>}
 
           {/* ── 4 · Specifications ── */}
-          <Section icon={<Wrench size={16} />} title="Specifications" hint="Shown to customers and used to match inquiries.">
+          <Section locked={detailsLocked} icon={<Wrench size={16} />} title="Specifications" hint="Shown to customers and used to match inquiries.">
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
               <Field label="Fuel type">
                 <Select value={form.fuelType ?? ''} onChange={(v) => set('fuelType', v)}
@@ -788,8 +963,25 @@ export default function Vehicles() {
             </div>
           </Section>
 
-          {/* ── 5 · Images: admin cut-out, website hero, real photos ── */}
-          <Section icon={<Camera size={16} />} title="Images" hint="Admin image for this panel, hero images for the website, and real photos.">
+          {/* ── 5a · Wedding car images: the decorated cut-out and wedding photos ── */}
+          {use !== 'rental' && (
+            <Section locked={detailsLocked} icon={<Heart size={16} />} title="Wedding car images" hint="The decorated car, for the Wedding Cars page only.">
+              <WeddingImageFields
+                enabled={supabaseEnabled}
+                cutout={{ url: wedCutPending?.preview ?? wedCutSaved, isNew: !!wedCutPending }}
+                fallback={adminPending?.preview ?? adminSaved}
+                photos={wedPhotos.map((p) => ({ key: p.key, preview: p.preview, isNew: !p.url }))}
+                onPickCutout={pickWedCutout}
+                onClearCutout={() => { setWedCutSaved(null); setWedCutPending(null); }}
+                onAddPhotos={addWedPhotos}
+                onRemovePhoto={(key) => setWedPhotos((l) => l.filter((p) => p.key !== key))}
+                onMovePhoto={moveWedPhoto}
+              />
+            </Section>
+          )}
+
+          {/* ── 5b · Rental car images: admin cut-out, website hero, real photos ── */}
+          {use !== 'wedding' && <Section locked={detailsLocked} icon={<Camera size={16} />} title={use === 'both' ? 'Rental car images' : 'Images'} hint="Admin image for this panel, hero images for the website's vehicle pages, and real photos.">
             <VehicleImageFields
               bare
               enabled={supabaseEnabled}
@@ -805,10 +997,10 @@ export default function Vehicles() {
               onMovePhoto={movePhoto}
               onRecrop={recrop}
             />
-          </Section>
+          </Section>}
 
           {/* ── 6 · Insurance ── */}
-          <Section icon={<Shield size={16} />} title="Insurance"
+          <Section locked={detailsLocked} icon={<Shield size={16} />} title="Insurance"
             hint="All four fields stop the weekly reminder to the owner."
             badge={isInsuranceComplete(form)
               ? <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">Complete</span>
@@ -984,7 +1176,7 @@ export default function Vehicles() {
               <VehicleReviews vehicleId={selected.id} canEdit={isAdmin() || (teamLogin ? can('canViewFeedback') : canActOn(selected))} />
 
               <div className="flex gap-3">
-                {canActOn(selected) && can('canEditVehicle') && (
+                {canActOn(selected) && canEditCar && (
                   <button onClick={() => { setModal(null); openEdit(selected); }} className="btn-secondary flex-1">Edit</button>
                 )}
                 <button onClick={() => setModal(null)} className="btn-primary flex-1">Close</button>
@@ -1022,8 +1214,8 @@ function Field({ label, required, children }: { label: string; required?: boolea
 }
 
 /** A titled group in the Add / Edit Vehicle form */
-function Section({ icon, title, hint, badge, children }: {
-  icon: React.ReactNode; title: string; hint?: string; badge?: React.ReactNode; children: React.ReactNode;
+function Section({ icon, title, hint, badge, locked, children }: {
+  icon: React.ReactNode; title: string; hint?: string; badge?: React.ReactNode; locked?: boolean; children: React.ReactNode;
 }) {
   return (
     <section className="rounded-2xl border border-navy-100 bg-white p-4 sm:p-5">
@@ -1033,11 +1225,13 @@ function Section({ icon, title, hint, badge, children }: {
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold text-navy-800">{title}</h3>
             {badge}
+            {locked && <span className="text-[10px] font-semibold text-navy-500 bg-navy-50 px-2 py-0.5 rounded-full">Read only</span>}
           </div>
           {hint && <p className="text-xs text-navy-400 mt-0.5">{hint}</p>}
         </div>
       </div>
-      {children}
+      {/* a disabled fieldset makes every field inside it read-only */}
+      <fieldset disabled={!!locked} className={`min-w-0 ${locked ? 'opacity-60 pointer-events-none select-none' : ''}`}>{children}</fieldset>
     </section>
   );
 }

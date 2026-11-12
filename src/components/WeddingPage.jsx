@@ -125,7 +125,7 @@ export default function WeddingPage() {
           ))}
         </ul>
 
-        <section className="wed-section wed-section--centre" aria-labelledby="wed-cars">
+        <section className={`wed-section wed-section--centre${vehicles.length > 0 ? ' wed-section--screen' : ''}`} aria-labelledby="wed-cars">
           <span className="eyebrow">Our fleet</span>
           <h2 id="wed-cars">Choose your wedding car</h2>
           {carsStatus === 'loading' && <p className="wed-note">Loading our wedding cars…</p>}

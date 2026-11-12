@@ -29,6 +29,22 @@ function guessCategory(row) {
 
 const toNum = v => (v == null || v === '' ? null : Number(v));
 
+/*
+ * A wedding car's place on the stage, set in the admin (Website → Wedding cars → Place on stage).
+ * Same meaning as admin/src/lib/weddingStage.ts: units are podium widths; null = placed automatically.
+ */
+function readStage(v) {
+  if (!v || typeof v !== 'object') return null;
+  const n = (k, d) => (typeof k === 'number' && Number.isFinite(k) ? k : d);
+  const c = v.crop || {};
+  const aspect = n(v.aspect, 0);
+  if (aspect <= 0) return null;
+  return {
+    x: n(v.x, 0), y: n(v.y, 0), scale: n(v.scale, 1), rotate: n(v.rotate, 0), flip: v.flip === true,
+    crop: { t: n(c.t, 0), r: n(c.r, 0), b: n(c.b, 0), l: n(c.l, 0) }, aspect,
+  };
+}
+
 function toCard(row) {
   const cat = row.category || guessCategory(row);
   const fuel = row.fuel_type || '';
@@ -40,6 +56,15 @@ function toCard(row) {
     catLabel: CATEGORY_LABELS[cat] ?? cat,
     // Three image kinds from the admin: cut-out, hero photo, real photos
     cutoutImg: row.image_url || null,
+    stage: readStage(row.wedding_stage),  // wedding page only
+    // wedding page only (admin: Vehicles → Edit → Wedding hire). Decoration null = not set yet.
+    wedding: {
+      decoration: row.wedding_decoration ?? null,     // 'included' | 'extra' | 'none'
+      highlights: row.wedding_highlights || '',
+      price: toNum(row.wedding_price),                // only when the admin ticked "show price"
+      hours: toNum(row.wedding_hours),
+      photos: Array.isArray(row.wedding_photos) ? row.wedding_photos.filter(Boolean) : [],   // the decorated car
+    },
     heroImg: row.hero_image_url || null,
     photos: Array.isArray(row.photo_urls) ? row.photo_urls.filter(Boolean) : [],
     // Card cover: the hero image chosen in the admin, else the first real photo, else the cut-out

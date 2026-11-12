@@ -17,8 +17,9 @@ export const ABILITIES: AbilityInfo[] = [
   { key: 'canViewIncomplete',   group: 'Bookings', label: 'Incomplete records',       hint: 'Bookings missing details or documents' },
   { key: 'canViewHandovers',    group: 'Fleet',    label: 'Deliver & collect cars',   hint: 'Start and complete rentals: odometer, fuel, condition, photos' },
   { key: 'canChangeStatus',     group: 'Fleet',    label: 'Change vehicle status',    hint: 'Available, maintenance and other operational statuses' },
-  { key: 'canEditVehicle',      group: 'Fleet',    label: 'Edit vehicle details',     hint: 'Photos, insurance, specs (never the owner, prices or website listing)' },
+  { key: 'canEditVehicle',      group: 'Fleet',    label: 'Edit vehicle details',     hint: 'Photos, insurance, specs (not the prices, owner or website listing)' },
   { key: 'canManageBreakdowns', group: 'Fleet',    label: 'Breakdowns',               hint: 'Report and manage breakdowns, replacement cars' },
+  { key: 'canEditPrices',       group: 'Money',    label: 'Edit vehicle prices',      hint: 'A car’s fixed price: daily rent, included km, extra-km rate and wedding package (Vehicles → Edit)' },
   { key: 'canTakePayments',     group: 'Money',    label: 'Payments & deposits',      hint: 'Record payments, refunds, deposits, discounts and extra charges' },
   { key: 'canViewFinance',      group: 'Money',    label: 'Finance',                  hint: 'Commissions, owner payouts, credit page' },
   { key: 'canViewReferrals',    group: 'Money',    label: 'Referral fees',            hint: 'Referrals page' },
@@ -42,7 +43,7 @@ export const JOBS: JobInfo[] = [
   {
     key: 'finance', label: 'Finance & Administration', person: 'Dinithi',
     summary: 'WhatsApp inquiries, booking records, payments, deposits, expenses, commissions and owner settlements (Brian approves).',
-    abilities: ['canBook', 'canViewInquiries', 'canViewIncomplete', 'canTakePayments', 'canViewFinance', 'canViewReferrals',
+    abilities: ['canBook', 'canViewInquiries', 'canViewIncomplete', 'canTakePayments', 'canEditPrices', 'canViewFinance', 'canViewReferrals',
                 'canViewExpenses', 'canAddExpenses', 'canViewCustomers', 'canViewOwners'],
   },
   {

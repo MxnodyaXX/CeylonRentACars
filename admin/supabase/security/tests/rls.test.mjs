@@ -705,6 +705,15 @@ await as('veh', () => db.query("update vehicles set color = 'Red', daily_rent = 
 vA = (await db.query("select * from vehicles where id = 'vA'")).rows[0];
 ok(vA.color === 'Red' && Number(vA.daily_rent) === 6000 && !vA.web_featured, 'vehicle editors change details, never the price or website listing');
 ok((await as('none', () => db.query("update vehicles set status = 'Available' where id = 'vA' returning id"))).rows.length === 0, 'a login without car-related abilities cannot change cars');
+claims.prices = staff({ canEditPrices: true });
+await as('prices', () => db.query("update vehicles set daily_rent = 7000, extra_km_rate = 60, included_km_per_day = 120, color = 'Blue', web_price = 1, owner_id = 'oB' where id = 'vA'"));
+vA = (await db.query("select * from vehicles where id = 'vA'")).rows[0];
+ok(Number(vA.daily_rent) === 7000 && Number(vA.extra_km_rate) === 60 && Number(vA.included_km_per_day) === 120, 'with "Edit prices" a team member changes a car\'s fixed prices');
+ok(vA.color === 'Red' && vA.web_price === null && vA.owner_id === 'oA', '…but not its other details, website price or owner (without "Edit vehicle details")');
+claims.vehPrices = staff({ canEditVehicle: true, canEditPrices: true });
+await as('vehPrices', () => db.query("update vehicles set daily_rent = 6000, color = 'White' where id = 'vA'"));
+vA = (await db.query("select * from vehicles where id = 'vA'")).rows[0];
+ok(Number(vA.daily_rent) === 6000 && vA.color === 'White', 'with both, details and prices change together');
 
 await as('fin', () => db.query("update owners set pending_payout = 100, commission_rate = 1, bank_account = 'x', phone = '1' where id = 'oA'"));
 const oA = (await db.query("select * from owners where id = 'oA'")).rows[0];
@@ -892,6 +901,58 @@ ok((await db.query("select count(*) n from security_check where result = 'FAIL'"
 await db.exec(sql('security/rollback/18_rollback_company_accounts.sql'));
 ok((await db.query("select to_regprocedure('public.review_company_expense(text,boolean,text)') f")).rows[0].f === null
    && Number((await db.query('select count(*) n from company_expenses')).rows[0].n) >= 3, 'rollback removes the functions and keeps the records');
+
+console.log('\nWEDDING CARS AS A KIND OF VEHICLE (20)');
+await db.exec(sql('security/14_wedding_cars.sql'));
+await db.exec(sql('security/20_wedding_vehicles.sql'));
+await db.exec(sql('security/20_wedding_vehicles.sql'));   // safe to re-run
+await db.exec("update vehicles set web_featured = true, web_wedding = false, wedding_only = false");
+await db.exec(`update vehicles set web_wedding = true, wedding_only = true,
+  wedding_details = '{"decoration":"included","packagePrice":25000,"hours":5,"extraHour":3000,"showPrice":true,"highlights":"White ribbons"}'
+  where id = 'vB'`);
+await db.exec(`update vehicles set web_wedding = true,
+  wedding_details = '{"decoration":"extra","packagePrice":18000,"showPrice":false}' where id = 'vA'`);
+const anonIds = (view) => as('anon', () => ids(`select id from ${view}`));
+ok(JSON.stringify(await anonIds('catalog_vehicles')) === '["vA"]', 'a wedding-only car is not on the All Vehicles page');
+ok(JSON.stringify(await anonIds('website_vehicles')) === '["vA"]', '…nor on the landing page, even when listed there');
+ok(JSON.stringify(await anonIds('popular_vehicles')) === '["vA"]', '…nor in Popular Vehicles');
+ok(JSON.stringify(await anonIds('wedding_vehicles')) === '["vA","vB"]', 'the Wedding Cars page shows both wedding cars');
+const wedRows = Object.fromEntries((await as('anon', async () => (await db.query('select * from wedding_vehicles')).rows)).map((r) => [r.id, r]));
+ok(wedRows.vB.wedding_decoration === 'included' && wedRows.vB.wedding_highlights === 'White ribbons'
+   && Number(wedRows.vB.wedding_price) === 25000 && Number(wedRows.vB.wedding_hours) === 5, 'it shows the decoration, highlights, and the price when ticked');
+ok(wedRows.vA.wedding_price === null && wedRows.vA.wedding_decoration === 'extra', 'no price when "show price" is off');
+await db.exec("update vehicles set image_url = 'https://x/rental.png' where id in ('vA', 'vB')");
+await db.exec(`update vehicles set wedding_details = wedding_details || '{"cutout":"https://x/decorated.png","photos":["https://x/w1.jpg","https://x/w2.jpg"]}' where id = 'vB'`);
+const wedPics = Object.fromEntries((await as('anon', async () => (await db.query('select id, image_url, wedding_photos from wedding_vehicles')).rows)).map((r) => [r.id, r]));
+ok(wedPics.vB.image_url === 'https://x/decorated.png' && JSON.stringify(wedPics.vB.wedding_photos) === '["https://x/w1.jpg","https://x/w2.jpg"]', 'the page gets the decorated cut-out and the wedding photos');
+ok(wedPics.vA.image_url === 'https://x/rental.png' && JSON.stringify(wedPics.vA.wedding_photos) === '[]', 'without them, the car\'s own cut-out and no wedding photos');
+ok(!['wedding_details', 'daily_rent', 'web_price', 'vehicle_number', 'owner_id'].some((c) => c in wedRows.vB), 'the extra-hour rate, plate and owner stay private');
+ok(!!(await tryQ("update vehicles set web_wedding = false where id = 'vB'")), 'a wedding-only car cannot be taken off the Wedding Cars page');
+await db.exec("update vehicles set wedding_details = '{\"showPrice\":true,\"packagePrice\":\"lots\"}' where id = 'vA'");
+ok((await db.query("select wedding_price from wedding_vehicles where id = 'vA'")).rows[0].wedding_price === null, 'a bad price is ignored, not an error');
+ok(!!(await as('anon', () => tryQ("update vehicles set wedding_only = false where id = 'vB'"))), 'visitors cannot change it');
+// the team (16 is in place here): prices need "Edit prices", the rest "Edit vehicle details", the use is Brian's
+await db.exec(sql('security/16_staff_roles.sql'));
+await db.exec(sql('security/20_wedding_vehicles.sql'));
+const wedD = async () => (await db.query("select wedding_only, wedding_details d from vehicles where id = 'vB'")).rows[0];
+await db.exec(`update vehicles set wedding_details = '{"decoration":"included","packagePrice":25000,"hours":5,"extraHour":3000,"showPrice":true,"highlights":"White ribbons"}' where id = 'vB'`);
+await as('veh', () => db.query(`update vehicles set wedding_only = false, wedding_details = '{"decoration":"extra","packagePrice":1,"hours":1,"extraHour":1,"showPrice":false,"highlights":"New"}' where id = 'vB'`));
+let wd = await wedD();
+ok(wd.wedding_only === true && wd.d.decoration === 'extra' && wd.d.highlights === 'New' && wd.d.packagePrice === 25000 && wd.d.extraHour === 3000 && wd.d.showPrice === true,
+   'a vehicle editor changes the decoration and highlights, not the wedding prices or the car\'s use');
+await as('prices', () => db.query(`update vehicles set wedding_details = '{"decoration":"none","packagePrice":30000,"hours":6,"extraHour":3500,"showPrice":false,"highlights":"x"}' where id = 'vB'`));
+wd = await wedD();
+ok(wd.d.packagePrice === 30000 && wd.d.hours === 6 && wd.d.extraHour === 3500 && wd.d.showPrice === false && wd.d.decoration === 'extra' && wd.d.highlights === 'New',
+   'with "Edit prices" the wedding package prices change, nothing else');
+await as('vehPrices', () => db.query(`update vehicles set wedding_details = '{"decoration":"included","packagePrice":32000,"highlights":"Both"}' where id = 'vB'`));
+wd = await wedD();
+ok(wd.d.packagePrice === 32000 && wd.d.decoration === 'included' && wd.d.highlights === 'Both', 'with both, everything changes');
+await db.exec(sql('security/verify.sql'));
+ok((await db.query("select count(*) n from security_check where result = 'FAIL'")).rows[0].n == 0, 'verify.sql still all PASS with 20');
+await db.exec(sql('security/rollback/20_rollback_wedding_vehicles.sql'));
+ok(JSON.stringify(await anonIds('catalog_vehicles')) === '["vA","vB"]'
+   && (await db.query("select count(*) n from information_schema.columns where table_name = 'vehicles' and column_name in ('wedding_only', 'wedding_details')")).rows[0].n == 0
+   && Number((await db.query('select count(*) n from vehicles where web_wedding')).rows[0].n) === 2, 'rollback puts every car back on the rental pages and keeps the wedding ticks');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

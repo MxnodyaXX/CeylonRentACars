@@ -2262,112 +2262,187 @@ a.pt-stat:hover { border-color: var(--line-2); }
 .wed-section--centre { text-align: center; }
 .wed-section--centre .eyebrow { justify-content: center; }
 .wedding-page { overflow-x: clip; }
-.wed-show { --gold: #d9b779; --stage-h: clamp(240px, calc(100vh - 404px), 820px); position: relative; margin-top: 0; }
-@supports (height: 100svh) { .wed-show { --stage-h: clamp(240px, calc(100svh - 404px), 820px); } }
-/* the stage picture, full width; on narrow screens it is cropped at the sides, never squashed */
-.wed-stage { position: relative; width: 100vw; margin-left: calc(50% - 50vw); height: var(--stage-h); touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; overflow: hidden;
-  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 9%, #000 90%, transparent 100%); mask-image: linear-gradient(180deg, transparent 0, #000 9%, #000 90%, transparent 100%); }
-.wed-stage:active { cursor: grabbing; }
-.wed-frame { position: absolute; left: 50%; bottom: 0; width: max(calc(var(--stage-h) * 1672 / 941), min(100%, calc(var(--stage-h) * 2.3))); aspect-ratio: 1672 / 941;
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); transform: translateX(-50%); perspective: 1600px; perspective-origin: 50% 60%; }
-.wed-frame__bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
-/* the scene's origin is the middle of the podium's top */
-.wed-scene { position: absolute; left: calc(var(--podium-x) * 100%); top: calc(var(--podium-y) * 100%); width: 0; height: 0; transform-style: preserve-3d; transform: translateZ(calc(var(--ring-r) * -1)); }
+/* ---- Wedding cars: the showroom (one car on a lit floor, its name top left; src/components/WeddingShowcase.jsx) ---- */
+.wsr { --slide: 600ms; --slide-ease: cubic-bezier(.22, 1, .36, 1); position: relative; margin-top: 18px; text-align: left; outline: none;
+  padding: clamp(18px, 3vw, 34px) clamp(16px, 3vw, 40px) clamp(20px, 3vw, 32px); border-radius: var(--r-lg); border: 1px solid var(--line); overflow: hidden; isolation: isolate;
+  background: radial-gradient(60% 50% at 50% 66%, rgba(255,255,255,.075), transparent 72%), radial-gradient(40% 22% at 50% 82%, rgba(225,29,42,.16), transparent 75%), linear-gradient(180deg, var(--surface), var(--bg-2)); }
+.wsr::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: linear-gradient(90deg, transparent, rgba(225,29,42,.6), transparent); }
 
-/* the cars: just the car, standing on the podium; the ones round the side wait in the dark */
-.wed-car { --depth: 1; position: absolute; left: calc(var(--car-w) / -2); bottom: -2px; width: var(--car-w); display: flex; justify-content: center; align-items: flex-end; transform-origin: 50% 100%;
-  opacity: clamp(0, calc((var(--depth) - .18) * 2.4), 1);
-  filter: brightness(calc(.12 + var(--depth) * var(--depth) * .88)) drop-shadow(0 14px 14px rgba(0,0,0,.55)) blur(calc(var(--speed, 0) * 2.4px)); }
-.wed-car img { display: block; width: 100%; height: auto; max-height: calc(var(--car-w) * .72); object-fit: contain; object-position: 50% 100%; pointer-events: none;
-  -webkit-box-reflect: below -2px linear-gradient(transparent 72%, rgba(255,255,255,.16)); }
+/* the name and details */
+.wsr-head { position: relative; z-index: 3; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.wsr-meta { min-width: 0; transition: transform var(--slide) var(--slide-ease), opacity var(--slide) var(--slide-ease); }
+.wsr-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.wsr-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--muted); background: rgba(255,255,255,.06); border: 1px solid var(--line); }
+.wsr-badge--red { color: #fff; background: var(--red); border-color: var(--red); text-transform: uppercase; letter-spacing: .1em; font-weight: 800; box-shadow: var(--shadow-red); }
+.wsr-badge--ok { color: #86efac; background: rgba(34,197,94,.1); border-color: rgba(34,197,94,.3); }
+.wsr-badge .ic { width: 13px; height: 13px; }
+.wsr-name { margin: 0; font-size: clamp(38px, 6.6vw, 86px); font-weight: 800; line-height: .92; letter-spacing: -.035em; text-transform: uppercase; color: var(--text); overflow-wrap: anywhere; }
+.wsr-specs { margin: 10px 0 0; font-size: clamp(11px, 1.1vw, 13px); font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+.wsr-actions { flex: none; padding-top: 8px; }
+/* the wedding hire terms from the admin: price (when shown) and highlights */
+.wsr-extra { margin: 10px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+.wsr-price { display: inline-flex; align-items: baseline; gap: 6px; }
+.wsr-price small { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.wsr-price strong { font-size: clamp(18px, 2vw, 24px); font-weight: 800; color: var(--red-hi); letter-spacing: -.01em; }
+.wsr-price span { font-size: 13px; font-weight: 600; color: var(--muted); }
+.wsr-hl { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.wsr-hl .ic { color: var(--red-hi); width: 14px; height: 14px; flex: none; }
+.wsr-btns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.wsr-btns.is-block { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
+.wsr-btns.is-block .btn { width: 100%; padding-inline: 12px; }
+
+/* the wedding photos, full screen */
+.wsr-viewer { position: fixed; inset: 0; z-index: 120; display: flex; align-items: center; justify-content: center; padding: 64px 16px 112px;
+  background: rgba(5,5,6,.94); backdrop-filter: blur(6px); animation: wsr-fade .25s ease both; }
+.wsr-viewer__top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; font-size: 14px; color: var(--muted); }
+.wsr-viewer__top b { color: var(--text); }
+.wsr-viewer__top button, .wsr-viewer__nav { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--text); background: rgba(255,255,255,.08); border: 1px solid var(--line-2); transition: background .2s; }
+.wsr-viewer__top button:hover, .wsr-viewer__nav:hover { background: var(--red); border-color: var(--red); }
+.wsr-viewer__img { max-width: min(1200px, 100%); max-height: 100%; object-fit: contain; border-radius: 12px; box-shadow: 0 30px 80px -20px rgba(0,0,0,.8); animation: wsr-fade .3s ease both; }
+.wsr-viewer__nav { position: absolute; top: 50%; margin-top: -22px; }
+.wsr-viewer__nav.is-prev { left: 16px; }
+.wsr-viewer__nav.is-next { right: 16px; }
+.wsr-viewer__thumbs { position: absolute; left: 0; right: 0; bottom: 18px; display: flex; justify-content: center; gap: 8px; padding: 0 16px; overflow-x: auto; }
+.wsr-viewer__thumbs button { flex: none; width: 72px; height: 54px; border-radius: 8px; overflow: hidden; opacity: .5; border: 2px solid transparent; transition: opacity .2s, border-color .2s; }
+.wsr-viewer__thumbs button.is-active, .wsr-viewer__thumbs button:hover { opacity: 1; }
+.wsr-viewer__thumbs button.is-active { border-color: var(--red); }
+.wsr-viewer__thumbs img { width: 100%; height: 100%; object-fit: cover; }
+@media (max-width: 640px) { .wsr-viewer__nav { display: none; } }
+@keyframes wsr-fade { from { opacity: 0; } to { opacity: 1; } }
+/* swapping the text in step with the cars */
+.wsr-meta.is-exit-up { transform: translateY(-18px); opacity: 0; }
+.wsr-meta.is-exit-down { transform: translateY(18px); opacity: 0; }
+.wsr-meta.is-enter-below { transform: translateY(22px); opacity: 0; transition: none; }
+.wsr-meta.is-enter-above { transform: translateY(-22px); opacity: 0; transition: none; }
+
+/* the cars section fills the screen under the header exactly (heading + showroom, nothing else);
+   scrolling near it settles on it */
+html:has(.wed-section--screen) { scroll-snap-type: y proximity; }
+.wed-section--screen { box-sizing: border-box; height: calc(100vh - var(--header-h)); min-height: 520px; padding: 14px 0 18px; display: flex; flex-direction: column;
+  scroll-margin-top: -12px; scroll-snap-align: start; }
+@supports (height: 100svh) { .wed-section--screen { height: calc(100svh - var(--header-h)); } }
+.wed-section--screen > .eyebrow { margin-bottom: 4px; }
+.wed-section--screen > h2 { margin: 2px 0 12px; }
+.wed-section--screen .wsr { flex: 1 1 auto; min-height: 0; margin-top: 0; display: flex; flex-direction: column; }
+.wed-section--screen .wsr-stage { flex: 1 1 auto; height: auto; min-height: 200px; }
+
+/* the stage */
+.wsr-stage { position: relative; height: clamp(250px, 31vw, 430px); margin-top: clamp(-48px, -2.6vw, 0px); display: flex; align-items: center; justify-content: center; touch-action: pan-y; user-select: none; -webkit-user-select: none; outline: none; border-radius: var(--r); }
+.wsr-stage:focus-visible { box-shadow: inset 0 0 0 2px var(--red-hi); }
+.wsr-watermark { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; font-size: clamp(54px, 11vw, 170px); font-weight: 800; letter-spacing: .04em; line-height: 1; text-transform: uppercase; white-space: nowrap; color: rgba(255,255,255,.035); z-index: 0; }
+.wsr-floor { position: absolute; left: 0; right: 0; bottom: clamp(14px, 3vw, 40px); height: clamp(90px, 12vw, 140px); display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 1; }
+.wsr-floor__glow { position: absolute; width: min(82%, 820px); height: 70%; border-radius: 50%; background: radial-gradient(closest-side, rgba(255,255,255,.12), rgba(225,29,42,.08) 55%, transparent); filter: blur(10px); }
+.wsr-floor__shadow { position: absolute; width: min(66%, 720px); height: 34%; border-radius: 50%; background: radial-gradient(closest-side, rgba(0,0,0,.85), rgba(0,0,0,.4) 60%, transparent); filter: blur(7px); transform: translateY(2px); transition: transform .5s var(--slide-ease); }
+.wsr-stage.is-moving .wsr-floor__shadow { transform: translateY(2px) scaleX(.9); }
+.wsr-floor svg { position: absolute; left: 50%; bottom: 0; width: min(96%, 1080px); height: 82%; transform: translateX(-50%); overflow: visible; }
+
+/* the cars */
+.wsr-slot { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.wsr-car { --w: min(80%, 1040px); position: absolute; left: calc(50% - var(--w) / 2); bottom: clamp(30px, 5vw, 58px); width: var(--w); height: 82%; container-type: size;
+  display: flex; align-items: flex-end; justify-content: center; transform-origin: 50% 82%; will-change: transform, opacity; filter: drop-shadow(0 18px 18px rgba(0,0,0,.5)); }
+.wsr-car.is-center { transform: translate3d(0,0,0) scale(1); opacity: 1; z-index: 2; }
+.wsr-car.is-exit-left { transform: translate3d(-112%,0,0) scale(.86); opacity: 0; z-index: 1; }
+.wsr-car.is-exit-right { transform: translate3d(112%,0,0) scale(.86); opacity: 0; z-index: 1; }
+.wsr-car.is-enter-right { transform: translate3d(92%,0,0) scale(.85); opacity: 0; z-index: 2; }
+.wsr-car.is-enter-left { transform: translate3d(-92%,0,0) scale(.85); opacity: 0; z-index: 2; }
+.wsr-car.is-anim { transition: transform var(--slide) var(--slide-ease), opacity var(--slide) var(--slide-ease); }
+/* changing car: motion blur while it moves */
+.wsr-car.is-anim.is-center > .wsr-pic { animation: wsr-unblur var(--slide) var(--slide-ease) both; }
+.wsr-car.is-anim:not(.is-center) > .wsr-pic { animation: wsr-blurout var(--slide) var(--slide-ease) both; }
+@keyframes wsr-unblur { from { filter: blur(7px) brightness(.6); } to { filter: none; } }
+@keyframes wsr-blurout { from { filter: none; } to { filter: blur(7px) brightness(.5); } }
+/* … a band of light runs over the bodywork as it arrives (masked to the car's own shape) */
+.wsr-shine { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: screen;
+  background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,.8) 49%, rgba(255,140,150,.55) 53%, transparent 62%) no-repeat; background-size: 300% 100%;
+  -webkit-mask: var(--src) 50% 100% / contain no-repeat; mask: var(--src) 50% 100% / contain no-repeat;
+  animation: wsr-shine 1.1s cubic-bezier(.3,.1,.2,1) both; }
+.wsr-shine--fill { inset: auto; -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
+@keyframes wsr-shine { 0% { opacity: 1; background-position: 100% 0; } 80% { opacity: 1; } 100% { opacity: 0; background-position: 0 0; } }
+/* … a red ring ripples out across the floor under it */
+.wsr-floor__ring { position: absolute; width: min(62%, 680px); height: 34%; }
+.wsr-floor__ring i { position: absolute; inset: 0; border-radius: 50%; opacity: 0; border: 2px solid rgba(255,51,65,.9); box-shadow: 0 0 20px rgba(225,29,42,.7), inset 0 0 14px rgba(225,29,42,.4);
+  animation: wsr-ring 1.15s cubic-bezier(.2,.7,.3,1) both; }
+.wsr-floor__ring i + i { animation-delay: .18s; }
+@keyframes wsr-ring { 0% { opacity: 0; transform: scale(.35); } 20% { opacity: 1; } 100% { opacity: 0; transform: scale(1.3); } }
+/* … a streak of light shoots along the floor the way the cars are going */
+.wsr-floor__streak { position: absolute; left: 30%; bottom: 30%; width: 40%; height: 2px; border-radius: 2px; opacity: 0;
+  background: linear-gradient(90deg, transparent, #fff 45%, var(--red-hi) 70%, transparent); box-shadow: 0 0 14px 1px rgba(255,51,65,.75); }
+.wsr-floor__streak.is-next { animation: wsr-streak-l .75s cubic-bezier(.3,.6,.2,1) both; }
+.wsr-floor__streak.is-prev { animation: wsr-streak-r .75s cubic-bezier(.3,.6,.2,1) both; transform: scaleX(-1); }
+@keyframes wsr-streak-l { 0% { opacity: 0; transform: translateX(110%) scaleX(.4); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateX(-110%) scaleX(1.2); } }
+@keyframes wsr-streak-r { 0% { opacity: 0; transform: translateX(-110%) scaleX(-.4); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateX(110%) scaleX(-1.2); } }
+/* … the watermark slides in with it */
+.wsr-watermark { animation: wsr-wm .8s var(--slide-ease) both; }
+.wsr-watermark.is-prev { --wm-from: -8%; }
+@keyframes wsr-wm { from { opacity: 0; transform: translateX(var(--wm-from, 8%)); } to { opacity: 1; transform: none; } }
+/* … and the name rises in letter by letter */
+.wsr-word { display: inline-block; white-space: nowrap; }
+.wsr-char { display: inline-block; animation: wsr-char .7s cubic-bezier(.2,.8,.2,1) calc(var(--i) * 28ms) both; }
+@keyframes wsr-char { from { opacity: 0; transform: translateY(.45em); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }
+.wsr-pic { display: block; max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; object-position: 50% 100%; pointer-events: none;
+  -webkit-box-reflect: below -2px linear-gradient(transparent 76%, rgba(255,255,255,.14)); }
+/* a cut-out trimmed / flipped in the admin: sized like object-fit: contain */
+.wsr-pic--crop { position: relative; flex: none; width: min(100cqw, calc(100cqh * var(--ar))); height: auto; aspect-ratio: var(--ar); }
+.wsr-pic--crop > span { position: absolute; inset: 0; overflow: hidden; }
+.wsr-pic--crop img { position: absolute; max-width: none; max-height: none; }
 /* a photo with its own background: fade its edges into the stage */
-.wed-car img.is-photo { aspect-ratio: 16 / 10; object-fit: cover; border-radius: 50% / 40%;
-  -webkit-mask-image: radial-gradient(closest-side, #000 62%, transparent); mask-image: radial-gradient(closest-side, #000 62%, transparent); -webkit-box-reflect: none; }
-.wed-car > .ic { width: 30%; height: auto; color: var(--muted); }
-@media (max-width: 640px) {
-  .wed-show { --stage-h: 92vw; }
-  .wed-frame { width: max(100%, calc(92vw * 1672 / 941)); -webkit-mask-image: none; mask-image: none; }
+.wsr-pic.is-photo { width: auto; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 50% / 40%; -webkit-box-reflect: none;
+  -webkit-mask-image: radial-gradient(closest-side, #000 62%, transparent); mask-image: radial-gradient(closest-side, #000 62%, transparent); }
+.wsr-pic--none { display: grid; place-items: center; color: var(--muted); -webkit-box-reflect: none; }
+.wsr-pic--none .ic { width: 30%; height: auto; }
+
+/* the next car, peeking in at the right edge */
+.wsr-peek { display: none; position: absolute; right: clamp(-150px, -9vw, -100px); bottom: clamp(40px, 5vw, 66px); width: 300px; z-index: 3; flex-direction: column; align-items: flex-end; text-align: right; cursor: pointer; }
+.wsr-peek__tag { margin-right: 138px; margin-bottom: 4px; display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; color: var(--text);
+  background: rgba(18,18,21,.85); backdrop-filter: blur(6px); border: 1px solid var(--line-2); transition: border-color .2s, color .2s; }
+.wsr-peek__tag em { font-style: normal; font-size: 10px; letter-spacing: .12em; color: var(--dim); }
+.wsr-peek__tag .ic { color: var(--red-hi); transition: transform .2s; }
+.wsr-peek__img { display: flex; align-items: flex-end; width: 290px; height: 140px; container-type: size; opacity: .5; filter: brightness(.7); transition: transform .42s var(--slide-ease), opacity .42s, filter .42s; }
+.wsr-peek__img .wsr-pic { object-position: 0 100%; -webkit-box-reflect: none; }
+.wsr-peek:hover .wsr-peek__img, .wsr-peek:focus-visible .wsr-peek__img { transform: translateX(-10px) scale(1.04); opacity: .85; filter: none; }
+.wsr-peek:hover .wsr-peek__tag, .wsr-peek:focus-visible .wsr-peek__tag { border-color: var(--red); color: var(--red-hi); }
+.wsr-peek:hover .wsr-peek__tag .ic { transform: translateX(2px); }
+
+/* arrows at the sides of the stage */
+.wsr-arrow { position: absolute; top: 50%; z-index: 3; width: 46px; height: 46px; margin-top: -23px; border-radius: 50%; display: grid; place-items: center; color: var(--text);
+  background: rgba(18,18,21,.8); border: 1px solid var(--line-2); backdrop-filter: blur(6px); transition: background .2s, border-color .2s, transform .2s; }
+.wsr-arrow:hover { background: var(--red); border-color: var(--red); }
+.wsr-arrow:active { transform: scale(.95); }
+.wsr-arrow--prev { left: 0; }
+.wsr-arrow--next { right: 0; }
+
+/* the control bar on the floor line */
+.wsr-controls { position: relative; z-index: 3; margin-top: -8px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.wsr-bar { display: inline-flex; align-items: center; gap: clamp(4px, 1.5vw, 14px); padding: 6px clamp(8px, 1.5vw, 16px); border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line-2); box-shadow: var(--shadow); }
+.wsr-bar > button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; color: var(--text); transition: background .2s; }
+.wsr-bar > button:hover { background: rgba(255,255,255,.07); }
+.wsr-bar > button .ic { color: var(--red-hi); }
+.wsr-bar__mid { display: flex; align-items: center; gap: 10px; padding: 0 12px; border-left: 1px solid var(--line-2); border-right: 1px solid var(--line-2); }
+.wsr-count { min-width: 52px; text-align: center; font-size: 13px; font-weight: 800; letter-spacing: .1em; font-variant-numeric: tabular-nums; }
+.wsr-dots { display: flex; align-items: center; gap: 6px; }
+.wsr-dots button { width: 9px; height: 9px; border-radius: 999px; background: rgba(255,255,255,.22); transition: width .3s var(--ease), background .3s; }
+.wsr-dots button:hover { background: rgba(255,255,255,.45); }
+.wsr-dots button.is-active { width: 26px; background: var(--red); }
+.wsr-hint { margin: 0; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.wsr-hint kbd { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 5px; border-radius: 5px; font: inherit; font-size: 11px; color: var(--muted); background: rgba(255,255,255,.05); border: 1px solid var(--line-2); }
+.wsr-hint--keys { display: none; }
+.wsr-mobile-actions { display: none; margin: 16px auto 0; max-width: 420px; }
+.wsr-mobile-actions .btn { justify-content: center; }
+
+@media (min-width: 1024px) {
+  .wsr-peek { display: flex; }
+  .wsr-arrow--next { display: none; }
+  .wsr-hint--touch { display: none; }
+  .wsr-hint--keys { display: inline-flex; }
 }
-
-/* a car lands on the podium: a band of light runs over the bodywork (masked to the car's own shape),
-   a gold ring ripples out across the podium and a thin flare streaks through the stage */
-.wed-car__shine { position: absolute; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: screen;
-  background: linear-gradient(105deg, transparent 38%, rgba(255,255,255,.9) 48%, rgba(255,232,196,.55) 53%, transparent 62%) 160% 0 / 260% 100% no-repeat;
-  -webkit-mask: var(--src) 50% 100% / contain no-repeat; mask: var(--src) 50% 100% / contain no-repeat; }
-.wed-car__shine.is-landing { animation: wed-shine 1.15s cubic-bezier(.3,.1,.2,1) .05s; }
-@keyframes wed-shine { 0% { opacity: 1; background-position: 160% 0; } 80% { opacity: 1; } 100% { opacity: 0; background-position: -60% 0; } }
-.wed-land { position: absolute; left: calc(var(--podium-x) * 100%); top: calc(var(--podium-y) * 100%); width: calc(var(--car-w) * 1.55); height: calc(var(--car-w) * .16); transform: translate(-50%, -50%); pointer-events: none; }
-.wed-land i { position: absolute; inset: 0; border-radius: 50%; opacity: 0; border: 2px solid rgba(232,200,140,.95); box-shadow: 0 0 18px rgba(232,200,140,.7), inset 0 0 14px rgba(232,200,140,.45); }
-.wed-land b { position: absolute; left: 50%; top: calc(var(--car-w) * -.14); width: 190%; height: 2px; border-radius: 2px; opacity: 0; transform: translateX(-50%) scaleX(0);
-  background: linear-gradient(90deg, transparent, rgba(255,214,170,.5) 30%, #fff 50%, rgba(255,214,170,.5) 70%, transparent); box-shadow: 0 0 14px 3px rgba(255,190,140,.55); }
-.wed-land.is-landing i { animation: wed-ring 1.2s cubic-bezier(.2,.7,.3,1) both; }
-.wed-land.is-landing i + i { animation-delay: .2s; }
-.wed-land.is-landing b { animation: wed-streak 1s cubic-bezier(.2,.7,.3,1) .08s both; }
-@keyframes wed-ring { 0% { opacity: 0; transform: scale(.35); } 18% { opacity: 1; } 100% { opacity: 0; transform: scale(1.25); } }
-@keyframes wed-streak { 0% { opacity: 0; transform: translateX(-50%) scaleX(0); } 25% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) scaleX(1); } }
-
-/* the car's name rises in letter by letter out of a soft blur */
-.wed-word { display: inline-block; white-space: nowrap; }
-.wed-char { display: inline-block; animation: wed-char .75s cubic-bezier(.2,.8,.2,1) calc(var(--i) * 30ms) both; }
-@keyframes wed-char { from { opacity: 0; transform: translateY(.42em); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .wed-car__shine.is-landing, .wed-land.is-landing i, .wed-land.is-landing b { animation: none; }
-  .wed-char { animation: wed-fade .5s ease both; }
+@media (max-width: 767px) {
+  .wsr-actions { display: none; }
+  .wsr-mobile-actions { display: block; }
+  .wsr-arrow { display: none; }
+  .wsr-bar > button span { display: none; }
+  .wsr-dots { gap: 5px; }
+  .wsr-car { --w: 94%; }
 }
-
-/* the curtains: closed over the stage, they gather to the sides when it scrolls into view */
-/* two fold patterns of different widths on top of each other, so the velvet doesn't look machine-made */
-.wed-curtain { --velvet: repeating-linear-gradient(90deg, transparent 0, rgba(0,0,0,.34) 1.9%, transparent 4.3%), repeating-linear-gradient(90deg, #56000a 0, #9e0f1d 2.2%, #dd2538 3.2%, #b3122a 4.3%, #66000c 6.2%);
-  position: absolute; left: 50%; top: 0; width: 100vw; height: var(--stage-h); transform: translateX(-50%); z-index: 6; pointer-events: none; overflow: hidden;
-  -webkit-mask-image: linear-gradient(180deg, #000 88%, transparent); mask-image: linear-gradient(180deg, #000 88%, transparent); }
-.wed-curtain i { position: absolute; top: 0; bottom: 0; width: 50.5%; background: linear-gradient(180deg, rgba(0,0,0,.5), transparent 20%, rgba(255,120,120,.06) 50%, transparent 72%, rgba(0,0,0,.65)), var(--velvet);
-  transition: transform 2.2s cubic-bezier(.65,0,.25,1) .25s, filter 2.2s ease .25s, opacity .45s ease 2.1s; will-change: transform; }
-.wed-curtain__l { left: 0; transform-origin: 0 50%; box-shadow: inset -26px 0 30px -12px rgba(0,0,0,.75); }
-.wed-curtain__r { right: 0; transform-origin: 100% 50%; box-shadow: inset 26px 0 30px -12px rgba(0,0,0,.75); }
-/* the drape along the top, scalloped, with a gold fringe */
-.wed-curtain__top { position: absolute; left: -2%; right: -2%; top: 0; height: 13%; z-index: 1;
-  background: linear-gradient(180deg, rgba(0,0,0,.5), transparent 60%), var(--velvet);
-  -webkit-mask: radial-gradient(60px 22% at 50% 70%, #000 98%, transparent) 0 0 / 120px 100% repeat-x, linear-gradient(#000, #000) 0 0 / 100% 70% no-repeat;
-          mask: radial-gradient(60px 22% at 50% 70%, #000 98%, transparent) 0 0 / 120px 100% repeat-x, linear-gradient(#000, #000) 0 0 / 100% 70% no-repeat;
-  filter: drop-shadow(0 3px 0 #d9b779) drop-shadow(0 8px 10px rgba(0,0,0,.6));
-  transition: transform 1.2s cubic-bezier(.65,0,.25,1) 1.3s; }
-.wed-show[data-curtain="opening"] .wed-curtain__l,
-.wed-show[data-curtain="opening"] .wed-curtain__r { transform: scaleX(.07); filter: brightness(.6); opacity: 0; }
-.wed-show[data-curtain="opening"] .wed-curtain__top { transform: translateY(-105%); }
-/* while closed, the car's name waits; as they open, the podium lights up and the name rises in */
-.wed-show[data-curtain="closed"] .wed-cap { opacity: 0; transform: translateY(14px); animation: none; }
-.wed-show[data-curtain="opening"] .wed-cap { animation: wed-cap-in .9s var(--ease) 1.4s both; }
-.wed-show[data-curtain="closed"] .wed-nav { opacity: 0; }
-.wed-nav { transition: opacity .6s ease; }
-.wed-flare { position: absolute; left: 50%; bottom: 8%; width: min(900px, 70vw); height: 45%; transform: translateX(-50%); border-radius: 50%; pointer-events: none; z-index: 3; mix-blend-mode: screen; opacity: 0;
-  background: radial-gradient(closest-side, rgba(255,226,170,.55), rgba(255,140,120,.15) 55%, transparent); }
-.wed-show[data-curtain="opening"] .wed-flare { animation: wed-flare 2.2s ease-out 1s both; }
-@keyframes wed-flare { 0% { opacity: 0; transform: translateX(-50%) scale(.6); } 35% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) scale(1.15); } }
-
-/* the front car's name */
-.wed-cap { position: relative; z-index: 4; margin-top: 4px; animation: wed-cap-in .7s var(--ease) both; }
-@keyframes wed-cap-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-.wed-cap__no { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .22em; color: var(--gold); }
-.wed-cap__no span { color: var(--muted); font-weight: 500; }
-.wed-cap h3 { margin: 2px 0 8px; font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif; font-size: clamp(32px, 4vw, 52px); font-weight: 600; line-height: 1.05; letter-spacing: -.01em; }
-.wed-cap ul { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 20px; font-size: 14px; color: var(--muted); }
-.wed-cap li { display: flex; align-items: center; gap: 6px; }
-
-.wed-nav { position: absolute; left: 50%; top: 0; width: min(100vw, calc(var(--stage-h) * 2.1)); transform: translateX(-50%); height: var(--stage-h); display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(4px, 3vw, 48px); pointer-events: none; z-index: 5; }
-.wed-nav > button { pointer-events: auto; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; color: var(--text); background: rgba(7,7,8,.55); border: 1px solid rgba(217,183,121,.5); backdrop-filter: blur(6px); transition: background .2s, color .2s, transform .2s; }
-.wed-nav > button:hover { background: var(--gold); color: var(--ink); transform: scale(1.06); }
-.wed-nav > button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
-@media (max-width: 640px) { .wed-nav > button { width: 42px; height: 42px; } }
-@media (prefers-reduced-motion: reduce) {
-  .wed-cap { animation: none; }
-  /* no sweeping: the curtains and drape simply fade away, and the name fades in */
-  .wed-show[data-curtain="opening"] .wed-curtain__l,
-  .wed-show[data-curtain="opening"] .wed-curtain__r,
-  .wed-show[data-curtain="opening"] .wed-curtain__top { transform: none; filter: none; opacity: 0; transition: opacity 1.2s ease .2s; }
-  .wed-show[data-curtain="opening"] .wed-cap { animation: wed-fade .8s ease .8s both; }
-  .wed-show[data-curtain="opening"] .wed-flare { animation: none; }
-}
-@keyframes wed-fade { from { opacity: 0; } to { opacity: 1; } }
 .wed-form { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; padding: 56px 0 72px; scroll-margin-top: calc(var(--header-h) + 16px); }
 .wed-form .fb-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .wed-form .fb-field { min-width: 0; }
