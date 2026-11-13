@@ -237,8 +237,13 @@ export default function InquiryPage() {
     if (!v) return;
     if (v.id === inq.vehicleId) return;
     const name = `${v.brand} ${v.model}${v.vehicleNumber ? ` (${v.vehicleNumber})` : ''}`;
+    // the "Days · Estimate" line is recalculated for the new car (as the website's own switch does)
+    const nDays = inq.startDate && inq.endDate ? daysBetween(inq.startDate, inq.endDate) : 0;
+    const est = nDays ? `Days: ${nDays} · Estimate: ${rs((v.webPrice ?? v.dailyRent) * nDays)}` : '';
+    const notes = est && /Days:/.test(inq.notes ?? '') ? (inq.notes ?? '').replace(/Days:[^\n]*/, est) : inq.notes;
     patchInquiry(inq.id, {
-      vehicleId: v.id, requestedVehicle: name, checklist: { ...checklist, available: false, price: false },
+      vehicleId: v.id, requestedVehicle: name, preferredBrand: v.brand, notes, alternativesOffered: [],
+      checklist: { ...checklist, available: false, fits: false, price: false },
       vehicleHistory: [...(inq.vehicleHistory ?? []), { vehicle: inq.requestedVehicle, vehicleId: inq.vehicleId, replacedAt: new Date().toISOString(), reason: `Changed by ${staff}`, quote: inq.quote ?? null }],
       // the old quote was for the old car — it stays in the vehicle history
       quote: null as unknown as InquiryQuote,

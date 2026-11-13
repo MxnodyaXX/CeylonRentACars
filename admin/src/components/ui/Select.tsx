@@ -70,7 +70,9 @@ export default function Select({
 
   // Opening puts the cursor in the search box; closing forgets the search
   useEffect(() => {
-    if (open && searchable) searchRef.current?.focus();
+    if (open && searchable) searchRef.current?.focus({ preventScroll: true });
+    // a list opening near the bottom of the screen scrolls into view
+    if (open) requestAnimationFrame(() => listRef.current?.parentElement?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
     if (!open) setQuery('');
   }, [open, searchable]);
 
