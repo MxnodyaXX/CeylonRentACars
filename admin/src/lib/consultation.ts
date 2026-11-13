@@ -76,13 +76,13 @@ export const LOST_REASONS = [
 
 export const STAGES: { id: InquiryStage; label: string; cls: string }[] = [
   { id: 'NEW', label: 'New', cls: 'bg-brand-500 text-white' },
-  { id: 'CONTACTING', label: 'Contacting', cls: 'bg-amber-100 text-amber-800' },
+  { id: 'CONTACTING', label: 'Started', cls: 'bg-amber-100 text-amber-800' },
   { id: 'CONSULTATION', label: 'Consultation', cls: 'bg-violet-100 text-violet-700' },
   { id: 'OPTIONS_SENT', label: 'Options sent', cls: 'bg-sky-100 text-sky-700' },
   { id: 'QUOTATION_SENT', label: 'Quotation sent', cls: 'bg-blue-100 text-blue-700' },
   { id: 'CUSTOMER_DECISION', label: 'Awaiting decision', cls: 'bg-indigo-100 text-indigo-700' },
-  { id: 'CONFIRMED', label: 'Confirmed — ready to book', cls: 'bg-teal-100 text-teal-700' },
-  { id: 'BOOKED', label: 'Booked', cls: 'bg-emerald-100 text-emerald-700' },
+  { id: 'CONFIRMED', label: 'Customer agreed', cls: 'bg-teal-100 text-teal-700' },
+  { id: 'BOOKED', label: 'Converted booking', cls: 'bg-emerald-100 text-emerald-700' },
   { id: 'FOLLOW_UP_REQUIRED', label: 'Follow-up required', cls: 'bg-orange-100 text-orange-700' },
   { id: 'NO_RESPONSE', label: 'No response', cls: 'bg-navy-100 text-navy-600' },
   { id: 'CANCELLED', label: 'Cancelled', cls: 'bg-navy-100 text-navy-600' },

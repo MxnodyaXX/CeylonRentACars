@@ -146,30 +146,89 @@ export function alternativesLink(inq: Inquiry, alternatives: Vehicle[], ref?: st
 
 const SIGN = (staff: string) => ['', 'Kind regards,', staff, '*Ceylon Rent A Cars*', '📞 077 972 6761'];
 
-/** One-click WhatsApp / email templates (*bold* renders bold in WhatsApp) */
-export function templates(inq: Inquiry, staff: string, alternatives: Vehicle[] = [], requestedId?: string) {
+/**
+ * One-click WhatsApp / email templates (*bold* renders bold in WhatsApp), in the order staff use them:
+ * Greeting → Quotation → Personal information → Booking confirmation. "Vehicle not available" offers alternatives.
+ */
+export function templates(inq: Inquiry, staff: string, alternatives: Vehicle[] = [], requested?: Vehicle) {
   const first = inq.customerName.trim().split(' ')[0];
-  const ref = parseRequest(inq.notes).reference;
-  const dates = inq.startDate && inq.endDate ? `${prettyDate(inq.startDate)} – ${prettyDate(inq.endDate)}` : '';
+  const req = parseRequest(inq.notes);
+  const ref = req.reference;
+  const c = inq.consultation;
+  const start = (c?.pickupAt ?? inq.startDate ?? '').slice(0, 10), end = (c?.returnAt ?? inq.endDate ?? '').slice(0, 10);
+  const dates = start && end ? `${prettyDate(start)} – ${prettyDate(end)}` : '';
+  const days = start && end ? daysBetween(start, end) : 0;
+  const vehicle = inq.requestedVehicle.replace(/\s*\(.*\)$/, '');
   const open = (line: string) => [`Dear ${first},`, '', line, ''];
+  const at = (iso?: string) => (iso && iso.length >= 16 ? ` at ${iso.slice(11, 16)}` : '');
+  const pickup = c?.pickupLocation ? `${c.pickupLocation}${at(c.pickupAt)}` : req.fields.Pickup ? placeIn(req.fields.Pickup) : '';
+  const ret = c?.differentReturn && c.returnLocation ? `${c.returnLocation}${at(c.returnAt)}` : req.fields.Return ? placeIn(req.fields.Return) : pickup;
+
+  // Price: the agreed terms, else the quote, else the car's daily rate
+  const agreed = c?.agreement && (!inq.vehicleId || c.agreement.vehicleId === inq.vehicleId) ? c.agreement : undefined;
+  const rate = inq.quote?.dailyRate ?? (requested ? requested.webPrice ?? requested.dailyRent : 0);
+  const qDays = inq.quote?.days ?? days;
+  const total = agreed?.total ?? inq.quote?.total ?? rate * qDays;
+  const deposit = agreed?.depositAmount ?? inq.quote?.deposit ?? 0;
+  const advance = agreed?.advanceAmount ?? 0;
+
   return [
     {
-      id: 'intro', label: 'Introduction',
-      text: [...open(`Thank you for your ${ref ? `booking request (*${ref}*)` : 'inquiry'} with *Ceylon Rent A Cars*.`),
-        `🚗 *Vehicle:* ${inq.requestedVehicle}`, ...(dates ? [`📅 *Dates:* ${dates}`] : []), '',
-        'We would like to confirm a few details and answer any questions you may have. When would be a good time for a quick call?',
+      id: 'greeting', label: 'Greeting',
+      text: [...open(`Greetings from *Ceylon Rent A Cars*! 🙏 Thank you for your ${ref ? `booking request (*${ref}*)` : 'inquiry'}.`),
+        `🚗 *Vehicle:* ${vehicle}`, ...(dates ? [`📅 *Dates:* ${dates}`] : []), '',
+        `My name is ${staff} and I will be helping you with your booking. Is this a good time to talk, or when can I call you?`,
         ...SIGN(staff)].join('\n'),
     },
     {
-      id: 'confirmed', label: 'Vehicle confirmed',
-      text: [...open(`Good news — the *${inq.requestedVehicle}* is confirmed for your trip${dates ? ` (${dates})` : ''}. ✅`),
-        ...(requestedId ? ['🔗 *Vehicle details & photos:*', vehicleLink(requestedId), ''] : []),
-        'We will share the final quote and deposit details shortly. Please let us know if anything changes.',
+      id: 'quotation', label: 'Quotation',
+      text: [...open(`Here is the quotation for your trip${ref ? ` (*${ref}*)` : ''}:`),
+        `🚗 *Vehicle:* ${vehicle}`,
+        ...(dates ? [`📅 *Dates:* ${dates}${qDays ? ` (${qDays} ${qDays === 1 ? 'day' : 'days'})` : ''}`] : []),
+        ...(pickup ? [`📍 *Pickup:* ${pickup}`] : []),
+        '',
+        ...(rate && qDays ? [`• Rental: ${rs(rate)} × ${qDays} ${qDays === 1 ? 'day' : 'days'} = ${rs(rate * qDays)}`] : []),
+        ...(inq.quote?.extras ?? []).filter((e) => e.amount).map((e) => `• ${e.label}: ${rs(e.amount)}`),
+        ...(inq.quote?.discount ? [`• Discount: −${rs(inq.quote.discount)}`] : []),
+        ...(requested?.includedKmPerDay ? [`• ${requested.includedKmPerDay} km per day included${requested.extraKmRate ? `, extra km ${rs(requested.extraKmRate)}/km` : ''}`] : []),
+        '',
+        `💰 *Total: ${total ? rs(total) : 'Rs ________'}*`,
+        `🔒 *Refundable deposit:* ${deposit ? rs(deposit) : 'Rs ________'}`,
+        '',
+        'Reply *YES* to go ahead and we will reserve the vehicle for you.',
         ...SIGN(staff)].join('\n'),
     },
     {
-      id: 'alternatives', label: 'Dates not available',
-      text: [...open(`We're sorry — the *${inq.requestedVehicle.replace(/\s*\(.*\)$/, '')}* is not available${dates ? ` for ${dates}` : ''}. We have picked similar vehicles that are free for your trip:`),
+      id: 'details', label: 'Personal information',
+      text: [...open('To prepare your rental agreement, please send us the following:'),
+        '1️⃣ Your *full name* (as on your NIC / passport)',
+        '2️⃣ *NIC number* or *passport number*',
+        '3️⃣ A photo of your *driving licence* (front and back)',
+        '4️⃣ *International Driving Permit* (if your licence is not Sri Lankan)',
+        '5️⃣ Your *address* in Sri Lanka (home or hotel)',
+        '6️⃣ An *emergency contact* name and number',
+        ...(/airport/i.test(pickup) ? ['7️⃣ Your *flight number* and arrival time'] : []),
+        '', 'Your details are only used for the rental agreement.', ...SIGN(staff)].join('\n'),
+    },
+    {
+      id: 'booked', label: 'Booking confirmation',
+      text: [...open(`Your booking is *confirmed*. ✅${ref ? ` Reference: *${ref}*` : ''}`),
+        `🚗 *Vehicle:* ${vehicle}`,
+        ...(dates ? [`📅 *Dates:* ${dates}`] : []),
+        ...(pickup ? [`📍 *Pickup:* ${pickup}`] : []),
+        ...(ret && ret !== pickup ? [`📍 *Return:* ${ret}`] : []),
+        '',
+        ...(total ? [`💰 *Total:* ${rs(total)}`] : []),
+        ...(advance ? [`✔️ *Advance paid:* ${rs(advance)}`, `💵 *Balance:* ${rs(Math.max(0, total - advance))}${agreed?.balanceDue ? ` (${agreed.balanceDue.toLowerCase()})` : ''}`] : []),
+        ...(deposit ? [`🔒 *Refundable deposit:* ${rs(deposit)}`] : []),
+        '',
+        'Please bring your driving licence and NIC / passport at pickup. We will call you the day before to confirm the time.',
+        'Thank you for choosing us — have a safe trip! 🚗',
+        ...SIGN(staff)].join('\n'),
+    },
+    {
+      id: 'alternatives', label: 'Vehicle not available',
+      text: [...open(`We're sorry — the *${vehicle}* is not available${dates ? ` for ${dates}` : ''}. We have picked similar vehicles that are free for your trip:`),
         ...(alternatives.length
           ? [
               ...alternatives.map((v) => `• *${v.brand} ${v.model}* (${v.year}) — from ${rs(v.webPrice ?? v.dailyRent)}/day`),
@@ -179,22 +238,6 @@ export function templates(inq: Inquiry, staff: string, alternatives: Vehicle[] =
             ]
           : ['• Please tell us your preferred vehicle type and we will find the best match.']),
         '', 'Would any of these work for you?', ...SIGN(staff)].join('\n'),
-    },
-    {
-      id: 'licence', label: 'Licence photo',
-      text: [...open('To prepare your rental, please send us:'),
-        '1️⃣ A photo of your *driving licence* (front and back)',
-        '2️⃣ Your *International Driving Permit* (if your licence is not Sri Lankan)',
-        '3️⃣ A photo of your *passport* information page',
-        '', 'We will arrange the temporary Sri Lankan driving permit for you if needed.', ...SIGN(staff)].join('\n'),
-    },
-    {
-      id: 'payment', label: 'Payment / deposit',
-      text: [...open(`To confirm your booking${ref ? ` (*${ref}*)` : ''}, please pay the deposit using the details below:`),
-        ...(inq.quote ? [`💰 *Total:* ${rs(inq.quote.total)}`, `🔒 *Deposit:* ${rs(inq.quote.deposit)}`, ''] : []),
-        '🏦 *Bank:* ________', '👤 *Account name:* Ceylon Rent A Cars', '🔢 *Account no:* ________',
-        '', 'Please send us the payment slip once done. The deposit is refunded when the vehicle is returned.',
-        ...SIGN(staff)].join('\n'),
     },
   ];
 }

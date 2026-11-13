@@ -6,6 +6,7 @@ import { useServiceReviews } from '../lib/fleet';
 import { Price } from '../context/AppContext';
 
 export function Categories() {
+  const [active, setActive] = useState(() => Math.max(0, CATEGORIES.findIndex(c => c.featured)));
   return (
     <section className="section" id="categories">
       <div className="container">
@@ -13,26 +14,38 @@ export function Categories() {
           <a href="/vehicles" className="link-arrow">View all vehicles <Icon name="arrow" size="sm" /></a>
         </SectionHead>
 
-        <div className="cat-layout">
-          <div className="cats">
-            {CATEGORIES.map(c => (
-              <a key={c.name} href={`/vehicles${c.type ? `?type=${c.type}` : ''}`} className={`cat-card${c.featured ? ' cat-card--red' : ''}`} data-reveal>
-                <div className="cat-card__img"><img src={c.img} alt="" loading="lazy" /></div>
+        <div className="cat-deck">
+          {CATEGORIES.map((c, i) => (
+            <a
+              key={c.name}
+              href={`/vehicles${c.type ? `?type=${c.type}` : ''}`}
+              className={`cat-panel${c.featured ? ' cat-panel--red' : ''}`}
+              data-active={i === active ? '' : undefined}
+              onMouseEnter={() => setActive(i)}
+              onFocus={() => setActive(i)}
+              data-reveal
+            >
+              <img src={c.img} alt="" loading="lazy" />
+              <span className="cat-panel__shade" aria-hidden="true" />
+              <span className="cat-panel__num">{String(i + 1).padStart(2, '0')}</span>
+              <span className="cat-panel__label" aria-hidden="true">{c.name}</span>
+              <div className="cat-panel__body">
+                {c.featured && <span className="cat-panel__tag">Chauffeur driven</span>}
                 <h3>{c.name}</h3>
                 <p>From <Price lkr={c.price} as="b" /> / day</p>
-                <span className="cat-card__btn">View Cars <Icon name="arrow" size="sm" /></span>
-              </a>
-            ))}
-          </div>
-
-          <aside className="stats glass" data-reveal>
-            {STATS.map(s => (
-              <div className="stat" key={s.label}>
-                <span className="stat__ic"><Icon name={s.icon} /></span>
-                <div><strong>{s.value}</strong><span>{s.label}</span></div>
+                <span className="cat-panel__go">View cars <Icon name="arrow" size="sm" /></span>
               </div>
-            ))}
-          </aside>
+            </a>
+          ))}
+        </div>
+
+        <div className="stat-strip" data-reveal>
+          {STATS.map(s => (
+            <div className="stat" key={s.label}>
+              <span className="stat__ic"><Icon name={s.icon} /></span>
+              <div><strong>{s.value}</strong><span>{s.label}</span></div>
+            </div>
+          ))}
         </div>
       </div>
     </section>

@@ -405,8 +405,8 @@ export default function InquiryConsultation() {
   const createBooking = (a: BookingAgreement) => {
     const done: Consultation = { ...c, completedAt: c.completedAt ?? new Date().toISOString() };
     done.summary = buildSummary(inq, done, vehicles, fit);
-    updateInquiry(inq.id, { consultation: done, status: 'Converted', stage: 'BOOKED' });
-    navigate('/bookings', { state: { fromInquiry: bookingFromAgreement({ ...inq, consultation: done }, a, req.fields.Email) } });
+    updateInquiry(inq.id, { consultation: done });
+    navigate('/bookings', { state: { fromInquiry: { ...bookingFromAgreement({ ...inq, consultation: done }, a, req.fields.Email), inquiryId: inq.id } } });
   };
 
   recordRef.current = recordChoice;

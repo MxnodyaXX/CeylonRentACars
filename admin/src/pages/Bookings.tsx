@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useBreakdownStore } from '../store/useBreakdownStore';
 import { toast } from '../store/useToast';
@@ -228,6 +228,8 @@ export default function Bookings() {
   const [price, setPrice] = useState(STANDARD_PRICE);
 
   // Auto-open booking form when navigated from an inquiry conversion
+  const fromInquiryId = useRef<string | undefined>(undefined);
+  useEffect(() => { if (modal !== 'add') fromInquiryId.current = undefined; }, [modal]);
   useEffect(() => {
     const inq = (location.state as { fromInquiry?: {
       customerName: string; customerPhone: string; startDate: string; endDate: string; notes: string; vehicleId?: string;
@@ -235,8 +237,10 @@ export default function Bookings() {
       // from the agreed booking terms (inquiry consultation)
       paidAmount?: number; depositAmount?: number; depositType?: 'cash' | 'vehicle' | 'other'; totalKm?: number;
       source?: string;   // the inquiry's referral: a channel or a person
+      inquiryId?: string;  // set to Converted when this booking is saved
     } } | null)?.fromInquiry;
     if (!inq) return;
+    fromInquiryId.current = inq.inquiryId;
     const f = emptyForm();
     f.customerName  = inq.customerName  ?? '';
     f.customerPhone = inq.customerPhone ?? '';
@@ -493,6 +497,8 @@ export default function Bookings() {
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
     });
+    // The inquiry this booking came from is converted only now that the booking exists
+    if (fromInquiryId.current) { useStore.getState().updateInquiry(fromInquiryId.current, { status: 'Converted', stage: 'BOOKED' }); fromInquiryId.current = undefined; }
     // Send SMS + email receipt automatically on confirmation
     const newBooking = useStore.getState().bookings.find((b) => b.id === bookingId);
     const receiptVehicle = vehicles.find((v) => v.id === form.vehicleId);

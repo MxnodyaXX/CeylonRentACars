@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Phone, MessageCircle, Mail, Copy, Flame, Snowflake, Thermometer, Sparkles, Timer, AlertTriangle, Info,
   CheckCircle2, Circle, MapPin, CalendarDays, User, Globe, Car, History, Repeat, XCircle, ArrowRight, ClipboardCheck,
-  Receipt, MessagesSquare, PhoneCall, ClipboardList,
+  Receipt, MessagesSquare, PhoneCall, ClipboardList, ThumbsUp, Check,
 } from 'lucide-react';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
@@ -74,6 +74,20 @@ export default function InquiryPage() {
   const req = useMemo(() => parseRequest(inq?.notes), [inq?.notes]);
   const alt = useMemo(() => (inq ? alternativesFor(inq, vehicles, (vid, s, e) => isVehicleAvailable(vid, s, e)) : null), [inq, vehicles, isVehicleAvailable]);
   const history = useMemo(() => (inq ? customerHistory(inq, bookings) : null), [inq, bookings]);
+  const vehicleOptions = useMemo(() => {
+    if (!inq) return [];
+    const free = (vid: string) => !inq.startDate || !inq.endDate || isVehicleAvailable(vid, inq.startDate, inq.endDate);
+    return vehicles
+      .filter((v) => !v.weddingOnly)
+      .map((v) => ({ v, ok: free(v.id) }))
+      .sort((a, b) => Number(b.ok) - Number(a.ok) || `${a.v.brand} ${a.v.model}`.localeCompare(`${b.v.brand} ${b.v.model}`))
+      .map(({ v, ok }) => ({
+        value: v.id,
+        label: `${v.brand} ${v.model}${v.vehicleNumber ? ` (${v.vehicleNumber})` : ''}`,
+        sub: `${v.seats ?? '-'} seats · ${v.transmission ?? '—'} · ${rs(v.webPrice ?? v.dailyRent)}/day`,
+        group: ok ? 'Free for these dates' : 'Booked on these dates',
+      }));
+  }, [inq, vehicles, isVehicleAvailable]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const altToken = useMemo(() => inq?.altToken ?? newAltToken(), [inq?.id, inq?.altToken]);
 
@@ -97,7 +111,10 @@ export default function InquiryPage() {
   const ready = done === CHECKLIST.length;
   const pending = inq.status === 'Pending';
   const TempIcon = TEMP[temp.level].icon;
-  const tpl = templates({ ...inq, altToken }, staff, alt.list, alt.requested?.id);
+  const tpl = templates({ ...inq, altToken }, staff, alt.list, alt.requested ?? undefined);
+  const current = pipelineStage(inq);
+  // Simple path for inquiries handled by phone: Started → Customer agreed → Booking confirmed (= converted)
+  const step = current === 'BOOKED' ? 3 : current === 'CONFIRMED' ? 2 : current === 'NEW' ? 0 : 1;
 
   // Estimate on website requests: "9 · Estimate: Rs 65,000"
   const [dayCount, estimate] = (req.fields.Days ?? '').split(' · ');
@@ -106,6 +123,35 @@ export default function InquiryPage() {
   const tickItem = (key: string, value: boolean) => patchInquiry(inq.id, { checklist: { ...checklist, [key]: value } });
 
   const logAdded = (f: FollowUp) => setFollowUps((l) => [f, ...l]);
+
+  const log = async (outcome: string, response: string) => {
+    if (!logReady) return;
+    try { logAdded(await addFollowUp({ inquiryId: inq.id, channel: channel ?? 'Call', outcome, response, staff })); } catch { /* best-effort */ }
+  };
+  /** Opening the customer's phone or WhatsApp means someone has picked the inquiry up */
+  const markStarted = () => { if (pending && current === 'NEW') patchInquiry(inq.id, { stage: 'CONTACTING' }); };
+  const setStep = (to: 1 | 2) => {
+    if (to === 1 && step >= 2) {
+      const converted = inq.status === 'Converted';
+      if (!confirm(converted
+        ? 'Move this inquiry back to Started? It will be open again (Pending). A booking already created from it is NOT deleted — cancel it in Bookings if needed.'
+        : 'Move this inquiry back to Started?')) return;
+      updateInquiry(inq.id, { status: 'Pending', stage: 'CONTACTING' });
+      log('Contacted', `Moved back to Started by ${staff}.`);
+      toast.success('Back to Started', 'The inquiry is open again.');
+      return;
+    }
+    if (!pending) return;
+    if (to === 1) {
+      patchInquiry(inq.id, { stage: 'CONTACTING' });
+      if (step === 0) log('Contacted', `Inquiry started by ${staff}.`);
+      toast.success('Inquiry started', `${staff} is handling this inquiry.`);
+    } else {
+      patchInquiry(inq.id, { stage: 'CONFIRMED' });
+      log('Confirmed — ready to book', `Customer agreed to book the ${inq.requestedVehicle}.`);
+      toast.success('Customer agreed', 'Next: confirm the booking.');
+    }
+  };
 
   const saveQuote = (q: InquiryQuote) => {
     patchInquiry(inq.id, { quote: q, ...(q.status === 'accepted' ? { checklist: { ...checklist, price: true } } : {}) });
@@ -127,6 +173,7 @@ export default function InquiryPage() {
   // With the WhatsApp inbox on, replies are typed into the chat below instead of opening the WhatsApp app
   const [waDraft, setWaDraft] = useState<string>();
   const openWa = (text: string) => {
+    markStarted();
     if (whatsappEnabled) {
       setWaDraft(text);
       document.getElementById('wa-chat')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -140,21 +187,21 @@ export default function InquiryPage() {
 
   const convert = () => {
     // Terms agreed in the consultation → the booking is prefilled from exactly what the customer accepted
-    const agreed = inq.consultation?.agreement;
+    // terms agreed in the consultation only count while the inquiry is still for that car
+    const agreed = inq.consultation?.agreement?.vehicleId === (inq.vehicleId ?? inq.consultation?.agreement?.vehicleId) ? inq.consultation?.agreement : undefined;
     if (agreed) {
-      updateInquiry(inq.id, { status: 'Converted', stage: 'BOOKED' });
-      navigate('/bookings', { state: { fromInquiry: bookingFromAgreement(inq, agreed, email) } });
+      navigate('/bookings', { state: { fromInquiry: { ...bookingFromAgreement(inq, agreed, email), inquiryId: inq.id } } });
       return;
     }
-    if (!ready && !confirm(`Only ${done} of ${CHECKLIST.length} checks are done. Convert to a booking anyway?`)) return;
+    if (!ready && current !== 'CONFIRMED' && !confirm(`Only ${done} of ${CHECKLIST.length} checks are done. Convert to a booking anyway?`)) return;
     const st = timeIn(req.fields.Pickup), et = timeIn(req.fields.Return);
     const last = followUps.find((f) => f.response && f.outcome !== 'Quote sent');
     const cons = inq.consultation;
     const hm = (dt?: string) => (dt && dt.length >= 16 ? dt.slice(11, 16) : undefined);
-    updateInquiry(inq.id, { status: 'Converted', stage: 'BOOKED' });
     navigate('/bookings', {
       state: {
         fromInquiry: {
+          inquiryId: inq.id,   // marked Converted only when the booking is saved
           customerName: inq.customerName,
           customerPhone: inq.customerPhone,
           customerEmail: email,
@@ -188,8 +235,16 @@ export default function InquiryPage() {
   const switchVehicle = (vid: string) => {
     const v = vehicles.find((x) => x.id === vid);
     if (!v) return;
-    patchInquiry(inq.id, { vehicleId: v.id, requestedVehicle: `${v.brand} ${v.model}${v.vehicleNumber ? ` (${v.vehicleNumber})` : ''}`, checklist: { ...checklist, available: false } });
-    toast.success('Vehicle changed', `${v.brand} ${v.model} is now the requested vehicle.`);
+    if (v.id === inq.vehicleId) return;
+    const name = `${v.brand} ${v.model}${v.vehicleNumber ? ` (${v.vehicleNumber})` : ''}`;
+    patchInquiry(inq.id, {
+      vehicleId: v.id, requestedVehicle: name, checklist: { ...checklist, available: false, price: false },
+      vehicleHistory: [...(inq.vehicleHistory ?? []), { vehicle: inq.requestedVehicle, vehicleId: inq.vehicleId, replacedAt: new Date().toISOString(), reason: `Changed by ${staff}`, quote: inq.quote ?? null }],
+      // the old quote was for the old car — it stays in the vehicle history
+      quote: null as unknown as InquiryQuote,
+    });
+    log('Interested', `Vehicle changed from ${inq.requestedVehicle} to ${name}.`);
+    toast.success('Vehicle changed', `${v.brand} ${v.model} is now the vehicle for this inquiry.`);
   };
 
   const card = 'rounded-xl bg-navy-50/60 p-3';
@@ -208,11 +263,11 @@ export default function InquiryPage() {
               {req.reference && <span className="text-[11px] font-mono font-bold bg-navy-50 border border-navy-100 rounded-md px-2 py-0.5">{req.reference}</span>}
             </div>
             <div className="flex items-center gap-2 flex-wrap mt-2">
-              {pending && <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide px-2 py-1 rounded-full ${TEMP[temp.level].cls}`} title={temp.reason}><TempIcon size={12} />{temp.level}</span>}
+              {pending && !(temp.level === 'New' && step > 0) && <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide px-2 py-1 rounded-full ${TEMP[temp.level].cls}`} title={temp.reason}><TempIcon size={12} />{temp.level}</span>}
               {pending && stage.stage !== 'New' && <span className={`text-[11px] font-semibold px-2 py-1 rounded-full ${stage.stage === 'Follow-up due' ? 'bg-amber-100 text-amber-800' : 'bg-navy-50 text-navy-600'}`}>{stage.stage}{stage.due ? ` · ${prettyDate(stage.due)}` : ''}</span>}
               {resp.contacted ? (
                 <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-full ${resp.late ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}><Timer size={12} />First reply in {resp.time}</span>
-              ) : pending && (
+              ) : pending && step === 0 && (
                 <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-full ${resp.late ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-amber-50 text-amber-700'}`}><Timer size={12} />{resp.late ? '⚠ ' : ''}{resp.time} since request — not contacted</span>
               )}
               <span className="text-[11px] text-navy-400">Received {prettyDate(inq.createdAt)} · {inq.referral || 'Direct'}</span>
@@ -220,24 +275,66 @@ export default function InquiryPage() {
           </div>
           {pending && (
             <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-              {inq.consultation ? (
-                <Link to={`/inquiries/${inq.id}/consultation`} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold bg-violet-600 text-white hover:bg-violet-700">
-                  <ClipboardList size={16} /> {inq.consultation.completedAt ? 'Open consultation' : 'Continue consultation'}
-                </Link>
-              ) : (
-                <button onClick={() => setStartOpen(true)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold bg-brand-500 text-white hover:bg-brand-600 shadow-[0_6px_16px_rgba(225,29,42,.3)]">
+              {step === 0 ? (
+                <button onClick={() => setStep(1)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold bg-brand-500 text-white hover:bg-brand-600 shadow-[0_6px_16px_rgba(225,29,42,.3)]">
                   <PhoneCall size={16} /> Start inquiry
                 </button>
+              ) : step === 1 ? (
+                <button onClick={() => setStep(2)} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold bg-teal-600 text-white hover:bg-teal-700 shadow-[0_6px_16px_rgba(13,148,136,.3)]">
+                  <ThumbsUp size={16} /> Customer agreed
+                </button>
+              ) : (
+                <button onClick={convert} className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-[0_6px_16px_rgba(5,150,105,.3)]">
+                  <CheckCircle2 size={16} /> Confirm booking
+                </button>
               )}
-              <button onClick={convert} className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold transition-colors ${ready ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-[0_6px_16px_rgba(5,150,105,.3)]' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}`}>
-                <CheckCircle2 size={16} /> Convert to booking
-              </button>
+              {inq.consultation ? (
+                <Link to={`/inquiries/${inq.id}/consultation`} className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold bg-violet-50 text-violet-700 hover:bg-violet-100">
+                  <ClipboardList size={16} /> Consultation
+                </Link>
+              ) : (
+                <button onClick={() => setStartOpen(true)} title="Optional: log call attempts and go through the full consultation" className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold bg-violet-50 text-violet-700 hover:bg-violet-100">
+                  <ClipboardList size={16} /> Consultation
+                </button>
+              )}
               <button onClick={() => { setLostReason(LOST_REASONS[0]); setLostCustom(''); setLostOpen(true); }} className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold bg-red-50 text-red-600 hover:bg-red-100">
                 <XCircle size={16} /> Lost
               </button>
             </div>
           )}
         </div>
+        {/* Status: Started → Customer agreed → Booking confirmed → Converted */}
+        {inq.status !== 'Lost' && (
+          <ol className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { n: 1, label: 'Started', hint: 'Someone is handling it', go: () => setStep(1) },
+              { n: 2, label: 'Customer agreed', hint: 'OK with the car & price', go: () => setStep(2) },
+              { n: 3, label: 'Booking confirmed', hint: 'Booking created', go: convert },
+              { n: 4, label: 'Converted', hint: 'Now a booking', go: undefined },
+            ].map((s) => {
+              const doneStep = step >= s.n || (s.n === 4 && step === 3);
+              const next = pending && s.n === step + 1;
+              // forward one step at a time; back to Started from any later step (also reopens a converted inquiry)
+              const clickable = (pending && !!s.go && s.n <= step + 1 && s.n !== step) || (s.n === 1 && step >= 2 && inq.status !== 'Lost');
+              return (
+                <li key={s.n}>
+                  <button type="button" disabled={!clickable} onClick={s.go}
+                          className={`w-full text-left rounded-xl border px-3 py-2 flex items-center gap-2.5 transition-colors ${
+                            doneStep ? 'border-emerald-200 bg-emerald-50' : next ? 'border-brand-300 bg-brand-50/40 hover:bg-brand-50' : 'border-navy-100 bg-white'} ${clickable ? 'cursor-pointer' : 'cursor-default'}`}>
+                    <span className={`w-6 h-6 rounded-full grid place-items-center text-[11px] font-bold flex-shrink-0 ${doneStep ? 'bg-emerald-600 text-white' : next ? 'bg-brand-500 text-white' : 'bg-navy-100 text-navy-500'}`}>
+                      {doneStep ? <Check size={13} strokeWidth={3} /> : s.n}
+                    </span>
+                    <span className="min-w-0">
+                      <span className={`block text-sm font-bold truncate ${doneStep ? 'text-emerald-800' : 'text-navy-800'}`}>{s.label}</span>
+                      <span className="block text-[11px] text-navy-400 truncate">{s.hint}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+
         {/* Customer moved to an alternative vehicle → follow up in the new inquiry */}
         {inq.alternativeChosen ? (() => {
           const next = inquiries.find((i) => i.id === inq.alternativeChosen);
@@ -283,15 +380,15 @@ export default function InquiryPage() {
         <div className="space-y-4">
           <Section icon={Phone} title="Contact customer">
             <div className="grid grid-cols-2 gap-2 mb-3">
-              <a href={`tel:+${intlDigits(inq.customerPhone)}`} onClick={() => setChannel('Call')} className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold bg-navy-700 text-white hover:bg-navy-600"><Phone size={15} /> Call</a>
+              <a href={`tel:+${intlDigits(inq.customerPhone)}`} onClick={() => { setChannel('Call'); markStarted(); }} className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold bg-navy-700 text-white hover:bg-navy-600"><Phone size={15} /> Call</a>
               <button type="button" onClick={() => openWa(tpl[0].text)} className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700"><MessageCircle size={15} /> WhatsApp</button>
               {email ? (
                 <a href={`mailto:${email}?subject=${encodeURIComponent(`Your ${req.reference ? `booking request ${req.reference}` : 'inquiry'} — Ceylon Rent A Cars`)}&body=${encodeURIComponent(tpl[0].text.replace(/\*/g, ''))}`} onClick={() => setChannel('Email')}
                    className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold bg-white border border-navy-100 text-navy-700 hover:bg-navy-50"><Mail size={15} /> Email</a>
               ) : <span className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm bg-navy-50 text-navy-300"><Mail size={15} /> No email</span>}
-              <button type="button" onClick={() => copy(inq.customerPhone, 'Phone number')} className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold bg-white border border-navy-100 text-navy-700 hover:bg-navy-50 truncate"><Copy size={15} /> {inq.customerPhone}</button>
+              <button type="button" onClick={() => { copy(inq.customerPhone, 'Phone number'); markStarted(); }} className="flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-semibold bg-white border border-navy-100 text-navy-700 hover:bg-navy-50 truncate"><Copy size={15} /> {inq.customerPhone}</button>
             </div>
-            <p className="text-[11px] text-navy-400 mb-1.5">Quick WhatsApp replies</p>
+            <p className="text-[11px] text-navy-400 mb-1.5">Message templates</p>
             <div className="flex flex-wrap gap-1.5">
               {tpl.map((t) => (
                 <button key={t.id} type="button" onClick={() => (t.id === 'alternatives' ? offerAlternatives() : openWa(t.text))} title="Opens WhatsApp with this message"
@@ -368,6 +465,19 @@ export default function InquiryPage() {
               <div className={card}><p className="text-[11px] text-navy-400">Dates</p><p className="text-sm font-semibold text-navy-800">{inq.startDate ? `${prettyDate(inq.startDate)} – ${prettyDate(inq.endDate)}` : '—'}</p></div>
               <div className={card}><p className="text-[11px] text-navy-400">Length & estimate</p><p className="text-sm font-semibold text-navy-800">{dayCount ? `${dayCount} ${dayCount === '1' ? 'day' : 'days'}` : `${days} days`}{estimateNum ? ` · ${rs(estimateNum)}` : ''}</p></div>
             </div>
+            {pending && (
+              <div className="mb-3">
+                <p className="text-[11px] text-navy-400 mb-1">Customer wants a different car? Change the vehicle</p>
+                <Select
+                  value={inq.vehicleId ?? ''}
+                  onChange={switchVehicle}
+                  searchable
+                  searchPlaceholder="Search brand, model or number…"
+                  placeholder="Choose a vehicle…"
+                  options={vehicleOptions}
+                />
+              </div>
+            )}
             <div className="space-y-2 text-sm">
               {(['Pickup', 'Return'] as const).map((k) => req.fields[k] && (
                 <p key={k} className="flex gap-2 text-navy-700">
@@ -482,6 +592,7 @@ export default function InquiryPage() {
 
           <Section icon={Receipt} title="Quote">
             <InquiryQuoteBuilder
+              key={inq.vehicleId ?? 'none'}
               inquiry={inq}
               staff={staff}
               defaultRate={alt.requested ? (alt.requested.webPrice ?? alt.requested.dailyRent) : (estimateNum ? Math.round(estimateNum / days) : 0)}
@@ -527,7 +638,9 @@ export default function InquiryPage() {
         <div className="lg:hidden fixed left-3 right-3 bottom-[84px] md:bottom-4 z-30 flex gap-2 p-2 rounded-2xl bg-white/95 backdrop-blur border border-navy-100 shadow-card-hover">
           <a href={`tel:+${intlDigits(inq.customerPhone)}`} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold bg-navy-700 text-white"><Phone size={15} /> Call</a>
           <button type="button" onClick={() => openWa(tpl[0].text)} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold bg-emerald-600 text-white"><MessageCircle size={15} /> WhatsApp</button>
-          <button type="button" onClick={convert} className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold ${ready ? 'bg-emerald-600 text-white' : 'bg-emerald-50 text-emerald-700'}`}><CalendarDays size={15} /> Convert</button>
+          {step === 0 ? <button type="button" onClick={() => setStep(1)} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold bg-brand-500 text-white"><PhoneCall size={15} /> Start</button>
+            : step === 1 ? <button type="button" onClick={() => setStep(2)} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold bg-teal-600 text-white"><ThumbsUp size={15} /> Agreed</button>
+            : <button type="button" onClick={convert} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 text-white"><CalendarDays size={15} /> Book</button>}
         </div>
       )}
 

@@ -110,12 +110,11 @@ export default function Inquiries() {
   };
 
   const convertInquiry = (inq: Inquiry) => {
-    updateInquiry(inq.id, { status: 'Converted' });
-    if (selected?.id === inq.id) setSelected((s) => s ? { ...s, status: 'Converted' } : s);
     setModal(null);
     navigate('/bookings', {
       state: {
         fromInquiry: {
+          inquiryId:     inq.id,   // marked Converted only when the booking is saved
           source:        inq.referral,
           customerName:  inq.customerName,
           customerPhone: inq.customerPhone,
