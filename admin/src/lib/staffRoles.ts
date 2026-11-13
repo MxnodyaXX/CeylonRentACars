@@ -18,8 +18,9 @@ export const ABILITIES: AbilityInfo[] = [
   { key: 'canViewHandovers',    group: 'Fleet',    label: 'Deliver & collect cars',   hint: 'Start and complete rentals: odometer, fuel, condition, photos' },
   { key: 'canChangeStatus',     group: 'Fleet',    label: 'Change vehicle status',    hint: 'Available, maintenance and other operational statuses' },
   { key: 'canEditVehicle',      group: 'Fleet',    label: 'Edit vehicle details',     hint: 'Photos, insurance, specs (not the prices, owner or website listing)' },
+  { key: 'canAddVehicle',       group: 'Fleet',    label: 'Add vehicles',             hint: 'Add new cars to the fleet and choose their owner (comes with Edit vehicle details)' },
   { key: 'canManageBreakdowns', group: 'Fleet',    label: 'Breakdowns',               hint: 'Report and manage breakdowns, replacement cars' },
-  { key: 'canEditPrices',       group: 'Money',    label: 'Edit vehicle prices',      hint: 'A car’s fixed price: daily rent, included km, extra-km rate and wedding package (Vehicles → Edit)' },
+  { key: 'canEditPrices',       group: 'Fleet',    label: 'Edit vehicle prices',      hint: 'A car’s fixed price: daily rent, included km, extra-km rate and wedding package (Vehicles → Edit)' },
   { key: 'canTakePayments',     group: 'Money',    label: 'Payments & deposits',      hint: 'Record payments, refunds, deposits, discounts and extra charges' },
   { key: 'canViewFinance',      group: 'Money',    label: 'Finance',                  hint: 'Commissions, owner payouts, credit page' },
   { key: 'canViewReferrals',    group: 'Money',    label: 'Referral fees',            hint: 'Referrals page' },
@@ -54,6 +55,19 @@ export const JOBS: JobInfo[] = [
 ];
 
 export const jobOf = (key?: string) => JOBS.find((j) => j.key === key);
+
+/*
+ * Switch one ability on or off, keeping the ones that go together: adding a car means filling in its
+ * details, so "Add vehicles" turns on "Edit vehicle details", and turning that off turns "Add vehicles" off.
+ * (The database checks both for a new car.)
+ */
+export function toggleAbility<T extends Partial<Record<StaffAbility, boolean>>>(perms: T, key: StaffAbility): T {
+  const on = !perms[key];
+  const next = { ...perms, [key]: on };
+  if (key === 'canAddVehicle' && on) next.canEditVehicle = true;
+  if (key === 'canEditVehicle' && !on) next.canAddVehicle = false;
+  return next;
+}
 export const jobLabel = (key?: string) => jobOf(key)?.label ?? 'Team';
 export const presetFor = (job: StaffJob): Partial<Record<StaffAbility, boolean>> =>
   Object.fromEntries(ABILITIES.map((a) => [a.key, jobOf(job)!.abilities.includes(a.key)]));

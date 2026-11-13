@@ -7,7 +7,7 @@ export type StaffAbility =
   | 'canBook' | 'canChangeStatus' | 'canViewHandovers' | 'canTakePayments' | 'canViewFinance'
   | 'canViewExpenses' | 'canAddExpenses' | 'canEditVehicle' | 'canViewCustomers' | 'canViewInquiries'
   | 'canViewDrivers' | 'canManageBreakdowns' | 'canViewOwners' | 'canViewFeedback' | 'canViewReferrals' | 'canViewIncomplete'
-  | 'canEditPrices';
+  | 'canEditPrices' | 'canAddVehicle';
 
 export interface AppUser {
   id: string;

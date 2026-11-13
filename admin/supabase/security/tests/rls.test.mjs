@@ -714,6 +714,22 @@ claims.vehPrices = staff({ canEditVehicle: true, canEditPrices: true });
 await as('vehPrices', () => db.query("update vehicles set daily_rent = 6000, color = 'White' where id = 'vA'"));
 vA = (await db.query("select * from vehicles where id = 'vA'")).rows[0];
 ok(Number(vA.daily_rent) === 6000 && vA.color === 'White', 'with both, details and prices change together');
+// adding a car: "Add vehicles" + "Edit vehicle details"
+const addCar = (who, id) => as(who, () => tryQ(`insert into vehicles (id, vehicle_number, brand, model, year, owner_id, daily_rent, extra_km_rate, status, web_featured, web_price, created_at)
+  values ('${id}', 'NEW-${id}', 'Honda', 'Fit', 2019, 'oB', 5500, 45, 'Available', true, 9999, '${now}')`));
+ok(!!(await addCar('veh', 'vN0')), 'editing vehicle details alone does not add cars');
+claims.adder = staff({ canAddVehicle: true });
+ok(!!(await addCar('adder', 'vN1')), '"Add vehicles" without "Edit vehicle details" does not add cars either');
+claims.adder2 = staff({ canAddVehicle: true, canEditVehicle: true });
+ok((await addCar('adder2', 'vN2')) === null, 'with both, a team member adds a car');
+let vN = (await db.query("select * from vehicles where id = 'vN2'")).rows[0];
+ok(vN.owner_id === 'oB' && vN.brand === 'Honda' && !vN.web_featured && vN.web_price === null, '…with its owner and details, not on the website');
+ok(Number(vN.daily_rent) === 0 && vN.extra_km_rate === null, '…and without a price unless they may set prices');
+claims.adder3 = staff({ canAddVehicle: true, canEditVehicle: true, canEditPrices: true });
+await addCar('adder3', 'vN3');
+vN = (await db.query("select * from vehicles where id = 'vN3'")).rows[0];
+ok(Number(vN.daily_rent) === 5500 && Number(vN.extra_km_rate) === 45, 'with "Edit vehicle prices" too, its price is set');
+await db.exec("delete from vehicles where id in ('vN2', 'vN3')");
 
 await as('fin', () => db.query("update owners set pending_payout = 100, commission_rate = 1, bank_account = 'x', phone = '1' where id = 'oA'"));
 const oA = (await db.query("select * from owners where id = 'oA'")).rows[0];

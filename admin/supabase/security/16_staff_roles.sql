@@ -16,6 +16,7 @@
 --   canViewExpenses      Expenses page (view + add + edit)        canAddExpenses  add an expense
 --   canEditVehicle       vehicle details (never its owner, prices or website listing)
 --   canEditPrices        a car's fixed prices: daily rent, included km, extra-km rate (and wedding package prices, file 20)
+--   canAddVehicle        add a new car and choose its owner (needs canEditVehicle too; not listed on the website)
 --   canViewCustomers     Customers page                            canViewInquiries  Inquiries + Messages
 --   canViewDrivers       Drivers page (manage)                     canManageBreakdowns  Breakdowns
 --   canViewOwners        Owners page (view)                        canViewFeedback  Feedback page
@@ -79,6 +80,7 @@ begin
   perform private.staff_rule('customers', 'UPDATE', $q$private.staff_may_any(array['canBook','canViewCustomers','canViewInquiries','canTakePayments'])$q$);
 
   perform private.staff_rule('vehicles', 'SELECT', any_staff);
+  perform private.staff_rule('vehicles', 'INSERT', $q$private.staff_may('canAddVehicle') and private.staff_may('canEditVehicle')$q$);
   perform private.staff_rule('vehicles', 'UPDATE', $q$private.staff_may_any(array['canEditVehicle','canEditPrices','canChangeStatus','canViewHandovers','canBook','canManageBreakdowns'])$q$);
 
   perform private.staff_rule('owners', 'SELECT', any_staff);
@@ -205,6 +207,15 @@ begin
       new := private.keep_cols(new, old, array['referral_paid', 'referral_paid_at', 'payout_adjustments']);
     end if;
 
+  elsif tg_table_name = 'vehicles' and tg_op = 'INSERT' then
+    -- a new car (canAddVehicle): its owner and details as entered; not on the website, a rental car
+    -- (Brian lists it and decides its use); its prices only with canEditPrices
+    new := jsonb_populate_record(new, '{"web_featured": false, "web_order": null, "web_price": null, "web_badge": null,
+      "web_location": null, "web_wedding": false, "wedding_only": false, "wedding_details": null}'::jsonb);
+    if not private.staff_may('canEditPrices') then
+      new := jsonb_populate_record(new, '{"daily_rent": 0, "extra_km_rate": null, "included_km_per_day": null}'::jsonb);
+    end if;
+
   elsif tg_table_name = 'vehicles' then
     -- nobody on staff changes a car's owner or website listing (Brian does)
     new := private.keep_cols(new, old, array['id', 'owner_id',
@@ -238,7 +249,7 @@ begin
   drop trigger if exists protect_staff_fields on public.bookings;
   create trigger protect_staff_fields before update on public.bookings for each row execute function private.protect_staff_fields();
   drop trigger if exists protect_staff_fields on public.vehicles;
-  create trigger protect_staff_fields before update on public.vehicles for each row execute function private.protect_staff_fields();
+  create trigger protect_staff_fields before insert or update on public.vehicles for each row execute function private.protect_staff_fields();
   drop trigger if exists protect_staff_fields on public.owners;
   create trigger protect_staff_fields before update on public.owners for each row execute function private.protect_staff_fields();
   drop trigger if exists protect_staff_fields on public.commissions;

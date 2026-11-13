@@ -3,7 +3,7 @@ import { ChevronDown, Copy, Key, Loader2, ShieldCheck, ShieldOff, ToggleLeft, To
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { cleanUsername } from '../../lib/staffAuth';
-import { ABILITIES, JOBS, jobLabel, jobOf, presetFor } from '../../lib/staffRoles';
+import { ABILITIES, JOBS, jobLabel, jobOf, presetFor, toggleAbility } from '../../lib/staffRoles';
 import type { AppUser, StaffAbility, StaffJob } from '../../types/auth';
 
 /*
@@ -114,7 +114,7 @@ function NewTeamLogin({ taken, onCreated }: { taken: Set<string>; onCreated: (c:
       </div>
       <div>
         <p className="text-xs font-medium text-navy-500 mb-2">What they can do — set from the job, change any switch for this person</p>
-        <AbilitySwitches perms={perms} onToggle={(k) => setPerms((p) => ({ ...p, [k]: !p[k] }))} />
+        <AbilitySwitches perms={perms} onToggle={(k) => setPerms((p) => toggleAbility(p, k))} />
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex justify-end">
@@ -195,7 +195,7 @@ function TeamCard({ u, onCredentials }: { u: AppUser; onCredentials: (c: { usern
               {u.disabled ? <><ShieldCheck size={12} /> Switch on</> : <><ShieldOff size={12} /> Switch off</>}
             </button>
           </div>
-          <AbilitySwitches perms={perms} disabled={busy || u.disabled} onToggle={(k) => save({ permissions: { ...perms, [k]: !perms[k] } })} />
+          <AbilitySwitches perms={perms} disabled={busy || u.disabled} onToggle={(k) => save({ permissions: toggleAbility(perms, k) })} />
           {differs && u.job && (
             <button type="button" disabled={busy} onClick={() => save({ permissions: presetFor(u.job!) }, 'Abilities reset')}
                     className="text-xs font-semibold text-navy-500 hover:text-navy-800 inline-flex items-center gap-1"><RotateCcw size={12} /> Back to the usual {job?.label} abilities</button>

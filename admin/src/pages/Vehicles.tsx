@@ -101,6 +101,8 @@ export default function Vehicles() {
   const termsLocked   = teamLogin && !can('canEditPrices');
   const detailsLocked = teamLogin && !can('canEditVehicle');
   const canEditCar    = can('canEditVehicle') || (teamLogin && can('canEditPrices'));
+  // adding a car: admins, owners allowed to edit their cars, and team members with "Add vehicles"
+  const canAddCar     = isAdmin() || (isOwnerRole && can('canEditVehicle')) || (teamLogin && can('canAddVehicle') && can('canEditVehicle'));
 
   const filtered = filter === 'All' ? vehicles : vehicles.filter((v) => v.status === filter);
 
@@ -702,7 +704,7 @@ export default function Vehicles() {
             </button>
           ))}
         </div>
-        {(isAdmin() || (isOwnerRole && can('canEditVehicle'))) && (
+        {canAddCar && (
           <button onClick={openAdd} className="btn-primary flex items-center gap-2 flex-shrink-0">
             <Plus size={15} /> Add Vehicle
           </button>
@@ -880,7 +882,7 @@ export default function Vehicles() {
           <Section locked={detailsLocked} icon={<UserRound size={16} />} title="Owner & availability" hint="Who the car belongs to and whether it can be booked.">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Owner">
-                <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable searchable disabled={teamLogin}
+                <Select value={form.ownerId} onChange={(v) => set('ownerId', v)} placeholder="Select owner" nullable searchable disabled={teamLogin && modal !== 'add'}
                   options={owners.map((o) => ({ value: o.id, label: o.name }))} />
               </Field>
               <Field label="Status">
