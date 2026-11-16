@@ -77,15 +77,16 @@ export default function InquiryPage() {
   const vehicleOptions = useMemo(() => {
     if (!inq) return [];
     const free = (vid: string) => !inq.startDate || !inq.endDate || isVehicleAvailable(vid, inq.startDate, inq.endDate);
+    // every car: free ones first, then booked ones, then wedding-only cars (still offered — staff decide)
+    const rank = (x: { v: typeof vehicles[number]; ok: boolean }) => (x.v.weddingOnly ? 2 : x.ok ? 0 : 1);
     return vehicles
-      .filter((v) => !v.weddingOnly)
       .map((v) => ({ v, ok: free(v.id) }))
-      .sort((a, b) => Number(b.ok) - Number(a.ok) || `${a.v.brand} ${a.v.model}`.localeCompare(`${b.v.brand} ${b.v.model}`))
+      .sort((a, b) => rank(a) - rank(b) || `${a.v.brand} ${a.v.model}`.localeCompare(`${b.v.brand} ${b.v.model}`))
       .map(({ v, ok }) => ({
         value: v.id,
         label: `${v.brand} ${v.model}${v.vehicleNumber ? ` (${v.vehicleNumber})` : ''}`,
-        sub: `${v.seats ?? '-'} seats · ${v.transmission ?? '—'} · ${rs(v.webPrice ?? v.dailyRent)}/day`,
-        group: ok ? 'Free for these dates' : 'Booked on these dates',
+        sub: `${v.seats ?? '-'} seats · ${v.transmission ?? '—'} · ${rs(v.webPrice ?? v.dailyRent)}/day${v.weddingOnly ? (ok ? ' · free' : ' · booked') : ''}`,
+        group: v.weddingOnly ? 'Wedding cars' : ok ? 'Free for these dates' : 'Booked on these dates',
       }));
   }, [inq, vehicles, isVehicleAvailable]);
   // eslint-disable-next-line react-hooks/exhaustive-deps

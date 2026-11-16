@@ -4,6 +4,7 @@ import { submitWeddingRequest, useWeddingCars } from '../lib/fleet';
 import { CONTACT, waLink } from '../data/site';
 import { DatePicker, TimePicker } from './ui/DateTime';
 import WeddingShowcase from './WeddingShowcase';
+import WeddingIntro, { Petals } from './WeddingIntro';
 import { track } from '../lib/analytics';
 
 /*
@@ -47,6 +48,7 @@ export default function WeddingPage() {
   const [error, setError] = useState('');
   const [reference, setReference] = useState('');
   const formRef = useRef(null);
+  const [opened, setOpened] = useState(false);   // the curtain intro has parted → the hero makes its entrance
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
   const toForm = () => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -104,12 +106,14 @@ export default function WeddingPage() {
   }
 
   return (
-    <main className="wedding-page">
+    <main className={`wedding-page${opened ? ' is-in' : ''}`}>
+      <WeddingIntro onOpen={() => setOpened(true)} />
       <section className="wed-hero">
         <img src={cover} alt="" className="wed-hero__bg" />
+        <Petals />
         <div className="container wed-hero__inner">
           <span className="pill pill--light"><Icon name="heart" size="sm" />Wedding Cars</span>
-          <h1>Arrive beautifully on your big day</h1>
+          <h1>Arrive <em className="wed-gold">beautifully</em> on your big day</h1>
           <p>A decorated car and a professional driver for your wedding, homecoming or photoshoot, anywhere in Sri Lanka. Tell us your date and we’ll send you a quote.</p>
           <button type="button" className="btn btn--red btn--lg" onClick={toForm}>Get a quote <Icon name="arrow" /></button>
         </div>
