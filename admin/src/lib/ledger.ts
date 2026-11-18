@@ -1,10 +1,10 @@
 import type { Booking, Commission, CompanyAccount, CompanyExpense, AccountTransfer, Expense, Owner, OwnerSettlement, Vehicle } from '../types';
 import { bookingNo, depositHeld, ledgerOf } from './bookingRecord';
-import { bookingBill, bookingCredit, bookingDue, bookingPaid } from './credit';
+import { SHOP_PAID_METHOD, bookingBill, bookingCredit, bookingDue, bookingPaid } from './credit';
 import { channelOf } from './channels';
 import { completedOn, linesFor, totalsOf, periodOf } from './settlements';
 import { accountFor, type FinanceSettings } from './companyFinance';
-import { companyShareOf, shareBaseOf } from './companyShare';
+import { companyShareOf, fixedTermsOf, shareBaseOf } from './companyShare';
 import { legsOf, mainCommission } from './exchange';
 
 /**
@@ -94,6 +94,8 @@ export function buildLedger(d: Books): LedgerEntry[] {
         detail: [bookingNo(b), b.customerName, car, p.note].filter(Boolean).join(' · ') };
       const acc = accountFor(p.method, p.accountId, d.settings);
       if (cancelled && (p.kind === 'Deposit received' || p.kind === 'Deposit returned' || p.method === 'Security deposit')) return;
+      // a breakdown repair the customer paid at a shop, taken off their bill (or that credit undone): no money moved
+      if (p.method === SHOP_PAID_METHOD) return;
       if (p.kind === 'Payment' || p.kind === 'Advance') {
         // paid "from the security deposit": no new money — the deposit receipt below is counted as this payment
         if (p.method === 'Security deposit') return;
@@ -121,8 +123,8 @@ export function buildLedger(d: Books): LedgerEntry[] {
   });
   d.companyExpenses.filter((e) => e.status === 'paid').forEach((e) => out.push({ id: `ce:${e.id}`, date: e.paidOn ?? e.date, kind: 'company_expense',
     amount: -e.amount, accountId: e.accountId, by: e.paidBy, label: `${e.category}`, detail: e.description }));
-  d.expenses.filter((e) => e.paidBy === 'company').forEach((e) => out.push({ id: `ve:${e.id}`, date: e.date, kind: 'vehicle_expense', amount: -e.amount,
-    accountId: d.settings.methodAccounts.Cash, label: `${e.category} · ${carOf(d, e.vehicleId)}`, detail: `${e.description}${e.settlementId ? ' · taken off the owner\'s payout' : ' · to come off the owner\'s next payout'}` }));
+  d.expenses.filter((e) => e.paidBy === 'company' || e.paidBy === 'company_cost').forEach((e) => out.push({ id: `ve:${e.id}`, date: e.date, kind: 'vehicle_expense', amount: -e.amount,
+    accountId: d.settings.methodAccounts.Cash, label: `${e.category} · ${carOf(d, e.vehicleId)}`, detail: `${e.description}${e.paidBy === 'company_cost' ? ' · the company\'s own cost' : e.settlementId ?' · taken off the owner\'s payout' : ' · to come off the owner\'s next payout'}` }));
   d.transfers.forEach((t) => {
     const from = d.accounts.find((a) => a.id === t.fromAccount)?.name ?? '?', to = d.accounts.find((a) => a.id === t.toAccount)?.name ?? '?';
     out.push({ id: `tr:${t.id}:out`, date: t.date, kind: 'transfer', amount: -t.amount, accountId: t.fromAccount, by: t.byName, label: `Transfer to ${to}`, detail: t.note });
@@ -333,7 +335,7 @@ export function checks(d: Books, ledger: LedgerEntry[], payoutDue: Date | null) 
   add('warn', 'Finished trips still unpaid after 7 days', d.bookings.filter((b) => b.status === 'Completed' && completedOn(b) >= d.from && bookingDue(b) - (b.badDebt ?? 0) > 0 && t - new Date(completedOn(b)).getTime() > week).map((b) => b.id));
   add('warn', 'Deposits still held more than 7 days after the return', d.bookings.filter((b) => b.status === 'Completed' && depositHeld(b) > 0 && t - new Date(completedOn(b)).getTime() > week).map((b) => b.id));
   add('warn', 'Commission / owner share out of date — fix it in the profit box', staleShares(d).filter((x) => x.check.fixable && (x.b.status !== 'Completed' || completedOn(x.b) >= d.from)).map((x) => x.b.id));
-  add('info', 'Bookings with no company commission', d.bookings.filter((b) => !b.companyShareType && b.status !== 'Cancelled' && (b.status !== 'Completed' || completedOn(b) >= d.from)).map((b) => b.id));
+  add('info', 'Bookings with no company commission', d.bookings.filter((b) => !b.companyShareType && !fixedTermsOf(b) &&b.status !== 'Cancelled' && (b.status !== 'Completed' || completedOn(b) >= d.from)).map((b) => b.id));
   add('info', 'Payments not assigned to a company account', ledger.filter((e) => e.amount && !e.accountId && e.kind !== 'vehicle_expense' && e.date >= d.from).map((e) => e.bookingId ?? e.id));
   const vexp = d.expenses.filter((e) => !e.paidBy);
   if (vexp.length) out.push({ level: 'info', text: 'Vehicle expenses with no "who paid"', count: vexp.length });

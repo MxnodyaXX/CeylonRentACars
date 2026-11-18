@@ -13,6 +13,7 @@ import { useStore, breakdownHooks } from './useStore';
 import { MANUAL_INCIDENT, cleanMeters, kmWithMeter, manualSwaps, meterOf, tripKm, tripKmProvider, type TripKm } from '../lib/tripKm';
 import type { Booking, KmMeter } from '../types';
 import { toast } from './useToast';
+import { SHOP_PAID_METHOD, bookingDue } from '../lib/credit';
 
 /*
  * Breakdown management state. Records are written to the breakdown_* tables (Supabase) or kept in
@@ -42,6 +43,11 @@ export interface ExpenseInput {
 export interface PaymentInput {
   incidentId: string; expenseId?: string; kind: PaymentKind; payer: Party; payee: string; amount: number;
   method?: string; reference?: string; receiptPath?: string; paidAt?: string; key: string; by: string;
+}
+
+export interface ShopRepairInput {
+  mode: 'company_paid' | 'company_later' | 'customer_bill';
+  amount: number; description: string; category?: ExpenseCategory; method?: string; reference?: string; key: string; by: string;
 }
 
 export interface SwapOutInput {
@@ -114,6 +120,8 @@ interface BdState extends BdData {
   markVehicleReady: (incidentId: string, x: { outcome: string; safe: boolean; comments?: string; approvedAt?: string; by: string; isAdmin: boolean }) => Promise<string | null>;
   linkLatestExchange: (solutionId: string, by: string) => string | null;
   applyPriceDifference: (solutionId: string, amount: number, by: string) => string | null;
+  /** Customer fixes it at a shop: the company pays the shop (now or later), or the customer paid and it comes off their final bill */
+  settleShopRepair: (solutionId: string, x: ShopRepairInput) => string | null;
   applyOwnerShareAdjustment: (solutionId: string, amount: number, by: string) => string | null;
   proposeTermination: (solutionId: string, x: { terminateAt: string; reason: string; deductions?: number; deductionsNote?: string; credits?: number }, by: string) => string | null;
   approveRefund: (solutionId: string, amount: number, by: string) => string | null;
@@ -333,6 +341,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
         }
         if (get().swaps.some((w) => w.solutionId === s.id && w.status === 'active')) return 'The replacement is still out — record its return first.';
         if (s.kind === 'towing_garage' && !s.roadworthyAt && !(extra.roadworthyAt)) return 'Confirm the vehicle is roadworthy before completing the garage repair.';
+        if (s.kind === 'customer_repair' && !s.repairPayMode) return 'Record how the shop was paid (we paid / customer paid — off the bill) first.';
         if (s.kind === 'termination' && s.recoveryStatus !== 'recovered') return 'The vehicle has not been recovered yet.';
         if (s.kind === 'termination' && s.refundStatus !== 'paid' && s.refundStatus !== 'not_required') return 'Pay (or mark as not required) the refund first.';
       }
@@ -442,6 +451,12 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       const b = bookingOf(p.incidentId);
       if (p.kind === 'refund') return 'A refund is reversed in the booking’s payments (Booking → Payments).';
       if (p.kind === 'customer_charge' && b && p.bookingRef) useStore.getState().waiveCharge(b.id, p.bookingRef, by);
+      if (p.kind === 'reimbursement' && p.method === SHOP_PAID_METHOD && b) {
+        // a shop repair taken off the bill: put it back on the bill (a non-cash line, like the credit itself)
+        useStore.getState().recordPayment(b.id, { kind: 'Refund', amount: p.amount, method: SHOP_PAID_METHOD, note: `Breakdown shop repair credit reversed — ${reason.trim()}`, by });
+        const sol = get().solutions.find((x) => x.kind === 'customer_repair' && x.billCreditRef && x.billCreditRef === p.bookingRef);
+        if (sol) patchSolution(sol.id, { repairPayMode: undefined, billCreditRef: undefined });
+      }
       if (p.kind === 'owner_offset' && b && p.bookingRef) {
         const err = useStore.getState().reverseOwnerPayoutAdjustment(b.id, p.bookingRef, by);
         if (err) return err;
@@ -925,6 +940,51 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
       return null;
     },
 
+    settleShopRepair: (solutionId, x) => {
+      const s = solutionOf(solutionId);
+      const i = s && incidentOf(s.incidentId);
+      const b = s && bookingOf(s.incidentId);
+      if (!s || !i || !b) return 'Booking not found.';
+      if (s.kind !== 'customer_repair') return 'Not a shop repair.';
+      if (used(x.key)) return null;   // double click
+      if (s.repairPayMode) return 'How the shop was paid is already recorded for this solution.';
+      const amount = Math.round(x.amount * 100) / 100;
+      if (!(amount > 0)) return 'Enter what the shop charged.';
+      if (!x.description.trim()) return 'Say what was replaced or repaired.';
+      const shop = s.garageName?.trim() || 'Repair shop';
+      if (x.mode === 'customer_bill') {
+        const due = bookingDue(b);
+        if (amount > due + 0.5) {
+          return due > 0.5
+            ? `Only ${rs(due)} is left on ${b.customerName}'s bill, so ${rs(amount)} can't all come off it. Choose "We pay the shop" and pay the customer back instead (Expenses & payments → reimbursement).`
+            : `${b.customerName} has already paid the whole bill. Choose "We pay the shop" and pay the customer back instead (Expenses & payments → reimbursement).`;
+        }
+      }
+      const err = get().addExpense({
+        incidentId: i.id, solutionId, category: x.category ?? 'parts', description: x.description.trim(), quantity: 1, unitCost: amount, vendor: shop, by: x.by,
+        ...(x.mode === 'company_paid' ? { paidNow: { payer: 'company' as const, method: x.method, reference: x.reference, key: x.key } } : {}),
+      });
+      if (err) return err;
+      if (x.mode === 'customer_bill') {
+        const e = [...get().expenses].reverse().find((v) => v.solutionId === solutionId && !v.voidedAt);
+        // 1) the customer paid the shop — their money went into this repair
+        insertPayment({ id: bdId(), incidentId: i.id, expenseId: e?.id, kind: 'vendor_payment', payer: 'customer', payee: shop, amount,
+          method: x.method, reference: x.reference?.trim() || undefined, paidAt: nowIso(), status: 'posted', idempotencyKey: x.key, createdBy: x.by, createdAt: nowIso() });
+        // 2) it settles that much of their bill — a non-cash line on the booking (no SMS, no money into an account)
+        const entryId = useStore.getState().recordPayment(b.id, { kind: 'Payment', amount, method: SHOP_PAID_METHOD,
+          receiptNo: x.reference?.trim() || undefined, note: `Breakdown ${i.ref} — ${x.description.trim()} at ${shop}, taken off the bill`, by: x.by });
+        // 3) …which is the company paying the customer back
+        insertPayment({ id: bdId(), incidentId: i.id, kind: 'reimbursement', payer: 'company', payee: 'customer', amount, method: SHOP_PAID_METHOD,
+          paidAt: nowIso(), status: 'posted', idempotencyKey: x.key + ':bill', bookingRef: entryId, createdBy: x.by, createdAt: nowIso() });
+        patchSolution(solutionId, { repairPayMode: 'customer_bill', billCreditRef: entryId, invoiceAmount: amount });
+        event(i.id, x.by, 'payment', `Customer paid ${shop} ${rs(amount)} for ${x.description.trim()} — taken off their final bill`, { solutionId });
+      } else {
+        patchSolution(solutionId, { repairPayMode: 'company', invoiceAmount: amount });
+        if (x.mode === 'company_later') event(i.id, x.by, 'solution', `${shop} to be paid ${rs(amount)} by the company (not paid yet)`, { solutionId });
+      }
+      return null;
+    },
+
     applyOwnerShareAdjustment: (solutionId, amount, by) => {
       const s = solutionOf(solutionId);
       const b = s && bookingOf(s.incidentId);
@@ -1100,6 +1160,20 @@ breakdownHooks.vehicleBusy = (vehicleId, startMs, endMs) => {
     const b = bookings.find((x) => x.id === w.bookingId);
     return !!b && rangesOverlap(startMs, endMs, new Date(w.outAt).getTime(), bookingEndMs(b));
   });
+};
+breakdownHooks.busyWith = (vehicleId, startMs, endMs) => {
+  const { swaps, incidents } = useBreakdownStore.getState();
+  const bookings = useStore.getState().bookings;
+  for (const w of swaps) {
+    if (w.status !== 'active' || w.source !== 'fleet' || w.replacementVehicleId !== vehicleId) continue;
+    const b = bookings.find((x) => x.id === w.bookingId);
+    if (!b) continue;
+    const fromMs = new Date(w.outAt).getTime(), untilMs = bookingEndMs(b);
+    if (rangesOverlap(startMs, endMs, fromMs, untilMs)) {
+      return { booking: b, ref: incidents.find((i) => i.id === w.incidentId)?.ref ?? 'a breakdown', fromMs, untilMs };
+    }
+  }
+  return null;
 };
 breakdownHooks.activeSwapNote = (bookingId) => {
   const st = useBreakdownStore.getState();

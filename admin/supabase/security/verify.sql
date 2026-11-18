@@ -39,7 +39,10 @@ begin
 
   for rec in select p.oid::regprocedure::text as sig, p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
              where n.nspname = 'public' loop
-    if rec.proname in ('submit_booking_request', 'submit_feedback', 'choose_alternative', 'submit_wedding_request') then
+    -- the website's own functions; the eag_* ones serve the booking-agreement link page (each checks the link token,
+    -- is rate-limited, and accepting / reporting a payment also needs the SMS-code sign-in — files 23–24)
+    if rec.proname in ('submit_booking_request', 'submit_feedback', 'choose_alternative', 'submit_wedding_request',
+                       'eag_open', 'eag_clarify', 'eag_decide', 'eag_report_payment', 'eag_pdf_source') then
       insert into security_check (area, check_name, result, detail)
       values ('anon', 'may call ' || rec.sig, case when has_function_privilege('anon', rec.sig, 'EXECUTE') then 'PASS' else 'FAIL' end, null);
     elsif has_function_privilege('anon', rec.sig, 'EXECUTE') then
@@ -132,6 +135,56 @@ begin
     execute 'reset role';
     insert into security_check (area, check_name, result, detail)
     values ('owners', oa || ' cannot see ' || ob || '''s vehicles', case when bad = 0 then 'PASS' else 'FAIL' end, bad || ' visible');
+  end if;
+
+  ---------------------------------------------------------------- booking e-Agreement (files 22–25)
+  if to_regnamespace('esign') is not null then
+    insert into security_check (area, check_name, result, detail)
+    select 'e-agreement', 'no login can open schema esign: ' || r, case when has_schema_privilege(r, 'esign', 'USAGE') then 'FAIL' else 'PASS' end, null
+      from unnest(array['anon', 'authenticated']) r;
+    for t in select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'esign' and c.relkind = 'r' order by 1 loop
+      insert into security_check (area, check_name, result, detail)
+      values ('e-agreement', 'no direct access: esign.' || t.relname,
+              case when has_table_privilege('authenticated', format('esign.%I', t.relname), 'SELECT,INSERT,UPDATE,DELETE')
+                     or has_table_privilege('anon', format('esign.%I', t.relname), 'SELECT,INSERT,UPDATE,DELETE') then 'FAIL' else 'PASS' end, null);
+    end loop;
+    insert into security_check (area, check_name, result, detail)
+    select 'e-agreement', 'evidence is append-only: esign.' || x,
+           case when exists (select 1 from pg_trigger g join pg_class c on c.oid = g.tgrelid join pg_namespace n on n.oid = c.relnamespace
+                              where n.nspname = 'esign' and c.relname = x and g.tgname = 'append_only') then 'PASS' else 'FAIL' end, null
+      from unnest(array['acceptances', 'events', 'booking_allocations']) x;
+    insert into security_check (area, check_name, result, detail)
+    select 'e-agreement', 'booking guard trigger: ' || x,
+           case when exists (select 1 from pg_trigger g where g.tgrelid = 'public.bookings'::regclass and g.tgname = x) then 'PASS' else 'FAIL' end, null
+      from unnest(array['zz_esign_booking_guard', 'zz_esign_booking_allocated']) x;
+    select count(*) into bad from public.bookings a join public.bookings b on a.vehicle_id = b.vehicle_id and a.id < b.id and a.occupies && b.occupies;
+    insert into security_check (area, check_name, result, detail)
+    values ('e-agreement', 'double-booking constraint is on',
+            case when exists (select 1 from pg_constraint where conname = 'bookings_no_double_booking') then 'PASS' else 'FAIL' end,
+            case when bad > 0 then bad || ' overlapping pairs to fix first: select * from public.eagreement_booking_overlaps();' end);
+    insert into security_check (area, check_name, result, detail)
+    values ('e-agreement', 'agreements storage is private',
+            case when exists (select 1 from storage.buckets where id = 'agreements' and not public) then 'PASS' else 'FAIL' end, null);
+    insert into security_check (area, check_name, result, detail)
+    select 'e-agreement', 'website visitors may call ' || fn,
+           case when has_function_privilege('anon', fn, 'EXECUTE') then 'PASS' else 'FAIL' end, null
+      from unnest(array['public.eag_open(text)', 'public.eag_decide(text, text, text, text)', 'public.eag_clarify(text, text)']) fn;
+    insert into security_check (area, check_name, result, detail)
+    select 'e-agreement', 'website visitors may NOT call ' || fn,
+           case when has_function_privilege('anon', fn, 'EXECUTE') then 'FAIL' else 'PASS' end, null
+      from unnest(array['public.eag_request_advance(text)', 'public.eag_verify_receipt(uuid, text, text, timestamptz, text, uuid)', 'public.eag_allocate(text)',
+                        'public.eag_attach_pdf(uuid, text, text)', 'public.eag_save_policy(jsonb)', 'public.eag_inquiry_overview(text)']) fn;
+    insert into security_check (area, check_name, result, detail)
+    select 'e-agreement', 'policy value set: ' || k,
+           case when coalesce(p.value ->> k, '') <> '' then 'PASS' else 'INFO' end,
+           case when coalesce(p.value ->> k, '') = '' then 'blank = not approved yet (sending stays blocked)' end
+      from public.app_settings p, unnest(array['quotation_valid_hours', 'agreement_deadline_hours', 'advance_deadline_hours', 'verification_deadline_hours',
+                                               'hold_max_hours', 'turnaround_minutes', 'link_valid_hours', 'advance_rule', 'collection_account_id',
+                                               'cancellation_policy_version', 'cancellation_policy_text']) k
+     where p.key = 'eagreement_policy';
+    insert into security_check (area, check_name, result, detail)
+    select 'e-agreement', 'booking gate (go-live)', 'INFO',
+           coalesce('ON from ' || (value ->> 'enforce_from'), 'OFF — no go-live date set') from public.app_settings where key = 'eagreement_policy';
   end if;
 
   perform set_config('request.jwt.claims', '', true);

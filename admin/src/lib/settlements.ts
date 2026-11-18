@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { supabase, supabaseEnabled } from './supabase';
 import { bookingNo, rs } from './bookingRecord';
 import { nameKey, referrerOf } from './channels';
+import { fixedDues, fixedTermsOn } from './ownerTerms';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import type { Booking, Commission, Expense, Owner, OwnerSettlement, SettlementLine, Vehicle } from '../types';
@@ -68,6 +69,19 @@ export function linesFor(ownerId: string, period: string, d: MonthData, from = D
     });
   }
 
+  // fixed-amount cars: the agreed amount for each month (or the whole term in the month it ends),
+  // whether the car was rented or not — any month not already in another settlement of this owner
+  const settledIds = new Set(useSettlements.getState().list
+    .filter((s) => s.ownerId === ownerId && s.period !== period)
+    .flatMap((s) => s.lines.filter((l) => l.kind === 'fixed').map((l) => l.id)));
+  d.vehicles.forEach((v) => {
+    if (v.ownerId !== ownerId || !v.ownerTerms) return;
+    fixedDues(v, period, from).forEach((f) => {
+      if (settledIds.has(f.id)) return;
+      lines.push({ kind: 'fixed', id: f.id, date: f.date, amount: f.amount, carriedOver: f.period < period, label: f.label, detail: f.detail });
+    });
+  });
+
   d.expenses.forEach((e) => {
     if (e.paidBy !== 'company' || e.settlementId || !e.amount || (e.date ?? '') > end || (e.date ?? '') < from) return;
     const v = d.vehicles.find((x) => x.id === e.vehicleId);
@@ -76,7 +90,7 @@ export function linesFor(ownerId: string, period: string, d: MonthData, from = D
       label: `${e.category} · ${carName(v)}`, detail: `${e.description || 'Paid by the company'}${e.receipt ? ' · receipt on file' : ''}` });
   });
 
-  const order = { rental: 0, referral: 1, deduction: 2, expense: 3 };
+  const order = { fixed: 0, rental: 0, referral: 1, deduction: 2, expense: 3 };
   return lines.sort((a, b) => order[a.kind] - order[b.kind] || a.date.localeCompare(b.date));
 }
 
@@ -94,6 +108,8 @@ export function leftOutOf(period: string, d: MonthData, from = DEFAULT_FROM): Le
       const on = completedOn(b);
       if (!on || on < lo || on > end) return;
       const lines = d.commissions.filter((c) => c.bookingId === b.id && c.ownerPayout);
+      // a fixed-amount car's rental has no owner share — the owner gets the fixed amount instead
+      if (!lines.length && fixedTermsOn(d.vehicles.find((v) => v.id === b.vehicleId), b.startDate)) return;
       if (!lines.length) { out.push({ booking: b, ownerId: owner, reason: 'no-payout-line', payoutIds: [], amount: 0 }); return; }
       const byHand = lines.filter((c) => c.status === 'Paid' && !c.settlementId);
       if (byHand.length) out.push({ booking: b, ownerId: byHand[0].ownerId || owner, reason: 'paid-by-hand', payoutIds: byHand.map((c) => c.id), amount: byHand.reduce((s, c) => s + c.ownerPayout, 0) });
@@ -106,8 +122,8 @@ export function leftOutOf(period: string, d: MonthData, from = DEFAULT_FROM): Le
 
 export function totalsOf(lines: SettlementLine[]) {
   const sum = (k: SettlementLine['kind']) => lines.filter((l) => l.kind === k).reduce((s, l) => s + l.amount, 0);
-  const rentals = sum('rental'), deductions = sum('deduction'), expenses = -sum('expense'), referralFees = sum('referral');
-  return { rentals, deductions, expenses, referralFees, net: rentals + deductions - expenses + referralFees };
+  const rentals = sum('rental') + sum('fixed'), deductions = sum('deduction'), expenses = -sum('expense'), referralFees = sum('referral');
+  return { rentals, fixed: sum('fixed'), deductions, expenses, referralFees, net: rentals + deductions - expenses + referralFees };
 }
 
 /* ---------- reading and saving ---------- */

@@ -24,6 +24,7 @@ import type { Owner, OwnerSettlement, SettlementLine } from '../types';
  */
 
 const KIND = {
+  fixed:     { label: 'Fixed amounts',                   cls: 'text-navy-800' },
   rental:    { label: 'Rentals',                         cls: 'text-navy-800' },
   referral:  { label: 'Referral fees earned',            cls: 'text-navy-800' },
   deduction: { label: 'Owed back',                       cls: 'text-red-600' },
@@ -69,7 +70,8 @@ function Lines({ lines, onClear, onOpen }: { lines: SettlementLine[]; onClear?: 
 function Totals({ t }: { t: ReturnType<typeof totalsOf> }) {
   return (
     <div className="rounded-xl bg-navy-50/70 px-4 py-3 text-sm space-y-1 sm:w-80 sm:ml-auto">
-      <p className="flex justify-between"><span className="text-navy-500">Their share of rentals</span><span>{rs(t.rentals)}</span></p>
+      <p className="flex justify-between"><span className="text-navy-500">Their share of rentals</span><span>{rs(t.rentals - t.fixed)}</span></p>
+      {t.fixed !== 0 && <p className="flex justify-between"><span className="text-navy-500">Fixed amounts</span><span>{rs(t.fixed)}</span></p>}
       {t.referralFees !== 0 && <p className="flex justify-between"><span className="text-navy-500">Referral fees</span><span>{rs(t.referralFees)}</span></p>}
       {t.deductions !== 0 && <p className="flex justify-between"><span className="text-navy-500">Owed back</span><span className="text-red-600">{money(t.deductions)}</span></p>}
       {t.expenses !== 0 && <p className="flex justify-between"><span className="text-navy-500">Expenses on their cars</span><span className="text-red-600">− {rs(t.expenses)}</span></p>}
@@ -224,7 +226,10 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
         const due = payoutDate(next, payoutDay);
         return (
           <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900 flex flex-wrap items-center gap-2">
-            <span className="flex-1 min-w-[16rem]"><b>{lines.length} trip{lines.length === 1 ? '' : 's'} completed in {periodLabel(next)}</b> — owners' share {rs(lines.reduce((t, l) => t + l.amount, 0))} — will be paid on {due.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}.</span>
+            <span className="flex-1 min-w-[16rem]"><b>{(() => {
+              const trips = lines.filter((l) => l.kind !== 'fixed').length, fixed = lines.length - trips;
+              return [trips && `${trips} trip${trips === 1 ? '' : 's'} completed`, fixed && `${fixed} fixed amount${fixed === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
+            })()} in {periodLabel(next)}</b> — owners' share {rs(lines.reduce((t, l) => t + l.amount, 0))} — will be paid on {due.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}.</span>
             <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={() => setPeriod(next)}>See {periodLabel(next)} →</button>
           </div>
         );
@@ -274,6 +279,7 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-navy-800 text-sm truncate">{owner.name}</p>
                   <p className="text-xs text-navy-400 truncate">
+                    {lines.some((l) => l.kind === 'fixed') && `${lines.filter((l) => l.kind === 'fixed').length} fixed amount${lines.filter((l) => l.kind === 'fixed').length === 1 ? '' : 's'} · `}
                     {lines.filter((l) => l.kind === 'rental').length} rental{lines.filter((l) => l.kind === 'rental').length === 1 ? '' : 's'}
                     {lines.some((l) => l.kind === 'expense') && ` · ${lines.filter((l) => l.kind === 'expense').length} expense${lines.filter((l) => l.kind === 'expense').length === 1 ? '' : 's'}`}
                     {lines.some((l) => l.carriedOver) && ' · includes earlier months'}

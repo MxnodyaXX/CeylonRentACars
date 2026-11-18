@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { readOwnerTerms } from './ownerTerms'
 import type {
   Vehicle, Owner, Booking, Inquiry, Commission,
   Expense, Driver, Notification, VehicleHandover, Customer, WeddingDetails,
@@ -47,6 +48,7 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
     webWedding: r.web_wedding === true,
     weddingOnly: r.wedding_only === true,
     wedding: readWedding(r.wedding_details),
+    ownerTerms: readOwnerTerms(r.owner_terms),
     weddingStage: readStage(r.wedding_stage),
   }
 }
@@ -85,6 +87,7 @@ function vToDb(v: Vehicle) {
     ...(v.webWedding && { web_wedding: true }),
     ...(v.weddingOnly && { wedding_only: true }),
     ...(v.wedding && { wedding_details: v.wedding }),
+    ...(v.ownerTerms && { owner_terms: v.ownerTerms }),
   }
 }
 
@@ -555,6 +558,7 @@ export const db = {
     if ('webPrice' in u) row.web_price = u.webPrice ?? null
     if (u.webWedding !== undefined) row.web_wedding = u.webWedding
     if (u.weddingOnly !== undefined) row.wedding_only = u.weddingOnly
+    if ('ownerTerms' in u) row.owner_terms = u.ownerTerms ?? null
     if ('wedding' in u) row.wedding_details = u.wedding ?? null
     if ('weddingStage' in u) row.wedding_stage = u.weddingStage ?? null
     return inOrder(`vehicles:${id}`, () => supabase.from('vehicles').update(row).eq('id', id))

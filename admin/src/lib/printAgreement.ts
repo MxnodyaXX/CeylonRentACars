@@ -18,13 +18,19 @@ export const DEFAULT_POLICIES = {
 };
 
 export function printRentalAgreement(b: Booking, vehicle: Vehicle | undefined, staff: string) {
+  const w = window.open('', '_blank', 'width=820,height=1100');
+  if (w) { w.document.write(rentalAgreementHtml(b, vehicle, staff)); w.document.close(); }
+}
+
+/** The built-in agreement (used when no agreement design has been set up) */
+export function rentalAgreementHtml(b: Booking, vehicle: Vehicle | undefined, staff: string): string {
   const p = priceBreakdown(b, vehicle);
   const a = { ...DEFAULT_POLICIES, ...(b.agreement ?? {}) };
   const ci = b.customerInfo ?? {};
   const row = (k: string, v?: string | number) => `<tr><td class="k">${esc(k)}</td><td>${esc(v)}</td></tr>`;
   const pickup = b.checklists?.pickup;
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Rental agreement ${bookingNo(b)}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Rental agreement ${bookingNo(b)}</title>
 <style>
   *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;color:#111114;margin:0;padding:28px 34px;font-size:12px;line-height:1.45}
   h1{font-size:20px;margin:0} h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#52525B;margin:18px 0 6px;border-bottom:1px solid #E4E4E7;padding-bottom:4px}
@@ -86,6 +92,4 @@ export function printRentalAgreement(b: Booking, vehicle: Vehicle | undefined, s
 </div>
 <script>window.onload=()=>setTimeout(()=>window.print(),300)</script>
 </body></html>`;
-  const w = window.open('', '_blank', 'width=820,height=1100');
-  if (w) { w.document.write(html); w.document.close(); }
 }

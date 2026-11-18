@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import {
-  AlertTriangle, ArrowLeftRight, Ban, Car, CheckCircle2, ClipboardCheck, Hammer, PlayCircle, Receipt, RotateCcw, Truck, User, Wrench, XCircle,
+  AlertTriangle, ArrowLeftRight, Ban, BatteryCharging, Car, CheckCircle2, ClipboardCheck, Hammer, PlayCircle, Receipt, RotateCcw, Truck, User, Wrench, XCircle,
 } from 'lucide-react';
 import { useBreakdownStore, newKey } from '../../store/useBreakdownStore';
 import { useStore } from '../../store/useStore';
 import {
   BdIncident, BdSolution, ExpenseCategory, REPAIR_RESULT_LABEL, SOLUTION_HINT, SOLUTION_LABEL, SOLUTION_STATUS_LABEL, SolutionKind,
 } from '../../lib/breakdowns';
+import { bookingDue } from '../../lib/credit';
 import { REFUND_POLICY } from '../../lib/breakdownLedger';
 import { legsOf } from '../../lib/exchange';
 import SwapPanel from './SwapPanel';
@@ -21,9 +22,10 @@ const EXPENSE_CATS: Record<SolutionKind, ExpenseCategory[]> = {
   towing_garage: ['towing', 'garage', 'parts', 'labour', 'transport', 'tax', 'discount', 'other'],
   alt_transport: ['alt_transport', 'other'],
   termination: ['transport', 'other'],
+  customer_repair: ['parts', 'labour', 'transport', 'other'],
 };
 const ICON: Record<SolutionKind, typeof Wrench> = {
-  onsite_repair: Wrench, replacement: ArrowLeftRight, partner_vehicle: Car, towing_garage: Truck, alt_transport: User, termination: Ban,
+  onsite_repair: Wrench, replacement: ArrowLeftRight, partner_vehicle: Car, towing_garage: Truck, alt_transport: User, termination: Ban, customer_repair: BatteryCharging,
 };
 
 /** Local edits to one solution; Save writes only the changed fields */
@@ -75,6 +77,7 @@ export default function SolutionPanel({ s, incident, by }: { s: BdSolution; inci
         {s.kind === 'partner_vehicle' && <Partner s={s} draft={draft} incident={incident} by={by} act={act} />}
         {s.kind === 'towing_garage' && <TowingGarage s={s} draft={draft} incident={incident} by={by} act={act} />}
         {s.kind === 'alt_transport' && <AltTransport s={s} draft={draft} incident={incident} by={by} />}
+        {s.kind === 'customer_repair' && <CustomerRepair s={s} draft={draft} incident={incident} by={by} act={act} />}
         {s.kind === 'termination' && <Termination s={s} draft={draft} incident={incident} by={by} act={act} />}
 
         <Field label="Notes"><textarea className="input" rows={2} {...draft.text('notes')} /></Field>
@@ -425,6 +428,94 @@ function AltTransport({ s, draft, incident, by }: { s: BdSolution; draft: Draft;
           }}>Add the fare as an expense</button>
         )}
         <p className="text-[11px] text-navy-400">Who pays is decided in the responsibility section; extra costs go in the expenses below.</p>
+      </Section>
+    </>
+  );
+}
+
+/* ── 07 Customer fixes it at a shop (battery, puncture, bulb…) ─────────────── */
+type ShopMode = 'company_paid' | 'company_later' | 'customer_bill';
+function CustomerRepair({ s, draft, incident, by, act }: { s: BdSolution; draft: Draft; incident: BdIncident; by: string; act: Act }) {
+  const store = useBreakdownStore();
+  const { bookings } = useStore();
+  const b = bookings.find((x) => x.id === incident.bookingId);
+  const { v, text, number, dt } = draft;
+  const [mode, setMode] = useState<ShopMode>('company_paid');
+  const [method, setMethod] = useState('Cash');
+  const [ref, setRef] = useState('');
+  const [key, setKey] = useState(newKey);
+  const due = b ? bookingDue(b) : 0;
+  const amount = v.invoiceAmount ?? 0;
+  const what = (v.partsReplaced || v.workDone || 'Repair').trim();
+  const shop = v.garageName?.trim() || 'the shop';
+  const tooMuch = mode === 'customer_bill' && amount > due + 0.5;
+
+  const record = () => act(() => {
+    if (!(amount > 0)) return 'Enter what the shop charged.';
+    if (!v.partsReplaced?.trim() && !v.workDone?.trim()) return 'Say what was replaced or repaired (e.g. Battery 12V 45Ah).';
+    const msg = mode === 'customer_bill'
+      ? `${b?.customerName ?? 'The customer'} paid ${shop} ${rs(amount)}.\n\nTake ${rs(amount)} off their final bill? Their balance goes from ${rs(due)} to ${rs(due - amount)}.`
+      : mode === 'company_paid' ? `Record that the company paid ${shop} ${rs(amount)} by ${method}?` : `Add ${rs(amount)} as a cost still to pay to ${shop}?`;
+    if (!confirm(msg)) return null;
+    if (draft.dirty) { store.updateSolution(s.id, draft.d, by); draft.reset(); }
+    const e = store.settleShopRepair(s.id, { mode, amount, description: what, method: mode === 'company_later' ? undefined : method, reference: ref, key, by });
+    if (!e) setKey(newKey());
+    return e;
+  });
+
+  return (
+    <>
+      <Section title="Shop" icon={Hammer}>
+        <Grid cols={4}>
+          <Field label="Shop name"><input className="input" {...text('garageName')} placeholder="e.g. Lanka Battery Centre" /></Field>
+          <Field label="Shop phone"><input className="input" type="tel" {...text('garageContact')} /></Field>
+          <Field label="Shop location"><input className="input" {...text('repairLocation')} /></Field>
+          <Field label="Customer sent to the shop"><input className="input" {...dt('dispatchAt')} /></Field>
+        </Grid>
+        <Grid>
+          <Field label="What was replaced / repaired *"><input className="input" {...text('partsReplaced')} placeholder="e.g. Battery 12V 45Ah (Exide)" /></Field>
+          <Field label="Fixed at"><input className="input" {...dt('workEndAt')} /></Field>
+        </Grid>
+        <Field label="Shop's remarks / warranty"><textarea className="input" rows={2} {...text('workDone')} placeholder="e.g. 12-month warranty, old battery kept by the shop" /></Field>
+        <p className="text-[11px] text-navy-400">Ask the customer to send a photo of the shop's bill and the new part — add them in Documents.</p>
+      </Section>
+
+      <Section title="Who pays the shop" icon={Receipt}>
+        {s.repairPayMode ? (
+          <p className="text-sm text-navy-700">
+            {s.repairPayMode === 'customer_bill'
+              ? <>The customer paid the shop <b>{rs(s.invoiceAmount)}</b> — taken off their final bill (shown on the booking as “Paid at a repair shop”).</>
+              : <>The company pays the shop <b>{rs(s.invoiceAmount)}</b> — see the cost and its payment under Expenses below.</>}
+          </p>
+        ) : (
+          <>
+            <Grid cols={3}>
+              <Field label="Shop's bill (Rs) *"><input className="input" {...number('invoiceAmount')} /></Field>
+            </Grid>
+            <Chips size="xs" value={mode} onChange={setMode} options={[
+              ['company_paid', 'We paid the shop'], ['company_later', 'We will pay the shop later'], ['customer_bill', 'Customer paid — take it off the final bill'],
+            ]} />
+            {mode === 'customer_bill' ? (
+              <div className="rounded-xl border border-navy-100 bg-navy-50/40 p-3 text-xs text-navy-600 space-y-1">
+                <p>Customer's balance now: <b>{rs(due)}</b>{amount > 0 && !tooMuch && <> → after this: <b>{rs(due - amount)}</b></>}</p>
+                {tooMuch && <p className="text-red-700">That's more than what's left on the bill. Use “We paid the shop” and pay the customer back instead.</p>}
+                <p className="text-navy-400">The booking gets a “Paid at a repair shop” line: it lowers the balance but isn't counted as money received in Accounts, and no payment SMS is sent.</p>
+              </div>
+            ) : null}
+            {mode !== 'company_later' && (
+              <Grid cols={3}>
+                {mode === 'company_paid'
+                  ? <Field label="Paid by"><select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>{['Cash', 'Bank transfer', 'Card', 'Online'].map((m) => <option key={m}>{m}</option>)}</select></Field>
+                  : null}
+                <Field label="Shop bill / receipt no."><input className="input" value={ref} onChange={(e) => setRef(e.target.value)} /></Field>
+              </Grid>
+            )}
+            <button type="button" className="btn-primary !py-1.5 text-sm" disabled={tooMuch} onClick={record}>
+              {mode === 'customer_bill' ? `Take ${amount > 0 ? rs(amount) : 'it'} off the bill` : mode === 'company_paid' ? 'Record payment to the shop' : 'Add as a cost to pay later'}
+            </button>
+            <p className="text-[11px] text-navy-400">Who finally carries the cost (company, owner…) is decided in Expenses &amp; payments → responsibility, as for any breakdown.</p>
+          </>
+        )}
       </Section>
     </>
   );

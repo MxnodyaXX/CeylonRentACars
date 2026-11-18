@@ -1,12 +1,59 @@
 {
   "rewrites": [
-    { "source": "/vehicles", "destination": "/vehicles/index.html" },
-    { "source": "/wedding-cars", "destination": "/wedding-cars/index.html" },
-    { "source": "/feedback", "destination": "/feedback/index.html" },
-    { "source": "/book", "destination": "/book/index.html" },
-    { "source": "/alternatives", "destination": "/alternatives/index.html" },
-    { "source": "/my-bookings", "destination": "/my-bookings/index.html" },
-    { "source": "/list-your-vehicle", "destination": "/list-your-vehicle/index.html" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/vehicles",
+      "destination": "/vehicles/index.html"
+    },
+    {
+      "source": "/wedding-cars",
+      "destination": "/wedding-cars/index.html"
+    },
+    {
+      "source": "/feedback",
+      "destination": "/feedback/index.html"
+    },
+    {
+      "source": "/book",
+      "destination": "/book/index.html"
+    },
+    {
+      "source": "/alternatives",
+      "destination": "/alternatives/index.html"
+    },
+    {
+      "source": "/my-bookings",
+      "destination": "/my-bookings/index.html"
+    },
+    {
+      "source": "/list-your-vehicle",
+      "destination": "/list-your-vehicle/index.html"
+    },
+    {
+      "source": "/booking-agreement/(.*)",
+      "destination": "/booking-agreement/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/booking-agreement/(.*)",
+      "headers": [
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
+        },
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "private, no-store"
+        }
+      ]
+    }
   ]
 }

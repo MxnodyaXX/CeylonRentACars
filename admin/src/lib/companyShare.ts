@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase, supabaseEnabled } from './supabase';
-import type { Booking } from '../types';
+import type { Booking, OwnerTerms, Vehicle } from '../types';
+import { fixedTermsOn, termsSummary } from './ownerTerms';
 
 /*
  * The company's share of each rental. Every booking is paid to the company; the company keeps its
@@ -60,7 +61,17 @@ export function methodOf(b: Pick<Booking, 'companyShareType' | 'companyShareValu
 }
 
 type ShareFields = Pick<Booking, 'companyShareType' | 'companyShareValue' | 'companyShareMin' | 'rentalType' | 'totalDays'
-  | 'companyKmRate' | 'companyKmKm' | 'companyKmCharge'>;
+  | 'companyKmRate' | 'companyKmKm' | 'companyKmCharge'> & Partial<Pick<Booking, 'vehicleId' | 'startDate'>>;
+
+/* Fixed-amount cars (ownerTerms): the owner is paid a fixed amount, so the company keeps the whole bill.
+ * The store tells this file how to find a car (set once in useStore). */
+let findVehicle: (id: string) => Vehicle | undefined = () => undefined;
+export const setVehicleLookup = (f: (id: string) => Vehicle | undefined) => { findVehicle = f; };
+/** The fixed terms a booking falls under (its car, on its start day), if any */
+export function fixedTermsOf(b: Partial<Pick<Booking, 'vehicleId' | 'startDate'>>): OwnerTerms | undefined {
+  if (!b.vehicleId || !b.startDate) return undefined;
+  return fixedTermsOn(findVehicle(b.vehicleId), b.startDate);
+}
 
 /** The extra km split per km (set at the return): the km charge, and the company's part of it (Rs per km × km, never more than the charge) */
 export function kmSplitOf(b: Pick<Booking, 'companyKmRate' | 'companyKmKm' | 'companyKmCharge'>) {
@@ -91,6 +102,7 @@ function methodShare(b: ShareFields, revenue: number, days?: number) {
  */
 export function companyShareOf(b: ShareFields, revenue: number, days?: number): number {
   if (revenue <= 0) return 0;
+  if (fixedTermsOf(b)) return revenue;
   const km = kmSplitOf(b);
   if (!km) return methodShare(b, revenue, days);
   const rest = Math.max(0, revenue - km.charge);
@@ -99,6 +111,8 @@ export function companyShareOf(b: ShareFields, revenue: number, days?: number): 
 
 /** "15% of Rs 130,500 = Rs 19,575 (minimum 17 days × Rs 1,000 = Rs 17,000)" */
 export function shareWorking(b: ShareFields, revenue: number, days?: number): string | undefined {
+  const fx = fixedTermsOf(b);
+  if (fx) return `Fixed-amount car — the company keeps the whole bill (the owner gets ${termsSummary(fx)})`;
   const km = kmSplitOf(b);
   const main = mainWorking(b, km ? Math.max(0, revenue - km.charge) : revenue, days);
   if (!km) return main;

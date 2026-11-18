@@ -40,6 +40,9 @@ import { canOpen } from './lib/access';
 import Settlements from './pages/Settlements';
 import AccountStatementPage from './pages/AccountStatementPage';
 import CompanyAccounts from './pages/CompanyAccounts';
+import AgreementDesign from './pages/AgreementDesign';
+import Agreements from './pages/Agreements';
+import PaymentChecks from './pages/PaymentChecks';
 
 export default function App() {
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -152,7 +155,10 @@ export default function App() {
           <Route path="/breakdowns"    element={allow('/breakdowns', <Breakdowns />)} />
           <Route path="/breakdowns/:id" element={allow('/breakdowns', <BreakdownIncident />)} />
           <Route path="/website"       element={allow('/website', <Website />)} />
+          <Route path="/agreement-design" element={isAdmin() ? <AgreementDesign /> : <Navigate to="/" replace />} />
           <Route path="/feedback"      element={allow('/feedback', <Feedback />)} />
+          <Route path="/agreements"    element={allow('/agreements', <Agreements />)} />
+          <Route path="/payment-checks" element={allow('/payment-checks', <PaymentChecks />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

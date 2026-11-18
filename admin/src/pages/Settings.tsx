@@ -19,7 +19,8 @@ import LocationInput from '../components/ui/LocationInput';
 import { sendSms } from '../lib/sms';
 import type { Owner } from '../types';
 import { RECORDS_FROM, setShowingOlder, showingOlder } from '../lib/recordsFrom';
-import { Archive } from 'lucide-react';
+import { Archive, FileSignature } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 // ─── OTP helpers ────────────────────────────────────────────────────────────
 
@@ -395,6 +396,32 @@ export default function Settings() {
                 <p className="text-xs text-navy-400 mt-1 leading-relaxed">Rebuild every vehicle's revenue/rent count and owner earnings from the actual bookings. Fixes any inflated or incorrect totals.</p>
               </div>
             </button>
+          )}
+
+          {admin && (
+            <Link to="/agreement-design"
+              className="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-card border border-gray-100 hover:border-navy-200 hover:shadow-md text-left transition-all">
+              <div className="w-11 h-11 rounded-xl bg-red-600 flex items-center justify-center flex-shrink-0">
+                <FileSignature size={20} className="text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-navy-800 text-sm">Agreement design</p>
+                <p className="text-xs text-navy-400 mt-1 leading-relaxed">Upload your rental agreement PDF and place booking fields on it. Print agreement then fills it in for each booking.</p>
+              </div>
+            </Link>
+          )}
+
+          {admin && (
+            <Link to="/agreements"
+              className="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-card border border-gray-100 hover:border-navy-200 hover:shadow-md text-left transition-all">
+              <div className="w-11 h-11 rounded-xl bg-navy-800 flex items-center justify-center flex-shrink-0">
+                <FileSignature size={20} className="text-white" />
+              </div>
+              <div>
+                <p className="font-semibold text-navy-800 text-sm">Booking e-Agreement</p>
+                <p className="text-xs text-navy-400 mt-1 leading-relaxed">The policy values, the approved wording (CRC-AGR-003), exceptions and the go-live switch for the online booking agreement.</p>
+              </div>
+            </Link>
           )}
 
           {admin && supabaseEnabled && <OlderRecordsCard />}

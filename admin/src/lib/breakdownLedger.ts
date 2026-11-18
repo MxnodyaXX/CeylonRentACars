@@ -149,7 +149,7 @@ export function incidentStage(i: BdIncident, sols: BdSolution[]) {
   return {
     awaitingTechnician: active.some((s) => s.kind === 'onsite_repair' && !s.arriveAt),
     awaitingReplacement: active.some((s) => (s.kind === 'replacement' && !s.exchangeId) || (s.kind === 'partner_vehicle' && !s.deliveredAt)),
-    underRepair: active.some((s) => (s.kind === 'onsite_repair' && !!s.arriveAt) || s.kind === 'towing_garage'),
+    underRepair: active.some((s) => (s.kind === 'onsite_repair' && !!s.arriveAt) || s.kind === 'towing_garage' || s.kind === 'customer_repair'),
     unassigned: !i.assignedTo && !live.length,
   };
 }

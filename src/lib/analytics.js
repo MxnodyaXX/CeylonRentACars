@@ -35,7 +35,10 @@ function saveConsent(value) {
 }
 
 /** The page address with personal query parameters removed */
-function cleanLocation(path = window.location.pathname, search = window.location.search) {
+/** The page path without personal links in it: /booking-agreement/<link> → /booking-agreement */
+export const safePath = (p = window.location.pathname) => p.replace(/^\/booking-agreement\/.*/, '/booking-agreement');
+
+function cleanLocation(path = safePath(), search = window.location.search) {
   const params = new URLSearchParams(search);
   const kept = new URLSearchParams();
   SAFE_PARAMS.forEach((k) => { if (params.has(k)) kept.set(k, params.get(k)); });
@@ -157,7 +160,7 @@ export function useClickTracking() {
       const section = a.closest('section[id], footer, header, [data-analytics-area]');
       const area = section?.getAttribute('data-analytics-area') || section?.id || section?.tagName.toLowerCase();
       if (/(^https?:\/\/)?(wa\.me|api\.whatsapp\.com)\//i.test(href)) {
-        track('contact_whatsapp', { link_area: area, page_path: window.location.pathname });
+        track('contact_whatsapp', { link_area: area, page_path: safePath() });
       } else if (href.startsWith('/book?')) {
         const id = new URLSearchParams(href.split('?')[1]).get('v');
         if (id) track('select_item', { item_list_name: window.location.pathname === '/' ? 'home' : window.location.pathname.slice(1), link_area: area, items: [{ item_id: id }] });

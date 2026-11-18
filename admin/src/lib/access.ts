@@ -9,12 +9,15 @@ import type { StaffAbility } from '../types/auth';
  * The database enforces the same rules; this only decides what is shown.
  */
 
-const TEAM_PAGES: Record<string, StaffAbility | true | false> = {
+const TEAM_PAGES: Record<string, StaffAbility | StaffAbility[] | true | false> = {
   '/': true, '/vehicles': true, '/bookings': true, '/notifications': true, '/settings': true,
   '/inquiries': 'canViewInquiries', '/messages': 'canViewInquiries',
   '/handovers': 'canViewHandovers', '/breakdowns': 'canManageBreakdowns', '/incomplete': 'canViewIncomplete',
   '/commissions': 'canViewFinance', '/credit': 'canViewFinance', '/settlements': 'canViewFinance', '/accounts': 'canViewFinance', '/referrals': 'canViewReferrals', '/expenses': 'canViewExpenses',
   '/owners': 'canViewOwners', '/drivers': 'canViewDrivers', '/customers': 'canViewCustomers', '/feedback': 'canViewFeedback',
+  // booking e-Agreements: the overview + exceptions, and Finance's payment checks (any one of the abilities)
+  '/agreements': ['canViewInquiries', 'canSendAgreements', 'canVerifyPayments'],
+  '/payment-checks': ['canVerifyPayments', 'canTakePayments'],
   // Brian and IT only
   '/partners': false, '/website': false, '/whatsapp-setup': false, '/whatsapp-templates': false, '/permissions': false,
 };
@@ -34,5 +37,6 @@ export function canOpen(path: string): boolean {
   if (currentUser.role === 'admin') return true;
   const rule = (currentUser.role === 'staff' ? TEAM_PAGES : OWNER_PAGES)[root(path)];
   if (rule === undefined || rule === false) return false;
+  if (Array.isArray(rule)) return rule.some((r) => can(r));
   return rule === true || can(rule);
 }

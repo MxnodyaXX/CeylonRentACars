@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import Header from '../components/layout/Header';
 import PayoutReminder from '../components/ui/PayoutReminder';
+import { AgreementCounts } from './Agreements';
 import FigureExplain, { type FigureKey } from '../components/ui/FigureExplain';
 import DashboardClassic from './DashboardClassic';
 import { useStore } from '../store/useStore';
@@ -152,6 +153,14 @@ function CompanyDashboard({ admin, staff, can, name }: { admin: boolean; staff: 
       <Header title="Dashboard" subtitle={`${hello}${name ? `, ${name.split(' ')[0]}` : ''} — ${n.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}`} />
       {money && <FigureExplain k={ex} onClose={() => setEx(null)} books={books} ledger={ledger} f={f} start={start} end={end} periodText={periodText} admin={admin} />}
       <PayoutReminder />
+
+      {/* booking e-Agreements — progress only; these are NOT confirmed bookings */}
+      {(admin || (['canViewInquiries', 'canSendAgreements', 'canVerifyPayments'] as const).some((k) => useAuthStore.getState().can(k))) && (
+        <section className="mb-5">
+          <div className="flex items-center justify-between mb-2"><h2 className="text-sm font-bold text-navy-800">Booking e-Agreements</h2><Link to="/agreements" className="text-xs font-semibold text-brand-500 hover:underline">Open →</Link></div>
+          <AgreementCounts compact />
+        </section>
+      )}
 
       {/* ── 1 · today ── */}
       <section className="grid grid-cols-3 lg:grid-cols-6 gap-3 mb-5">

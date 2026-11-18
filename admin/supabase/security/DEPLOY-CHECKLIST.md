@@ -471,3 +471,90 @@ A wedding car gets a **Wedding hire** section (decoration, package price, hours,
 - [ ] Edit each wedding car: choose *Wedding car* or *Rental & wedding*, fill in **Wedding hire**, upload **Wedding car images** (decorated cut-out + wedding photos), Save. A new cut-out resets its stage placement — place it again on the Website page
 - [ ] Open `/wedding-cars`: the decoration badge, highlights (and price, if ticked) show. A *Wedding car* is
       not on the home page, Popular Vehicles or `/vehicles`
+
+## Part 19 — Fixed-amount cars (after Part 15 / file 17)
+
+Vehicles → **Edit** → **How the owner is paid**: *Share of each rental* (as before) or *Fixed amount*,
+paid **every month** (part months by days) or **once at the end of the term**. On a fixed-amount car:
+- every booking starting in the term has no commission split, so the company keeps the whole bill
+- the owner's monthly payout gets a **Fixed amounts** line, whether the car was rented or not
+- each expense on the car asks who carries it: *Company — charge owner*, *Company — our own cost*, or *The vehicle owner*
+
+- [ ] SQL Editor → run `security/21_owner_fixed_terms.sql` (undo: `rollback/21_rollback_owner_fixed_terms.sql`)
+- [ ] Push the admin
+- [ ] For each fixed-amount car: Edit → How the owner is paid → Fixed amount, then enter the amount and the dates. Save.
+- [ ] Company accounts: if a car had bookings in the term before this was set, fix each one where it shows
+      "Commission / owner share out of date" (the profit box sets the owner share to 0)
+
+## Part 20 — Booking e-Agreement, foundation (Stage 3a, after Part 14 / file 16)
+
+Database only — nothing changes in the admin app or website yet. Adds the private `esign` records
+(quotation versions, priority holds, agreements, acceptance evidence, advance requests, payment receipts),
+a **database double-booking guard**, and the booking gate (OFF until a go-live date is set).
+Design: `admin/supabase/EAGREEMENT.md`.
+
+- [ ] SQL Editor → run `security/22_booking_eagreement.sql` (undo: `rollback/22_rollback_booking_eagreement.sql` — keeps every record)
+- [ ] If it printed **NOT ADDED: … pairs of existing bookings overlap**: run
+      `select * from public.eagreement_booking_overlaps();`, fix each pair (wrong dates, or a booking that
+      should be Cancelled/Completed), then run file 22 again until the notice is gone
+- [ ] Try it: edit a booking so it overlaps another on the same car → Save is refused with "this car is already booked for …"
+- [ ] Do **not** set `eagreement_policy.enforce_from` yet — that switches on the gate for every new booking, and the
+      screens to pass it come in the next stages
+
+## Part 21 — Booking e-Agreement, server functions (Stage 3b, after Part 20 / file 22)
+
+Database only — still nothing changes for staff or customers. Adds every step of the journey as a checked server
+function (quotation versions, holds and waiting list, agreements and links, customer accept / decline, advance gate,
+payment reporting and Finance verification, allocation ticket, audited exceptions, expiry). Screens come in later stages.
+
+- [ ] SQL Editor → run `security/23_eagreement_functions.sql` (undo: `rollback/23_rollback_eagreement_functions.sql`, then run 22 again)
+- [ ] Run `select public.eag_run_expiry();` — it should answer `{"agreements_expired": 0, "holds_expired": 0, "requests_late": 0}`
+- [ ] Still do **not** set `eagreement_policy.enforce_from`
+
+## Part 22 — Booking e-Agreement, SMS link, PDF and timers (Stage 3c, after Part 21 / file 23)
+
+Still nothing visible to staff or customers until the screens (Stage 4+) are pushed.
+
+- [ ] SQL Editor → run `security/24_eagreement_delivery.sql` (undo: `rollback/24_rollback_eagreement_delivery.sql`).
+      It also creates the **private** Storage bucket `agreements` (accepted PDFs; no public access)
+- [ ] Deploy the two functions:
+      `supabase functions deploy agreement-notify --no-verify-jwt` and `supabase functions deploy agreement-pdf --no-verify-jwt`
+- [ ] Secrets (most already exist for send-sms / send-reminders): `TEXTLK_API_TOKEN`, `TEXTLK_SENDER_ID`, `CRON_SECRET`;
+      optional `SITE_URL` (default `https://ceylonrentacars.lk`)
+- [ ] SQL Editor → run `eagreement-cron.sql` — the 5-minute expiry job. Put your project ref + CRON_SECRET into the
+      reminder job, or delete that part until Brian approves the reminder times (`eagreement_policy.reminders`)
+- [ ] Check: `select * from cron.job where jobname like 'crc-eagreement%';`
+
+## Part 23 — Booking e-Agreement: screens, rehearsal and go-live (after Part 22 / file 24)
+
+Website: `/booking-agreement/<link>` (review, SMS-code sign-in, accept / decline / ask, advance details, "I have paid",
+PDF) and **My bookings → Agreements**. Admin: **Inquiry → Booking e-Agreement** panel, **e-Agreements** page
+(counts, latest, exceptions; admins: Policy and Wording), **Payment checks** (Finance), dashboard counts.
+
+- [ ] SQL Editor → run `security/23_eagreement_functions.sql` **again** (Finance can now mark a refund as done), then
+      `security/25_eagreement_screens.sql` (undo: `rollback/25_rollback_eagreement_screens.sql`)
+- [ ] Run `security/verify.sql`: every **e-agreement** row PASS (policy values show INFO until Brian sets them)
+- [ ] Push the website and the admin (vercel.json now routes `/booking-agreement/…` and sends no-referrer / noindex headers for it)
+- [ ] Permissions page → tick the new abilities (existing logins don't get them by themselves):
+      Buddhi — **Send e-Agreements**, **Request the advance** · Dinithi — **Verify payments (Finance)**
+- [ ] Brian → e-Agreements → **Wording**: new version with the lawyer-approved text and acceptance statement → **Approve**
+- [ ] Brian → e-Agreements → **Policy**: deadlines, turnaround buffer, advance rule, collection account, cancellation & refund
+      text + version, reminder hours → Save (each change is kept on the record)
+- [ ] Rehearse with a staff member's own phone as the customer: Inquiry → Send quotation → "Customer accepted" →
+      Generate → Send by SMS → accept on the phone with the code → Request advance → pay a small amount → record it →
+      a **different** person verifies it on Payment checks → Create the booking. Check My bookings → Agreements and the PDF.
+- [ ] Turn on the reminder job in `eagreement-cron.sql` once the reminder hours are approved
+- [ ] **Go-live**: e-Agreements → Policy → Go-live date. From then every new booking needs an accepted e-Agreement and a
+      Finance-verified advance, or an approved exemption. Walk-ins: the customer accepts on their own phone at the counter;
+      cash is recorded by one person and verified by another.
+- [ ] Later, to take approvals away from the IT admin: mark Brian's login first —
+      `update auth.users set raw_app_meta_data = raw_app_meta_data || '{"business_approver": true}' where email = '<Brian''s login e-mail>';`
+      (he signs out and in), then tick "Only the Managing Director approves" in Policy
+
+## Part 24 — Breakdown solution "Customer fixes it at a shop" (after Part 6 / file 06)
+
+1. SQL Editor → run `26_customer_shop_repair.sql` (adds the solution kind and two columns; safe to re-run).
+2. Push the admin app. On a breakdown → Solutions, the new card **Customer fixes it at a shop** appears.
+3. Check once: open a test breakdown, add the solution, enter a shop bill and choose **Customer paid — take it off the final bill**.
+   The booking shows a "Paid at a repair shop" line, the balance drops by that amount, Accounts shows no new money in,
+   and no payment SMS is sent. Reversing the "Reimbursement" line on the breakdown puts the amount back on the bill.

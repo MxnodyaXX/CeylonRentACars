@@ -7,7 +7,9 @@ const setMeta = (selector, value) => { const el = document.head.querySelector(se
  * Keep the title, description, canonical and robots tags in step with the page when the
  * app moves between pages without a reload (the first load already has them from the build).
  */
-export function usePageSeo(path) {
+export function usePageSeo(rawPath) {
+  // a personal agreement link: one page for every link (the link itself never goes into the tags)
+  const path = rawPath.startsWith('/booking-agreement/') ? '/booking-agreement' : rawPath;
   useEffect(() => {
     const page = PAGES[path] ?? PAGES['/'];
     const url = canonicalOf(PAGES[path] ? path : '/');

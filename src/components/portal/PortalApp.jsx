@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Icon } from '../Icon';
-import { loadMine } from '../../lib/portal';
+import { loadMine, rpc } from '../../lib/portal';
+import { navigate } from '../../lib/router';
 import { CONTACT, waLink } from '../../data/site';
 
 /*
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'trips', label: 'My trips', icon: 'car' },
   { id: 'requests', label: 'Requests', icon: 'file' },
   { id: 'payments', label: 'Payments', icon: 'tag' },
+  { id: 'agreements', label: 'Agreements', icon: 'shield' },
   { id: 'profile', label: 'Profile', icon: 'user' },
   { id: 'help', label: 'Help', icon: 'headset' },
 ];
@@ -452,6 +454,80 @@ function Payments({ data }) {
   );
 }
 
+/* ── Agreements: the booking e-Agreement (accepted online) and the full rental agreement (signed at handover) ── */
+const AGR_STATUS = {
+  SENT: ['Waiting for your decision', 'warn'], VIEWED: ['Waiting for your decision', 'warn'], ACCEPTED: ['Accepted', 'ok'],
+  DECLINED: ['Declined', 'bad'], EXPIRED: ['Expired', 'muted'], SUPERSEDED: ['Replaced by a newer version', 'muted'], REVOKED: ['Withdrawn', 'muted'],
+};
+const AGR_EVENT = {
+  AGREEMENT_SENT: 'Sent to you', AGREEMENT_RESENT: 'Sent again', AGREEMENT_VIEWED: 'Opened', AGREEMENT_ACCEPTED: 'You accepted',
+  AGREEMENT_DECLINED: 'You declined', AGREEMENT_EXPIRED: 'Expired', AGREEMENT_REVOKED: 'Withdrawn by CRC', PAYMENT_REPORTED: 'Payment reported',
+  ADVANCE_VERIFIED: 'Advance verified', BOOKING_CONFIRMED: 'Booking confirmed',
+};
+const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+
+function Agreements({ data }) {
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const list = data.agreements ?? [];
+  const open = async (reference) => {
+    setBusy(reference); setError('');
+    try {
+      const r = await rpc('my_agreement_link', { p_reference: reference }, 'We couldn’t open the agreement — please try again.');
+      navigate(r.path);
+    } catch (err) { setError(String(err.message).replace(/^[A-Z_]+: /, '')); setBusy(''); }
+  };
+  return (
+    <>
+      <SectionHead title="Agreements" text="The booking terms you accepted online, and the rental agreement signed when you collect the car." />
+      {error && <p className="fb-error" role="alert">{error}</p>}
+      {list.length === 0 ? (
+        <Empty icon="shield" title="No agreements yet" text="When we send you a booking agreement, it appears here." />
+      ) : (
+        <div className="pt-list">
+          {list.map((a) => {
+            const [label, tone] = AGR_STATUS[a.status] ?? [a.status, 'muted'];
+            const pending = a.status === 'SENT' || a.status === 'VIEWED';
+            const s = a.summary ?? {};
+            const handover = ['Ongoing', 'Completed'].includes(a.booking_status) ? 'Signed at handover' : a.booking_status === 'Cancelled' ? 'Not needed' : 'Pending handover';
+            return (
+              <section key={a.reference} className="pt-card pt-agr">
+                <div className="pt-agr__top">
+                  <div>
+                    <b>{a.title || 'Booking e-Agreement'}</b>
+                    <small>{a.reference} · version {a.version} · {a.document_code}</small>
+                  </div>
+                  <Badge tone={tone}>{label}</Badge>
+                </div>
+                <p className="portal-muted">{[s.vehicle?.make_model, s.rental?.pickup && `${s.rental.pickup} → ${s.rental.return}`, s.payment?.total].filter(Boolean).join(' · ')}</p>
+                <div className="pt-agr__docs">
+                  <div>Booking e-Agreement<b>{label}{a.decided_at ? ` · ${fmtTime(a.decided_at)}` : ''}</b></div>
+                  <div>Full rental agreement<b>{handover}</b></div>
+                  <div>Booking{a.booking_reference ? ` ${a.booking_reference}` : ''}<b>{a.booking_status ? a.booking_status.toUpperCase() : 'Not confirmed yet'}</b></div>
+                </div>
+                {(pending || a.status === 'ACCEPTED') && (
+                  <div>
+                    <button type="button" className={`btn ${pending ? 'btn--red' : 'btn--ghost'} btn--sm`} disabled={busy === a.reference} onClick={() => open(a.reference)}>
+                      {busy === a.reference ? 'Opening…' : pending ? <>Review and decide <Icon name="arrow" size="sm" /></> : <>Open · payment & PDF <Icon name="arrow" size="sm" /></>}
+                    </button>
+                  </div>
+                )}
+                <details>
+                  <summary>Read the agreement and its history</summary>
+                  <div className="pt-agr__doc" dangerouslySetInnerHTML={{ __html: a.html }} />
+                  <ul className="pt-agr__hist">
+                    {(a.history ?? []).map((h, i) => <li key={i}>{fmtTime(h.at)} — {AGR_EVENT[h.event] ?? h.event}</li>)}
+                  </ul>
+                </details>
+              </section>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
 function Profile({ data, onSignOut }) {
   const p = data.profile || {};
   return (
@@ -518,6 +594,7 @@ export default function PortalApp({ session, search, onSignOut }) {
   const counts = data ? {
     trips: data.bookings.filter((b) => ['current', 'upcoming'].includes(tripPhase(b))).length,
     requests: data.requests.filter((r) => requestInfo(r, data.bookings.length > 0).group === 'open').length,
+    agreements: (data.agreements ?? []).filter((a) => a.status === 'SENT' || a.status === 'VIEWED').length,
   } : {};
 
   let body;
@@ -527,6 +604,7 @@ export default function PortalApp({ session, search, onSignOut }) {
   else if (tab === 'trips') body = <Trips data={data} />;
   else if (tab === 'requests') body = <Requests data={data} />;
   else if (tab === 'payments') body = <Payments data={data} />;
+  else if (tab === 'agreements') body = <Agreements data={data} />;
   else if (tab === 'profile') body = <Profile data={data} onSignOut={onSignOut} />;
   else if (tab === 'help') body = <Help name={name} />;
   else body = <Overview data={data} name={name} />;

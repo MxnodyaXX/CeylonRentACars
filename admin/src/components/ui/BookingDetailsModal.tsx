@@ -7,6 +7,7 @@ import {
   AlertTriangle, ArrowLeft, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
   FileText, History, Loader2, Receipt, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldAlert, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import Modal from './Modal';
 import VehicleImage from './VehicleImage';
 import { vehicleBodyColor } from './CarSVG';
@@ -29,11 +30,12 @@ import {
   CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, chargeLine, type PriceLine, rs, uploadBookingFile, newId, shownStatus,
 } from '../../lib/bookingRecord';
 import { durationLabel, UNIT, RentalType } from '../../lib/rentalPeriod';
-import { bookingBill, bookingCredit, bookingDue } from '../../lib/credit';
+import { SHOP_PAID_METHOD, bookingBill, bookingCredit, bookingDue } from '../../lib/credit';
 import { buildBookingWhatsAppMsg, openWhatsApp } from '../../lib/whatsapp';
 import { printBookingConfirmation } from '../../lib/printReceipt';
 import { sendSms } from '../../lib/sms';
-import { DEFAULT_POLICIES, printRentalAgreement } from '../../lib/printAgreement';
+import { DEFAULT_POLICIES } from '../../lib/printAgreement';
+import { printBookingAgreement } from '../../lib/agreementTemplate';
 import { feedbackMessage, linkFor } from '../../pages/Feedback';
 import type {
   ActivityEntry, Booking, BookingDocument, ChargeKind, CustomerInfo, DocumentKind, HandoverChecklist, PaymentEntry, PaymentKind, RentalAgreement,
@@ -228,7 +230,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
       {tab === 'payments' && <Payments b={b} by={by} canPay={may.pay} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
       {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} canHandover={may.handover} />}
       {tab === 'documents' && <Documents b={b} by={by} canDelete={isAdmin()} onPrintAgreement={() => {
-        printRentalAgreement(b, vehicle, by);
+        printBookingAgreement(b, vehicle, { owner, driverName: driver?.name, staff: by });
         store.logBookingActivity(b.id, { by, type: 'Agreement', text: 'Rental agreement printed' }, { agreement: { ...(b.agreement ?? {}), printedAt: new Date().toISOString() } });
       }} />}
       {tab === 'breakdowns' && <BookingBreakdownsTab b={b} canReport={may.breakdowns && (b.status === 'Ongoing' || b.status === 'Confirmed')} />}
@@ -590,18 +592,27 @@ function Overview({ b, by, price, extra, narrow }: {
 /** Change the amount of a payment that was recorded wrongly — the reason and the old amount are kept on the entry and in History */
 function CorrectPayment({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by: string; onDone: () => void }) {
   const [amount, setAmount] = useState(String(row.amount));
+  const [kind, setKind] = useState<PaymentKind>(row.kind);
   const [why, setWhy] = useState('');
+  const canRetype = (['Advance', 'Payment', 'Deposit received'] as PaymentKind[]).includes(row.kind);
   const save = () => {
-    const e = useStore.getState().correctPayment(b.id, row.id, Math.round(Number(amount) || 0), why, by);
+    const e = useStore.getState().correctPayment(b.id, row.id, Math.round(Number(amount) || 0), why, by, kind);
     if (e) toast.error('Not saved', e); else onDone();
   };
   return (
     <div className="rounded-xl border border-navy-200 bg-navy-50/60 p-3 flex flex-wrap items-end gap-2 text-sm">
-      <p className="basis-full text-xs text-navy-600">Correct this <b>{row.kind.toLowerCase()}</b> of {rs(row.amount)} — e.g. the customer really paid less after a discount.</p>
+      <p className="basis-full text-xs text-navy-600">Correct this <b>{row.kind.toLowerCase()}</b> of {rs(row.amount)} — e.g. the customer really paid less after a discount, or it was really the deposit, not an advance.</p>
+      {canRetype && (
+        <label className="text-[11px] text-navy-500">Type
+          <select className="input !py-1 mt-0.5 !w-40 text-sm" value={kind} onChange={(e) => setKind(e.target.value as PaymentKind)}>
+            {(['Advance', 'Payment', 'Deposit received'] as PaymentKind[]).map((k) => <option key={k}>{k}</option>)}
+          </select>
+        </label>
+      )}
       <label className="text-[11px] text-navy-500">Right amount (Rs)<input className="input !py-1 mt-0.5 !w-32" type="number" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
       <label className="text-[11px] text-navy-500 flex-1 min-w-[12rem]">Why *<input className="input !py-1 mt-0.5" value={why} placeholder="e.g. Rs 40 discount — customer paid Rs 46,000" onChange={(e) => setWhy(e.target.value)} /></label>
       <button type="button" className="btn-secondary !py-1 text-xs" onClick={onDone}>Cancel</button>
-      <button type="button" className="btn-primary !py-1 text-xs disabled:opacity-40" disabled={!why.trim() || Number(amount) === row.amount} onClick={save}>Save correction</button>
+      <button type="button" className="btn-primary !py-1 text-xs disabled:opacity-40" disabled={!why.trim() || (Number(amount) === row.amount && kind === row.kind)} onClick={save}>Save correction</button>
     </div>
   );
 }
@@ -619,16 +630,16 @@ function LegacySplit({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by
   const save = () => {
     const entries = lines.filter((l) => Number(l.amount) > 0).map((l) => ({ id: newId(), at: new Date(`${l.date}T12:00:00`).toISOString(), kind: l.kind, amount: Math.round(Number(l.amount)), method: l.method, by,
       ...(l.receiptNo.trim() ? { receiptNo: l.receiptNo.trim() } : {}), note: 'Itemised later' }));
-    const e = useStore.getState().itemiseLegacy(b.id, entries, by);
+    const e = useStore.getState().itemiseLegacy(b.id, entries, by, { kind: row.kind, amount: row.amount });
     if (e) toast.error('Not saved', e); else onDone();
   };
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-2 text-sm">
-      <p className="text-xs text-amber-900">What made up this <b>{rs(row.amount)}</b>? Enter each payment with its real date — they must add up to the same amount.</p>
+      <p className="text-xs text-amber-900">What made up this <b>{rs(row.amount)}</b>? Enter each payment with its real date and type — they must add up to the same amount. Change the type if it was really an advance, a payment or the deposit.</p>
       {lines.map((l, i) => (
         <div key={i} className="grid grid-cols-2 sm:grid-cols-[9rem_9rem_8rem_8rem_1fr_auto] gap-2 items-center">
           <select className="input !py-1 text-sm" value={l.kind} onChange={(e) => set(i, 'kind', e.target.value)}>
-            {(deposit ? ['Deposit received'] : ['Advance', 'Payment']).map((k) => <option key={k}>{k}</option>)}
+            {['Advance', 'Payment', 'Deposit received'].map((k) => <option key={k}>{k}</option>)}
           </select>
           <input className="input !py-1 text-sm" type="date" value={l.date} onChange={(e) => set(i, 'date', e.target.value)} />
           <input className="input !py-1 text-sm" type="number" min="0" placeholder="Rs" value={l.amount} onChange={(e) => set(i, 'amount', e.target.value)} />
@@ -638,7 +649,7 @@ function LegacySplit({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by
         </div>
       ))}
       <div className="flex flex-wrap items-center gap-3">
-        {!deposit && <button type="button" className="text-xs font-semibold text-navy-700 underline" onClick={() => setLines((ls) => [...ls, { kind: 'Payment', date: day0, amount: '', method: 'Cash', receiptNo: '' }])}>+ Add a line</button>}
+        <button type="button" className="text-xs font-semibold text-navy-700 underline" onClick={() => setLines((ls) => [...ls, { kind: deposit ? 'Deposit received' : 'Payment', date: day0, amount: '', method: 'Cash', receiptNo: '' }])}>+ Add a line</button>
         <span className={`text-xs font-semibold ${left === 0 ? 'text-emerald-700' : 'text-red-600'}`}>{left === 0 ? 'Adds up ✓' : left > 0 ? `${rs(left)} still to place` : `${rs(-left)} too much`}</span>
         <span className="flex-1" />
         <button type="button" className="btn-secondary !py-1 text-xs" onClick={onDone}>Cancel</button>
@@ -723,7 +734,7 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
                     <td className="px-1 text-navy-500 text-xs">{[p.receiptNo, p.note].filter(Boolean).join(' · ') || '—'}
                       {canPay && p.id.startsWith('legacy') && splitting !== p.id && (
                         <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-xs font-semibold text-amber-800 underline">Split into the real entries</button>)}
-                      {canPay && !p.id.startsWith('legacy') && p.method !== 'Security deposit' && splitting !== p.id && (
+                      {canPay && !p.id.startsWith('legacy') && p.method !== 'Security deposit' && p.method !== SHOP_PAID_METHOD && splitting !== p.id && (
                         <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-[11px] text-navy-400 hover:text-navy-800 underline">Correct</button>)}</td>
                     <td className="px-1 text-navy-500 text-xs">{p.by}</td>
                     <td className={`px-1 text-right font-semibold whitespace-nowrap ${sign(p.kind) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{sign(p.kind) < 0 ? '−' : '+'}{rs(p.amount)}</td>
@@ -1160,7 +1171,7 @@ function Documents({ b, by, canDelete, onPrintAgreement }: { b: Booking; by: str
             </button>
           )}
         </div>
-        <p className="text-[11px] text-navy-400 mt-2">Tip: upload a photo of the signed copy as "Signed agreement" above. The printed terms are a starting template — have them checked before relying on them.</p>
+        <p className="text-[11px] text-navy-400 mt-2">Tip: upload a photo of the signed copy as "Signed agreement" above. Print agreement fills in the company's own agreement when it's set up in Agreement design.{useAuthStore.getState().isAdmin() && <> <Link to="/agreement-design" className="font-semibold text-navy-700 underline">Open Agreement design</Link></>}</p>
       </Card>
     </div>
   );

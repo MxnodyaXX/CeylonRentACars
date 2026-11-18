@@ -1,5 +1,9 @@
 import { Booking, Customer } from '../types';
 
+/** Booking payment method for a breakdown repair the customer paid at a shop and that was taken off their
+ *  bill — it settles part of the bill, but no money reaches the company's accounts. */
+export const SHOP_PAID_METHOD = 'Paid at a repair shop';
+
 /** The customer's net bill for a booking: rental + extra charges − discount. */
 export function bookingBill(b: Booking): number {
   return b.totalAmount + (b.extraCharges ?? 0) - (b.discount ?? 0);

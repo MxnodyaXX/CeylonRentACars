@@ -162,7 +162,7 @@ export default function ReportBreakdownModal({ bookingId, onClose, onCreated }: 
             <Grid cols={3}>
               <Field label="Customer contact"><input className="input" type="tel" value={f.contactPhone} onChange={(e) => set('contactPhone', e.target.value)} placeholder={b?.customerPhone} /></Field>
               <Field label="Mileage (km)"><input className="input" type="number" min="0" value={f.mileage} onChange={(e) => set('mileage', e.target.value)} /></Field>
-              <Field label="Fuel"><select className="input" value={f.fuel} onChange={(e) => set('fuel', e.target.value)}><option value="">—</option>{FUEL_LEVELS.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Fuel"><Select value={f.fuel} onChange={(v) => set('fuel', v)} placeholder="—" nullable options={FUEL_LEVELS.map((x) => ({ value: x, label: x }))} /></Field>
             </Grid>
             <Field label="Breakdown type *"><Chips size="xs" value={f.category} options={Object.entries(CATEGORY_LABEL) as [BdCategory, string][]} onChange={(v) => set('category', v)} /></Field>
             <Field label="What happened *"><textarea className="input" rows={3} value={f.description} onChange={(e) => set('description', e.target.value)} placeholder="What the customer saw / heard, warning lights, what was tried…" /></Field>
@@ -198,7 +198,7 @@ export default function ReportBreakdownModal({ bookingId, onClose, onCreated }: 
         )}
 
         <ErrorLine msg={err} />
-        <div className="flex justify-between gap-2">
+        <div className="sticky bottom-0 z-10 -mx-5 -mb-5 px-5 py-3 bg-white border-t border-navy-50 flex justify-between gap-2">
           <button type="button" className="btn-secondary inline-flex items-center gap-1" onClick={() => (step > (bookingId ? 1 : 0) ? setStep((x) => x - 1) : onClose())}>
             {step > (bookingId ? 1 : 0) ? <><ArrowLeft size={14} /> Back</> : 'Cancel'}
           </button>

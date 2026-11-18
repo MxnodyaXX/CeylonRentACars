@@ -61,6 +61,22 @@ export interface Vehicle {
   weddingOnly?: boolean;            // a wedding car only: not rented out, kept off the website's rental pages
   wedding?: WeddingDetails | null;  // its wedding hire terms (wedding cars)
   weddingStage?: import('../lib/weddingStage').WeddingStage | null;   // its place on that page's podium (null = automatic)
+  ownerTerms?: OwnerTerms | null;   // a fixed amount to the owner instead of a share of each rental (vehicles.owner_terms)
+}
+
+/**
+ * The car is with the company for a fixed amount: the owner is paid that amount whether the car is rented or not,
+ * and the company keeps every rental in full (no commission split). Bookings starting inside the term follow this.
+ *   monthly  Rs amount for each month from start to end (part months by days)
+ *   term     Rs amount once, for the whole term, paid in the month it ends
+ */
+export interface OwnerTerms {
+  type: 'fixed';
+  schedule: 'monthly' | 'term';
+  amount: number;
+  start: string;        // YYYY-MM-DD
+  end?: string | null;  // YYYY-MM-DD (needed for 'term'; open-ended monthly if empty)
+  note?: string;
 }
 
 /** A wedding car's hire terms (vehicles.wedding_details). The price shows on the website only when showPrice is on. */
@@ -659,8 +675,8 @@ export interface Commission {
 
 /** One line of a monthly owner settlement — kept with the settlement exactly as it was approved */
 export interface SettlementLine {
-  kind: 'rental' | 'deduction' | 'expense' | 'referral';
-  id: string;              // commission id (rental / deduction), expense id, or booking id (referral fee)
+  kind: 'rental' | 'deduction' | 'expense' | 'referral' | 'fixed';
+  id: string;              // commission id (rental / deduction), expense id, booking id (referral fee), or fixed:<vehicle>:<YYYY-MM | term>
   bookingId?: string;
   label: string;           // what it is, e.g. "Toyota Aqua CAA-1111 · Nimal Perera"
   detail?: string;         // e.g. "1–5 Oct 2026 · Rs 40,000 rental − Rs 6,000 company"
@@ -702,8 +718,9 @@ export interface Expense {
   date: string;
   receipt?: string;
   createdAt: string;
-  /** Who paid it: 'company' → taken off the car owner's next monthly payout; 'owner' → the owner's own cost */
-  paidBy?: 'company' | 'owner';
+  /** Who paid it: 'company' → taken off the car owner's next monthly payout; 'company_cost' → the company paid and carries it
+   *  (nothing taken off the owner); 'owner' → the owner's own cost */
+  paidBy?: 'company' | 'company_cost' | 'owner';
   /** The monthly owner settlement it was taken off (locked once set) */
   settlementId?: string;
 }
@@ -778,7 +795,9 @@ export interface AppState {
   addOwner: (o: Omit<Owner, 'id' | 'createdAt' | 'totalEarnings' | 'pendingPayout'>) => void;
   updateOwner: (id: string, updates: Partial<Owner>) => void;
 
-  addBooking: (b: Omit<Booking, 'id' | 'createdAt'>) => string;
+  /** opts.id: the booking id issued by the e-Agreement allocation (eag_allocate) — the database only accepts the booking with it.
+   *  opts.onSaved runs once the database has the booking (straight away in demo mode). */
+  addBooking: (b: Omit<Booking, 'id' | 'createdAt'>, opts?: { id?: string; onSaved?: (id: string) => void }) => string;
   updateBooking: (id: string, updates: Partial<Booking>) => void;
   /** `why` is recorded in the booking notes (who, reason, optional details) */
   cancelBooking: (id: string, why?: { reason: string; details?: string; by: string }) => void;
@@ -789,9 +808,9 @@ export interface AppState {
   /** a booking whose owner payout line never got saved: create it from the booking (as a new booking would) */
   createPayoutLine: (bookingId: string) => string | null;
   /** replace a "recorded before the payment log" line with the real dated entries (same total) */
-  itemiseLegacy: (bookingId: string, entries: PaymentEntry[], by: string) => string | null;
+  itemiseLegacy: (bookingId: string, entries: PaymentEntry[], by: string, from?: { kind: PaymentKind; amount: number }) => string | null;
   /** change the amount of a payment-log entry recorded wrongly (the totals follow; the old amount and the reason are kept) */
-  correctPayment: (bookingId: string, entryId: string, amount: number, reason: string, by: string) => string | null;
+  correctPayment: (bookingId: string, entryId: string, amount: number, reason: string, by: string, kind?: PaymentKind) => string | null;
   /** A payout line marked Paid by hand but never actually paid: back to Pending so the monthly payout includes it */
   reopenPayout: (id: string) => void;
   /** Merge referrer spellings into one name on every booking and payout line (admin) — returns how many were changed */

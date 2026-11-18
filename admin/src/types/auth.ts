@@ -7,7 +7,9 @@ export type StaffAbility =
   | 'canBook' | 'canChangeStatus' | 'canViewHandovers' | 'canTakePayments' | 'canViewFinance'
   | 'canViewExpenses' | 'canAddExpenses' | 'canEditVehicle' | 'canViewCustomers' | 'canViewInquiries'
   | 'canViewDrivers' | 'canManageBreakdowns' | 'canViewOwners' | 'canViewFeedback' | 'canViewReferrals' | 'canViewIncomplete'
-  | 'canEditPrices' | 'canAddVehicle';
+  | 'canEditPrices' | 'canAddVehicle'
+  // booking e-Agreement (security/23_eagreement_functions.sql)
+  | 'canSendAgreements' | 'canRequestAdvance' | 'canVerifyPayments';
 
 export interface AppUser {
   id: string;

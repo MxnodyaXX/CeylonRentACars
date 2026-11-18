@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import { ReactNode, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 interface Props {
   open: boolean;
@@ -26,7 +27,9 @@ export default function Modal({ open, onClose, title, children, width = 'max-w-l
   if (!open) return null;
   const outside = (t: EventTarget) => !panel.current?.contains(t as Node);
 
-  return (
+  // drawn at the top of the page (not inside whatever opened it): a modal opened from another modal
+  // would otherwise be boxed in by that modal's panel and cut off
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
       onMouseDown={(e) => { downOutside.current = outside(e.target); }}
@@ -75,6 +78,7 @@ export default function Modal({ open, onClose, title, children, width = 'max-w-l
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }

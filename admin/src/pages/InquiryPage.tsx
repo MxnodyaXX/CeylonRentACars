@@ -3,8 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Phone, MessageCircle, Mail, Copy, Flame, Snowflake, Thermometer, Sparkles, Timer, AlertTriangle, Info,
   CheckCircle2, Circle, MapPin, CalendarDays, User, Globe, Car, History, Repeat, XCircle, ArrowRight, ClipboardCheck,
-  Receipt, MessagesSquare, PhoneCall, ClipboardList, ThumbsUp, Check,
+  Receipt, MessagesSquare, PhoneCall, ClipboardList, ThumbsUp, Check, FileSignature,
 } from 'lucide-react';
+import EAgreementPanel from '../components/eagreement/EAgreementPanel';
+import { gateOn, usePolicy } from '../lib/eagreement';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { toast } from '../store/useToast';
@@ -64,6 +66,7 @@ export default function InquiryPage() {
   const [lostCustom, setLostCustom] = useState('');
   const [, tick] = useState(0);
   const [startOpen, setStartOpen] = useState(false);
+  const policy = usePolicy();
 
   useEffect(() => {
     loadFollowUps().then((l) => { setLogReady(l !== null); setFollowUps((l ?? []).filter((f) => f.inquiryId === id)); }).catch(() => {});
@@ -187,6 +190,12 @@ export default function InquiryPage() {
   };
 
   const convert = () => {
+    // after go-live every booking goes through the e-Agreement: accepted agreement → verified advance → booking
+    if (policy && gateOn(policy)) {
+      toast.info('Use the e-Agreement panel', 'The booking is created there once the customer accepts and Finance verifies the advance.');
+      document.getElementById('eagreement')?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
     // Terms agreed in the consultation → the booking is prefilled from exactly what the customer accepted
     // terms agreed in the consultation only count while the inquiry is still for that car
     const agreed = inq.consultation?.agreement?.vehicleId === (inq.vehicleId ?? inq.consultation?.agreement?.vehicleId) ? inq.consultation?.agreement : undefined;
@@ -431,6 +440,12 @@ export default function InquiryPage() {
               {inq.consultation.internalNotes && <p className="text-xs text-navy-600 bg-amber-50/60 rounded-lg px-3 py-2 mt-2"><b>Internal:</b> {inq.consultation.internalNotes}</p>}
             </Section>
           )}
+
+          <div id="eagreement">
+            <Section icon={FileSignature} title="Booking e-Agreement">
+              <EAgreementPanel inquiry={inq} />
+            </Section>
+          </div>
 
           {flags.length > 0 && (
             <section className="rounded-xl2 border border-amber-200 bg-amber-50 p-4 space-y-2">

@@ -8,6 +8,7 @@ import DateInput from '../components/ui/DateInput';
 import { Plus, Trash2, Receipt } from 'lucide-react';
 import { Expense, ExpenseCategory } from '../types';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { fixedTermsOn, termsSummary } from '../lib/ownerTerms';
 
 const CATEGORIES: ExpenseCategory[] = ['Service', 'Repair', 'Fine', 'Damage', 'Tire', 'Insurance', 'Fuel', 'Other'];
 const CAT_COLORS: Record<ExpenseCategory, string> = {
@@ -60,6 +61,7 @@ export default function Expenses() {
   const pieData = Object.entries(catMap).map(([name, value]) => ({ name, value }));
 
   const set = (field: string, value: unknown) => setForm((f) => ({ ...f, [field]: value }));
+  const fixedCar = fixedTermsOn(vehicles.find((v) => v.id === form.vehicleId), form.date);
 
   const handleSave = () => {
     if (!form.vehicleId || !form.description || form.amount <= 0) return;
@@ -221,8 +223,9 @@ export default function Expenses() {
           {!isOwnerRole && (
             <div className="sm:col-span-2">
               <p className="label">Who paid it?</p>
-              <div className="grid grid-cols-2 gap-2">
-                {([['company', 'The company', "Taken off the owner's next monthly payout"], ['owner', 'The vehicle owner', 'Recorded only — nothing taken off']] as const).map(([k, label, hint]) => (
+              {fixedCar && <p className="text-[11px] text-violet-700 mb-1.5">This car is on a fixed amount ({termsSummary(fixedCar)}) — choose whether this cost comes off it.</p>}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {([['company', 'Company — charge owner', "Taken off the owner's next monthly payout"], ['company_cost', 'Company — our own cost', 'The company carries it · nothing taken off'], ['owner', 'The vehicle owner', 'Recorded only — nothing taken off']] as const).map(([k, label, hint]) => (
                   <button key={k} type="button" onClick={() => setForm((f) => ({ ...f, paidBy: k }))}
                           className={`rounded-xl border p-2.5 text-left ${form.paidBy === k ? 'border-navy-800 bg-navy-50' : 'border-navy-100 hover:border-navy-300'}`}>
                     <span className="block text-sm font-semibold text-navy-800">{label}</span>
@@ -243,14 +246,16 @@ export default function Expenses() {
 }
 
 /** Who paid the expense and whether it was taken off the owner's payout */
-function PaidByTag({ e, mayEdit, ownerName, onSet }: { e: Expense; mayEdit: boolean; ownerName?: string; onSet: (p: 'company' | 'owner') => void }) {
+function PaidByTag({ e, mayEdit, ownerName, onSet }: { e: Expense; mayEdit: boolean; ownerName?: string; onSet: (p: NonNullable<Expense['paidBy']>) => void }) {
   if (e.settlementId) return <span className="block text-[11px] font-semibold text-emerald-700">Taken off {ownerName ?? "the owner"}'s payout · settled</span>;
   if (e.paidBy === 'company') return <span className="block text-[11px] text-amber-700">Company paid · comes off {ownerName ?? "the owner"}'s next payout</span>;
   if (e.paidBy === 'owner') return <span className="block text-[11px] text-navy-400">Paid by the owner</span>;
+  if (e.paidBy === 'company_cost') return <span className="block text-[11px] text-sky-700">Company paid · the company's own cost (not charged to the owner)</span>;
   if (!mayEdit) return <span className="block text-[11px] text-navy-300">Who paid: not recorded</span>;
   return (
     <span className="flex items-center gap-1.5 text-[11px] text-navy-400 mt-0.5">Who paid?
-      <button type="button" onClick={() => onSet('company')} className="rounded px-1.5 py-0.5 bg-navy-50 hover:bg-navy-100 font-semibold text-navy-600">Company</button>
+      <button type="button" onClick={() => onSet('company')} className="rounded px-1.5 py-0.5 bg-navy-50 hover:bg-navy-100 font-semibold text-navy-600">Company · charge owner</button>
+      <button type="button" onClick={() => onSet('company_cost')} className="rounded px-1.5 py-0.5 bg-navy-50 hover:bg-navy-100 font-semibold text-navy-600">Company · own cost</button>
       <button type="button" onClick={() => onSet('owner')} className="rounded px-1.5 py-0.5 bg-navy-50 hover:bg-navy-100 font-semibold text-navy-600">Owner</button>
     </span>
   );

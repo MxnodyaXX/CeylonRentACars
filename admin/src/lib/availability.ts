@@ -64,7 +64,6 @@ export function statusForDates(b: StatusDates, now = Date.now()): 'Confirmed' | 
 export function statusDateProblem(status: string, b: StatusDates, now = Date.now()): string | null {
   if (!b.startDate || !b.endDate || status === 'Cancelled') return null;
   const today = localDay(now);
-  const started = b.startDate < today || (b.startDate === today && isHm(b.startTime) && bookingStartMs(b) <= now);
   const notStartedYet = b.startDate > today || (b.startDate === today && isHm(b.startTime) && bookingStartMs(b) > now);
   const ended = b.endDate < today || (b.endDate === today && isHm(b.endTime) && bookingEndMs(b) <= now);
   const notEndedYet = b.endDate > today || (b.endDate === today && isHm(b.endTime) && bookingEndMs(b) > now);
@@ -79,7 +78,8 @@ export function statusDateProblem(status: string, b: StatusDates, now = Date.now
       return null;
     case 'Confirmed':
       if (ended) return `This rental ended on ${nice(b.endDate)} — use Completed (or Cancelled if it never happened).`;
-      if (started) return `This rental started on ${nice(b.startDate)} — use Ongoing if the customer has the vehicle.`;
+      // the start day itself is fine even past the start time — the car can still be delivered late that day
+      if (b.startDate < today) return `This rental started on ${nice(b.startDate)} — use Ongoing if the customer has the vehicle.`;
       return null;
     default:
       return null;

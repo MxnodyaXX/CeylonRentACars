@@ -42,7 +42,7 @@ export default function OwnerStatements() {
             <div className="flex-1 min-w-[12rem]">
               <p className="text-sm font-semibold text-navy-800">{periodLabel(s.period)} · {rs(s.net)}</p>
               <p className="text-xs text-navy-400">
-                {s.lines.filter((l) => l.kind === 'rental').length} rentals · paid {s.paidAt ? new Date(s.paidAt).toLocaleDateString('en-GB') : '—'} by {s.payMethod}{s.payRef ? ` · ref ${s.payRef}` : ''}
+                {s.lines.some((l) => l.kind === 'fixed') ? 'Fixed amount · ' : ''}{s.lines.filter((l) => l.kind === 'rental').length} rentals · paid {s.paidAt ? new Date(s.paidAt).toLocaleDateString('en-GB') : '—'} by {s.payMethod}{s.payRef ? ` · ref ${s.payRef}` : ''}
               </p>
             </div>
             <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_INFO[s.status].cls}`}>{s.status === 'paid' ? 'Paid — please confirm' : STATUS_INFO[s.status].label}</span>

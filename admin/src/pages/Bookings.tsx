@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useBreakdownStore } from '../store/useBreakdownStore';
 import { toast } from '../store/useToast';
 import type { BdSwap } from '../lib/breakdowns';
-import { useStore } from '../store/useStore';
+import { useStore, unavailableReason } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import Modal from '../components/ui/Modal';
@@ -22,6 +22,7 @@ import {
   LayoutGrid, Rows3, Car, SlidersHorizontal, Layers, X,
 } from 'lucide-react';
 import { sendBookingReceipt } from '../lib/printReceipt';
+import { gateOn, usePolicy, type Allocation } from '../lib/eagreement';
 import AvailabilityModal from '../components/ui/AvailabilityModal';
 import AdminBookingModal from '../components/ui/AdminBookingModal';
 import EditBookingModal from '../components/ui/EditBookingModal';
@@ -229,7 +230,10 @@ export default function Bookings() {
 
   // Auto-open booking form when navigated from an inquiry conversion
   const fromInquiryId = useRef<string | undefined>(undefined);
-  useEffect(() => { if (modal !== 'add') fromInquiryId.current = undefined; }, [modal]);
+  // the booking id issued by the e-Agreement (eag_allocate) — the database only accepts this booking with it
+  const allocation = useRef<Allocation | undefined>(undefined);
+  const policy = usePolicy();
+  useEffect(() => { if (modal !== 'add') { fromInquiryId.current = undefined; allocation.current = undefined; } }, [modal]);
   useEffect(() => {
     const inq = (location.state as { fromInquiry?: {
       customerName: string; customerPhone: string; startDate: string; endDate: string; notes: string; vehicleId?: string;
@@ -238,9 +242,11 @@ export default function Bookings() {
       paidAmount?: number; depositAmount?: number; depositType?: 'cash' | 'vehicle' | 'other'; totalKm?: number;
       source?: string;   // the inquiry's referral: a channel or a person
       inquiryId?: string;  // set to Converted when this booking is saved
+      allocation?: Allocation;
     } } | null)?.fromInquiry;
     if (!inq) return;
     fromInquiryId.current = inq.inquiryId;
+    allocation.current = inq.allocation;
     const f = emptyForm();
     f.customerName  = inq.customerName  ?? '';
     f.customerPhone = inq.customerPhone ?? '';
@@ -481,6 +487,20 @@ export default function Bookings() {
       setError('Choose how the customer found us (walk-in, WhatsApp, Facebook…).');
       return;
     }
+    // the booking e-Agreement: after go-live a booking needs its allocation, and must be exactly what the customer accepted
+    const ticket = allocation.current;
+    if (ticket) {
+      const same = form.vehicleId === ticket.vehicle_id && form.startDate === ticket.start_date && form.endDate === ticket.end_date
+        && (form.startTime || '00:00') === ticket.start_time && (form.endTime || '23:59') === ticket.end_time
+        && Math.round(form.totalAmount) === Math.round(ticket.total);
+      if (!same) {
+        setError(`This booking must match the accepted e-Agreement: the same car, ${ticket.start_date} ${ticket.start_time} → ${ticket.end_date} ${ticket.end_time}, total Rs ${Math.round(ticket.total).toLocaleString('en-LK')}. For other terms, send a revised quotation first.`);
+        return;
+      }
+    } else if (policy && gateOn(policy)) {
+      setError('New bookings now go through the booking e-Agreement: open the inquiry and use its e-Agreement panel (or ask for a gate exemption on the e-Agreements page).');
+      return;
+    }
     const { depositVehicleModel, depositVehicleColor, depositVehicleNumber, ...bookingData } = form;
     // Record an agreed price next to the standard one, so the difference is explained later
     const standardTotal = form.totalDays * standardRate;
@@ -488,7 +508,10 @@ export default function Bookings() {
       ? [{ at: new Date().toISOString(), by: useAuthStore.getState().currentUser?.name ?? 'Staff', type: 'Note' as const,
            text: `Custom price Rs ${dailyTotal.toLocaleString('en-LK')} (${price.mode === 'perDay' ? `Rs ${price.customRate.toLocaleString('en-LK')} / day` : 'agreed total'}) — standard was Rs ${standardTotal.toLocaleString('en-LK')} (${form.totalDays} days × Rs ${standardRate.toLocaleString('en-LK')})` }]
       : [];
-    const bookingId = addBooking({
+    const inquiryId = fromInquiryId.current;
+    const receiptVehicle = vehicles.find((v) => v.id === form.vehicleId);
+    const receiptDriver  = drivers.find((d) => d.id === form.driverId) ?? undefined;
+    addBooking({
       ...bookingData,
       ...(priceNote.length ? { activity: priceNote } : {}),
       // how the rent was set, for the bill: standard daily rate, an agreed rate per day, or an agreed total
@@ -496,14 +519,17 @@ export default function Bookings() {
       depositAssetDescription: form.depositType === 'vehicle'
         ? [depositVehicleModel, depositVehicleColor, depositVehicleNumber].filter(Boolean).join(' | ')
         : form.depositAssetDescription,
+    }, {
+      id: ticket?.booking_id,
+      // only once the database has the booking: the inquiry is converted and the receipt goes out
+      onSaved: (bookingId) => {
+        if (inquiryId) useStore.getState().updateInquiry(inquiryId, { status: 'Converted', stage: 'BOOKED' });
+        const newBooking = useStore.getState().bookings.find((b) => b.id === bookingId);
+        if (newBooking) sendBookingReceipt(newBooking, receiptVehicle, receiptDriver).catch(console.error);
+      },
     });
-    // The inquiry this booking came from is converted only now that the booking exists
-    if (fromInquiryId.current) { useStore.getState().updateInquiry(fromInquiryId.current, { status: 'Converted', stage: 'BOOKED' }); fromInquiryId.current = undefined; }
-    // Send SMS + email receipt automatically on confirmation
-    const newBooking = useStore.getState().bookings.find((b) => b.id === bookingId);
-    const receiptVehicle = vehicles.find((v) => v.id === form.vehicleId);
-    const receiptDriver  = drivers.find((d) => d.id === form.driverId) ?? undefined;
-    if (newBooking) sendBookingReceipt(newBooking, receiptVehicle, receiptDriver).catch(console.error);
+    fromInquiryId.current = undefined;
+    allocation.current = undefined;
     setModal(null);
     setForm(emptyForm());
     setAvailability(null);
@@ -1274,6 +1300,9 @@ export default function Bookings() {
                 (b) => b.vehicleId === form.vehicleId && blocksAvailability(b)
                   && rangesOverlap(candS, candE, bookingStartMs(b), bookingEndMs(b))
               );
+              // the rule that actually hit — a car in maintenance, out as a breakdown replacement, or on another booking's exchange leg
+              const why = conflict ? null : unavailableReason(form.vehicleId, form.startDate, form.endDate, form.startTime, form.endTime);
+              const at = (ms: number) => new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
               const allVB = bookings
                 .filter((b) => b.vehicleId === form.vehicleId && blocksAvailability(b))
                 .sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
@@ -1306,6 +1335,21 @@ export default function Bookings() {
                       <span className="text-red-400">Booked by</span><span className="font-semibold text-red-800">{conflict.customerName}</span>
                       <span className="text-red-400">Booked period</span><span className="font-semibold text-red-800">{conflict.startDate}{conflict.startTime ? ` ${fmt12(conflict.startTime)}` : ''} → {conflict.endDate}{conflict.endTime ? ` ${fmt12(conflict.endTime)}` : ''}</span>
                       {nextFree && <><span className="text-red-400">Next free date</span><span className="font-bold text-emerald-700">{nextFree}</span></>}
+                    </div>
+                  )}
+                  {why?.kind === 'maintenance' && (
+                    <p className="text-xs text-red-800 pl-1">This car is marked <b>In maintenance</b> on the Vehicles page, so it can't be booked for any dates. Change its status there when it's back on the road.</p>
+                  )}
+                  {why?.kind === 'breakdown' && (
+                    <div className="text-xs pl-1 space-y-1.5">
+                      <p className="text-red-800">This car is recorded as <b>still out as a breakdown replacement</b> ({why.ref}) for {why.booking.customerName}'s hire, which runs to {at(why.untilMs)}.</p>
+                      <p className="text-red-700">If the car has already come back, open breakdown {why.ref} and record its return (swap back or "Trip ended"). The dates will then free up.</p>
+                    </div>
+                  )}
+                  {why?.kind === 'booking' && (
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pl-1">
+                      <span className="text-red-400">Booked by</span><span className="font-semibold text-red-800">{why.booking.customerName}{why.viaExchange ? ' (vehicle exchange)' : ''}</span>
+                      <span className="text-red-400">Holds this car</span><span className="font-semibold text-red-800">{at(why.fromMs)} → {at(why.untilMs)}</span>
                     </div>
                   )}
                 </div>

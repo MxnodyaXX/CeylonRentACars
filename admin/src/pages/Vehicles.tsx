@@ -15,7 +15,10 @@ import { useBreakdownStore } from '../store/useBreakdownStore';
 import VehicleReviews from '../components/ui/VehicleReviews';
 import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
-import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle, UserRound, Heart } from 'lucide-react';
+import OwnerTermsField from '../components/ui/OwnerTermsField';
+import FixedTargetModal from '../components/ui/FixedTargetModal';
+import { readOwnerTerms, termsSummary } from '../lib/ownerTerms';
+import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle, UserRound, Heart, Banknote } from 'lucide-react';
 import { Vehicle, VehicleStatus, WeddingDetails } from '../types';
 import { isInsuranceComplete, clearInsuranceReminder } from '../lib/insuranceReminder';
 import { vehicleMoney } from '../lib/revenue';
@@ -62,6 +65,7 @@ export default function Vehicles() {
   const [filter,   setFilter]   = useState<VehicleStatus | 'All'>('All');
   const [modal,    setModal]    = useState<'add' | 'edit' | 'view' | null>(null);
   const [selected, setSelected] = useState<Vehicle | null>(null);
+  const [targetCar, setTargetCar] = useState<Vehicle | null>(null);   // a fixed-amount car's month vs its target
   const [form,     setForm]     = useState(empty());
   const [typeError, setTypeError] = useState(false);
   const [uploading,       setUploading]       = useState(false);
@@ -101,6 +105,8 @@ export default function Vehicles() {
   const termsLocked   = teamLogin && !can('canEditPrices');
   const detailsLocked = teamLogin && !can('canEditVehicle');
   const canEditCar    = can('canEditVehicle') || (teamLogin && can('canEditPrices'));
+  // how the owner is paid (share of each rental / fixed amount): admins and Finance (the database keeps the same rule)
+  const mayOwnerTerms = isAdmin() || (teamLogin && can('canViewFinance'));
   // adding a car: admins, owners allowed to edit their cars, and team members with "Add vehicles"
   const canAddCar     = isAdmin() || (isOwnerRole && can('canEditVehicle')) || (teamLogin && can('canAddVehicle') && can('canEditVehicle'));
 
@@ -290,9 +296,15 @@ export default function Vehicles() {
       toast.error('Vehicle under maintenance', `Breakdown ${hold.ref} is holding it — use "Mark vehicle as ready" on that breakdown.`);
       return;
     }
-    // a team member who may change only the prices: send just those (the rest is read-only for them)
+    if (mayOwnerTerms && form.ownerTerms && !readOwnerTerms(form.ownerTerms)) {
+      toast.error('Fixed amount incomplete', form.ownerTerms.schedule === 'term' ? 'Enter the amount and the end date of the term — or choose "Share of each rental".' : 'Enter the monthly amount — or choose "Share of each rental".');
+      return;
+    }
+    const termsNext = mayOwnerTerms ? readOwnerTerms(form.ownerTerms) : (selected?.ownerTerms ?? null);
+    const termsChanged = modal === 'edit' && JSON.stringify(termsNext) !== JSON.stringify(selected?.ownerTerms ?? null);
+    // a team member who may change only the prices (and, Finance, how the owner is paid): send just those
     if (modal === 'edit' && selected && detailsLocked) {
-      if (termsLocked) { setModal(null); return; }
+      if (termsLocked && !termsChanged) { setModal(null); return; }
       const u: Partial<Vehicle> = {};
       if (form.dailyRent !== selected.dailyRent) u.dailyRent = form.dailyRent;
       if ((form.includedKmPerDay ?? null) !== (selected.includedKmPerDay ?? null)) u.includedKmPerDay = form.includedKmPerDay;
@@ -302,6 +314,7 @@ export default function Vehicles() {
         const next = { ...(selected.wedding ?? {}), packagePrice: w.packagePrice ?? null, hours: w.hours ?? null, extraHour: w.extraHour ?? null, showPrice: !!w.showPrice && !!w.packagePrice };
         if (JSON.stringify(next) !== JSON.stringify(selected.wedding ?? {})) u.wedding = next;
       }
+      if (termsChanged) u.ownerTerms = termsNext;
       if (Object.keys(u).length) updateVehicle(selected.id, u);
       setModal(null);
       return;
@@ -324,7 +337,7 @@ export default function Vehicles() {
     try {
       let vehicleId: string;
       if (modal === 'add') {
-        vehicleId = addVehicle(form);
+        vehicleId = addVehicle({ ...form, ownerTerms: termsNext });
       } else {
         vehicleId = selected!.id;
       }
@@ -412,6 +425,8 @@ export default function Vehicles() {
         if (!!details.weddingOnly === !!selected?.weddingOnly) delete details.weddingOnly;
         if (JSON.stringify(details.wedding ?? null) === JSON.stringify(selected?.wedding ?? null)) delete details.wedding;
         delete details.weddingStage;   // set on the Website page, not here
+        // how the owner is paid: only when it changed (keeps edits working before 21_owner_fixed_terms.sql adds it)
+        if (termsChanged) details.ownerTerms = termsNext; else delete details.ownerTerms;
         updateVehicle(vehicleId, { ...details, ...imageUpdates });
       } else if (Object.keys(imageUpdates).length > 0) {
         updateVehicle(vehicleId, imageUpdates);
@@ -587,6 +602,19 @@ export default function Vehicles() {
             <p className="font-medium text-navy-700">{v.transmission ?? '—'}</p>
           </div>
         </div>
+
+        {/* A fixed-amount car: the month against the owner's fixed amount */}
+        {v.ownerTerms && mayOwnerTerms && (
+          <button type="button" onClick={(e) => { e.stopPropagation(); setTargetCar(v); }}
+                  className="w-full flex items-center gap-2 bg-violet-50 hover:bg-violet-100 rounded-xl px-3 py-2 mb-3 text-left transition-colors">
+            <Banknote size={13} className="text-violet-600 flex-shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs font-semibold text-violet-800 truncate">Fixed · Rs {v.ownerTerms.amount.toLocaleString()}{v.ownerTerms.schedule === 'monthly' ? ' a month' : ' for the term'}</span>
+              <span className="block text-[10px] text-violet-500">See this month against the target</span>
+            </span>
+            <ChevronRight size={14} className="text-violet-400 flex-shrink-0" />
+          </button>
+        )}
 
         {/* Status context strips */}
         {v.status === 'Reserved' && activeBooking && (
@@ -896,6 +924,14 @@ export default function Vehicles() {
             </div>
           </Section>
 
+          {/* ── How the owner is paid (share of each rental / fixed amount) ── */}
+          {(mayOwnerTerms || form.ownerTerms) && (
+            <Section locked={!mayOwnerTerms} icon={<Banknote size={16} />} title="How the owner is paid"
+                     hint={mayOwnerTerms ? 'A share of each rental, or a fixed amount whether the car is rented or not.' : 'Set by the Managing Director or Finance.'}>
+              <OwnerTermsField value={form.ownerTerms} disabled={!mayOwnerTerms} onChange={(t) => set('ownerTerms', t)} />
+            </Section>
+          )}
+
           {/* ── 3 · Pricing & km terms (not for a wedding-only car) ── */}
           {use !== 'wedding' && <Section icon={<TrendingUp size={16} />} title="Rent & mileage terms" hint={termsLocked ? 'Set by the Managing Director (or a team member with “Edit prices”) — ask Brian to change the rent or km terms.' : 'Used to price every booking and the extra-km charge at return.'}>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1139,6 +1175,7 @@ export default function Vehicles() {
                 {[
                   ['Vehicle type',  categoryLabel(selected.webCategory) ?? 'Not set'],
                   ['Owner',         owner?.name ?? '—'],
+                  ['Owner paid',    selected.ownerTerms ? `Fixed · ${termsSummary(selected.ownerTerms)}` : 'Share of each rental'],
                   ['Daily Rent',    `Rs ${selected.dailyRent.toLocaleString()}`],
                   ['Included km',   `${selected.includedKmPerDay ?? 100} km/day`],
                   ['Extra km rate', `Rs ${selected.extraKmRate ?? 50}/km`],
@@ -1174,6 +1211,12 @@ export default function Vehicles() {
                 </div>
               </div>
 
+              {selected.ownerTerms && mayOwnerTerms && (
+                <button type="button" onClick={() => setTargetCar(selected)} className="btn-secondary w-full inline-flex items-center justify-center gap-2">
+                  <Banknote size={15} /> Fixed amount target — this month
+                </button>
+              )}
+
               {/* Customer reviews — shown on the website's vehicle details when published */}
               <VehicleReviews vehicleId={selected.id} canEdit={isAdmin() || (teamLogin ? can('canViewFeedback') : canActOn(selected))} />
 
@@ -1188,6 +1231,8 @@ export default function Vehicles() {
           );
         })()}
       </Modal>
+
+      <FixedTargetModal vehicle={targetCar} onClose={() => setTargetCar(null)} />
 
       {/* Crop modal — appears above the form modal when a file is selected */}
       {cropSrc && (

@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft, ActivityEntry, PaymentEntry, ExtraCharge, VehicleExchange, HandoverChecklist, PayoutAdjustment } from '../types';
+import { AppState, Vehicle, Owner, Booking, Inquiry, Expense, Driver, Notification, Commission, VehicleHandover, Customer, ProcessDraft, ActivityEntry, PaymentEntry, PaymentKind, ExtraCharge, VehicleExchange, HandoverChecklist, PayoutAdjustment } from '../types';
 import { sampleData } from '../data/sampleData';
 import { supabaseEnabled } from '../lib/supabase';
 import { db, dbFetchAll } from '../lib/db';
 import { resolveReferralFee } from '../lib/referral';
-import { companyShareOf, shareBaseOf } from '../lib/companyShare';
+import { companyShareOf, setVehicleLookup, shareBaseOf } from '../lib/companyShare';
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap } from '../lib/availability';
 import { legsOf, mainCommission, payoutRowFor, previewExchange } from '../lib/exchange';
 import { sendSms, smsTemplates, ADMIN_PHONE } from '../lib/sms';
@@ -28,7 +28,7 @@ function notifyListingError(message: string) {
 import { useAuthStore } from './useAuthStore';
 import cab1234Img from '../data/CAB-1234.png';
 import { METER_LABEL, kmWithMeter, meterOf } from '../lib/tripKm';
-import { bookingCredit } from '../lib/credit';
+import { SHOP_PAID_METHOD, bookingCredit } from '../lib/credit';
 import { withoutOlder } from '../lib/recordsFrom';
 import { depositHeld, openingPayments } from '../lib/bookingRecord';
 
@@ -47,8 +47,34 @@ const now = () => new Date().toISOString();
  */
 export const breakdownHooks: {
   vehicleBusy?: (vehicleId: string, startMs: number, endMs: number) => boolean;
+  /** Which breakdown keeps the car busy — for explaining a "not available" to staff. */
+  busyWith?: (vehicleId: string, startMs: number, endMs: number) => { booking: Booking; ref: string; fromMs: number; untilMs: number } | null;
   activeSwapNote?: (bookingId: string) => string | null;
 } = {};
+
+/** Why a car can't take these dates — the same rules as isVehicleAvailable, but saying which one hit. */
+export type UnavailableReason =
+  | { kind: 'maintenance' }
+  | { kind: 'breakdown'; booking: Booking; ref: string; fromMs: number; untilMs: number }
+  | { kind: 'booking'; booking: Booking; fromMs: number; untilMs: number; viaExchange: boolean };
+
+export function unavailableReason(vehicleId: string, startDate: string, endDate: string, startTime?: string, endTime?: string): UnavailableReason | null {
+  const { bookings, vehicles } = useStore.getState();
+  if (vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance') return { kind: 'maintenance' };
+  const candStart = bookingStartMs({ startDate, startTime });
+  const candEnd   = bookingEndMs({ endDate, endTime });
+  for (const b of bookings) {
+    if (!blocksAvailability(b)) continue;
+    for (const leg of legsOf(b)) {
+      if (leg.vehicleId !== vehicleId) continue;
+      const fromMs  = leg.from  ? new Date(leg.from).getTime()  : bookingStartMs(b);
+      const untilMs = leg.until ? new Date(leg.until).getTime() : bookingEndMs(b);
+      if (rangesOverlap(candStart, candEnd, fromMs, untilMs)) return { kind: 'booking', booking: b, fromMs, untilMs, viaExchange: b.vehicleId !== vehicleId || legsOf(b).length > 1 };
+    }
+  }
+  const bd = breakdownHooks.busyWith?.(vehicleId, candStart, candEnd);
+  return bd ? { kind: 'breakdown', ...bd } : null;
+}
 
 const keepMaintenance = (vehicleId: string, next: Vehicle['status']): Vehicle['status'] =>
   useStore.getState().vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance' ? 'Maintenance' : next;
@@ -284,8 +310,8 @@ export const useStore = create<AppState>()(
       },
 
       // ── Bookings ──────────────────────────────────────────────────────────
-      addBooking: (b) => {
-        const id = uid();
+      addBooking: (b, opts) => {
+        const id = opts?.id ?? uid();
         const vehicle = get().vehicles.find((v) => v.id === b.vehicleId);
 
         // The company keeps its share (the method chosen on the booking); the owner gets the rest.
@@ -339,25 +365,9 @@ export const useStore = create<AppState>()(
           notifications: [bookingNotif, ...s.notifications],
         }));
 
-        if (supabaseEnabled) {
-          // Each step is checked for a Supabase error so a failure surfaces
-          // immediately rather than silently letting the chain continue.
-          const ok = (r: { error: unknown } | undefined | null) => {
-            if (r && r.error) throw r.error;
-          };
-          Promise.resolve(db.insertBooking(newBooking))
-            .then((r) => ok(r))
-            .then(() => db.insertCommission(commission))
-            .then((r) => ok(r))
-            .then(() => db.updateVehicle(b.vehicleId, vehicleUpdates))
-            .then((r) => ok(r))
-            .then(() => db.insertNotification(bookingNotif))
-            .catch((err) => {
-              const msg = (err as { message?: string })?.message ?? String(err);
-              console.error('[addBooking] DB sync error:', msg, err);
-              toast.error('Booking saved locally — DB sync failed', msg);
-            });
-        }
+        // Messages and the success note go out only once the booking really exists (the database can refuse it:
+        // a double booking, a car held for another customer, or the e-Agreement gate)
+        const confirmed = () => {
 
         // ── SMS fan-out (all no-op if SMS not configured / recipient opted out) ──
         const vehicleLabel = vehicle ? `${vehicle.brand} ${vehicle.model} (${vehicle.vehicleNumber})` : 'your vehicle';
@@ -390,6 +400,45 @@ export const useStore = create<AppState>()(
         }
 
         toast.success('Booking created', `Booking for ${b.customerName} confirmed (${b.startDate} → ${b.endDate}).`);
+        opts?.onSaved?.(id);
+        };
+
+        if (supabaseEnabled) {
+          // Each step is checked for a Supabase error so a failure surfaces
+          // immediately rather than silently letting the chain continue.
+          const ok = (r: { error: unknown } | undefined | null) => {
+            if (r && r.error) throw r.error;
+          };
+          let saved = false;
+          Promise.resolve(db.insertBooking(newBooking))
+            .then((r) => { ok(r); saved = true; })
+            .then(() => db.insertCommission(commission))
+            .then((r) => ok(r))
+            .then(() => db.updateVehicle(b.vehicleId, vehicleUpdates))
+            .then((r) => ok(r))
+            .then(() => db.insertNotification(bookingNotif))
+            .then(() => confirmed())
+            .catch((err) => {
+              const msg = (err as { message?: string })?.message ?? String(err);
+              console.error('[addBooking] DB sync error:', msg, err);
+              if (!saved) {
+                // the database refused the booking itself: take it off the screen again, nothing was sent
+                set((s) => ({
+                  bookings: s.bookings.filter((x) => x.id !== id),
+                  commissions: s.commissions.filter((x) => x.id !== commission.id),
+                  notifications: s.notifications.filter((x) => x.id !== bookingNotif.id),
+                  vehicles: s.vehicles.map((v) => (v.id === b.vehicleId && vehicle ? vehicle : v)),
+                }));
+                const m = /^(BOOKING_GATE|DOUBLE_BOOKING|PRIORITY_HOLD|ALLOCATION_MISMATCH): ([\s\S]*)$/.exec(msg);
+                toast.error('Booking not saved', m ? m[2] : /bookings_no_double_booking/.test(msg) ? 'This car was just booked by someone else for these dates.' : msg);
+              } else {
+                toast.error('Booking saved — part of the sync failed', msg);
+                confirmed();
+              }
+            });
+        } else {
+          confirmed();
+        }
 
         return id;
       },
@@ -1052,7 +1101,7 @@ export const useStore = create<AppState>()(
           { ...totals, payments: [...(b.payments ?? []), entry] });
         toast.success(`${entry.kind} recorded`, `Rs ${entry.amount.toLocaleString()} for ${b.customerName}.`);
         // A real payment gets the usual SMS receipt
-        if (entry.kind === 'Payment' || entry.kind === 'Advance') {
+        if ((entry.kind === 'Payment' || entry.kind === 'Advance') && entry.method !== SHOP_PAID_METHOD) {
           const after = { ...b, ...totals } as Booking;
           const balance = Math.max(0, after.totalAmount + (after.extraCharges ?? 0) - (after.discount ?? 0) - after.paidAmount - (after.advanceAmount ?? 0));
           const optIn = get().customers.find((c) => c.phone === b.customerPhone)?.smsOptIn;
@@ -1111,32 +1160,63 @@ export const useStore = create<AppState>()(
 
       // The commission and the owner's share follow the final bill (rent + charges − discount):
       // worked out again when a charge is added or removed — until the owner is paid.
-      correctPayment: (id, entryId, amount, reason, by) => {
+      correctPayment: (id, entryId, amount, reason, by, kind) => {
         const b = get().bookings.find((x) => x.id === id);
         const p = b?.payments?.find((x) => x.id === entryId);
         if (!b || !p) return 'Payment not found.';
         if (!(amount >= 0) || !reason.trim()) return 'Enter the right amount and why it is changed.';
         if (p.method === 'Security deposit') return 'A payment from the deposit is changed by settling the deposit again.';
-        const delta = Math.round(amount) - p.amount;
-        if (!delta) return null;
-        const totals: Partial<Booking> =
-          p.kind === 'Payment' ? { paidAmount: Math.max(0, b.paidAmount + delta) }
-          : p.kind === 'Advance' ? { advanceAmount: Math.max(0, (b.advanceAmount ?? 0) + delta) }
-          : p.kind === 'Refund' ? { paidAmount: Math.max(0, b.paidAmount - delta) }
-          : p.kind === 'Deposit received' ? { depositAmount: Math.max(0, (b.depositAmount ?? 0) + delta) }
-          : { depositReturned: Math.max(0, (b.depositReturned ?? 0) + delta) };
-        const fixed = { ...p, amount: Math.round(amount), note: [p.note, `corrected from Rs ${p.amount.toLocaleString()} — ${reason.trim()}`].filter(Boolean).join(' · ') };
-        get().logBookingActivity(id, { by, type: p.kind.startsWith('Deposit') ? 'Deposit' : 'Payment', text: `${p.kind} corrected: Rs ${p.amount.toLocaleString()} → Rs ${Math.round(amount).toLocaleString()} — ${reason.trim()}` },
+        if (p.method === SHOP_PAID_METHOD) return 'A shop repair taken off the bill is changed on its breakdown (reverse it there).';
+        const amt = Math.round(amount);
+        const to = kind ?? p.kind;
+        if (to === p.kind && amt === p.amount) return null;
+        // only money coming in can change type (an advance that was really the deposit, a payment that was an advance…)
+        const IN: PaymentKind[] = ['Advance', 'Payment', 'Deposit received'];
+        if (to !== p.kind && (!IN.includes(p.kind) || !IN.includes(to))) return 'Only an advance, a payment or a deposit received can change type.';
+        if (to === 'Deposit received' && p.kind !== to && b.depositType && b.depositType !== 'cash') return 'This booking holds a vehicle or an item as the deposit, not cash.';
+        // take the old entry out of the totals, then put the new one in
+        const t = { paidAmount: b.paidAmount, advanceAmount: b.advanceAmount ?? 0, depositAmount: b.depositAmount ?? 0, depositReturned: b.depositReturned ?? 0 };
+        const apply = (k: PaymentKind, a: number) => {
+          if (k === 'Payment') t.paidAmount += a; else if (k === 'Advance') t.advanceAmount += a; else if (k === 'Refund') t.paidAmount -= a;
+          else if (k === 'Deposit received') t.depositAmount += a; else t.depositReturned += a;
+        };
+        apply(p.kind, -p.amount); apply(to, amt);
+        if ((p.kind === 'Deposit received' || to === 'Deposit received') && t.depositAmount < t.depositReturned + (b.depositDeduction ?? 0))
+          return 'More of the deposit has already been given back or used than this would leave.';
+        const totals: Partial<Booking> = {
+          paidAmount: Math.max(0, t.paidAmount), advanceAmount: Math.max(0, t.advanceAmount), depositAmount: Math.max(0, t.depositAmount), depositReturned: Math.max(0, t.depositReturned),
+          ...(to === 'Deposit received' && !b.depositType ? { depositType: 'cash' as const } : {}),
+        };
+        const what = [to !== p.kind ? `${p.kind} → ${to}` : '', amt !== p.amount ? `Rs ${p.amount.toLocaleString()} → Rs ${amt.toLocaleString()}` : ''].filter(Boolean).join(', ');
+        const fixed = { ...p, kind: to, amount: amt, note: [p.note, `corrected (${what}) — ${reason.trim()}`].filter(Boolean).join(' · ') };
+        get().logBookingActivity(id, { by, type: to.startsWith('Deposit') || p.kind.startsWith('Deposit') ? 'Deposit' : 'Payment', text: `${p.kind} corrected: ${what} — ${reason.trim()}` },
           { ...totals, payments: (b.payments ?? []).map((x) => (x.id === entryId ? fixed : x)) });
-        toast.success('Payment corrected', `${b.customerName}: Rs ${p.amount.toLocaleString()} → Rs ${Math.round(amount).toLocaleString()}.`);
+        toast.success('Payment corrected', `${b.customerName}: ${what}.`);
         return null;
       },
-      itemiseLegacy: (id, entries, by) => {
+      itemiseLegacy: (id, entries, by, from) => {
         const b = get().bookings.find((x) => x.id === id);
         if (!b) return 'Booking not found.';
         if (!entries.length || entries.some((e) => !(e.amount > 0))) return 'Enter an amount on every line.';
         const all = [...(b.payments ?? []), ...entries];
         const sum = (k: PaymentEntry['kind']) => all.filter((p) => p.kind === k).reduce((s, p) => s + p.amount, 0);
+        // the type changed while itemising (a line saved as the deposit was really an advance, or the other way): move the money across
+        const inSum = (k: PaymentKind) => entries.filter((e) => e.kind === k).reduce((s, e) => s + e.amount, 0);
+        if (from && entries.some((e) => (from.kind === 'Deposit received') !== (e.kind === 'Deposit received'))) {
+          if (entries.reduce((s, e) => s + e.amount, 0) !== from.amount) return `The lines must add up to Rs ${from.amount.toLocaleString()}.`;
+          const fromDep = from.kind === 'Deposit received';
+          const depositAmount = (b.depositAmount ?? 0) - (fromDep ? from.amount : 0) + inSum('Deposit received');
+          if (inSum('Deposit received') > 0 && b.depositType && b.depositType !== 'cash') return 'This booking holds a vehicle or an item as the deposit, not cash.';
+          if (depositAmount < (b.depositReturned ?? 0) + (b.depositDeduction ?? 0)) return 'More of the deposit has already been given back or used than this would leave.';
+          // a legacy payment line is replaced by its entries; from the deposit line, the money is added on top
+          const totals: Partial<Booking> = fromDep
+            ? { paidAmount: b.paidAmount + inSum('Payment'), advanceAmount: (b.advanceAmount ?? 0) + inSum('Advance') }
+            : { paidAmount: sum('Payment') - sum('Refund'), advanceAmount: sum('Advance') };
+          get().logBookingActivity(id, { by, type: 'Payment', text: `Payment log itemised (${from.kind} line of Rs ${from.amount.toLocaleString()}): ${entries.map((e) => `${e.kind} Rs ${e.amount.toLocaleString()} on ${e.at.slice(0, 10)}`).join(', ')}` },
+            { payments: all, ...totals, depositAmount, ...(depositAmount > 0 && !b.depositType ? { depositType: 'cash' as const } : {}) });
+          toast.success('Payment log updated', `${b.customerName}: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} recorded.`);
+          return null;
+        }
         const paidAmount = sum('Payment') - sum('Refund'), advanceAmount = sum('Advance');
         // the same money, just itemised: the paid total (and the cash deposit) must not change
         if (Math.abs(paidAmount + advanceAmount - (b.paidAmount + (b.advanceAmount ?? 0))) >= 1 && entries.some((e) => e.kind !== 'Deposit received'))
@@ -1526,3 +1606,6 @@ export const useStore = create<AppState>()(
     }
   )
 );
+
+// fixed-amount cars: the commission maths looks up a booking's car here
+setVehicleLookup((id) => useStore.getState().vehicles.find((v) => v.id === id));

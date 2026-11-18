@@ -16,6 +16,7 @@ import FeedbackPage from './components/FeedbackPage';
 import BookingPage from './components/BookingPage';
 import AlternativesPage from './components/AlternativesPage';
 import PortalPage from './components/PortalPage';
+import BookingAgreementPage from './components/BookingAgreementPage';
 import PartnerPage from './components/PartnerPage';
 import WeddingPage from './components/WeddingPage';
 import AssistantChat from './components/AssistantChat';
@@ -66,6 +67,8 @@ export default function App() {
         <BookingPage search={search} />
       ) : path === '/alternatives' ? (
         <AlternativesPage search={search} />
+      ) : path.startsWith('/booking-agreement/') ? (
+        <BookingAgreementPage token={path.slice('/booking-agreement/'.length)} />
       ) : path === '/my-bookings' ? (
         <PortalPage search={search} />
       ) : path === '/list-your-vehicle' ? (

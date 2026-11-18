@@ -10,7 +10,7 @@ import { supabase, supabaseEnabled } from './supabase';
 export type BdCategory = 'mechanical' | 'electrical' | 'battery' | 'tyre' | 'overheating' | 'accident' | 'fuel' | 'other';
 export type BdStatus = 'open' | 'resolved' | 'closed' | 'disputed' | 'cancelled';
 export type BdUrgency = 'low' | 'normal' | 'high' | 'emergency';
-export type SolutionKind = 'onsite_repair' | 'replacement' | 'partner_vehicle' | 'towing_garage' | 'alt_transport' | 'termination';
+export type SolutionKind = 'onsite_repair' | 'replacement' | 'partner_vehicle' | 'towing_garage' | 'alt_transport' | 'termination' | 'customer_repair';
 export type SolutionStatus = 'planned' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
 export type Party = 'owner' | 'customer' | 'company' | 'insurance';
 export type ExpenseCategory = 'callout' | 'labour' | 'parts' | 'transport' | 'towing' | 'garage' | 'replacement' | 'partner' | 'alt_transport' | 'tax' | 'discount' | 'other';
@@ -64,6 +64,8 @@ export interface BdSolution {
   refundProposed?: number; refundApproved?: number; refundApprovedBy?: string; refundApprovedAt?: string;
   refundStatus?: 'not_required' | 'pending_approval' | 'approved' | 'paid'; refundMethod?: string; refundReference?: string;
   refundPaidAt?: string; refundPaidBy?: string; bookingAmendedAt?: string; recoveryStatus?: 'pending' | 'in_progress' | 'recovered';
+  // customer fixes it at a shop (26_customer_shop_repair.sql) — shop in garageName / garageContact / repairLocation, amount in invoiceAmount
+  repairPayMode?: 'company' | 'customer_bill'; billCreditRef?: string;
 }
 
 export interface BdExpense {
@@ -112,6 +114,8 @@ export interface BdData {
   allocations: BdAllocation[]; payments: BdPayment[]; documents: BdDocument[];
 }
 
+export { SHOP_PAID_METHOD } from './credit';
+
 /* ── Labels ────────────────────────────────────────────────────────────────── */
 
 export const CATEGORY_LABEL: Record<BdCategory, string> = {
@@ -124,6 +128,7 @@ export const UNSAFE_CATEGORIES: BdCategory[] = ['mechanical', 'overheating', 'ac
 export const SOLUTION_LABEL: Record<SolutionKind, string> = {
   onsite_repair: 'On-site repair', replacement: 'Vehicle replacement', partner_vehicle: 'Partner vehicle',
   towing_garage: 'Towing & garage repair', alt_transport: 'Alternative transport', termination: 'Termination & refund',
+  customer_repair: 'Customer fixes it at a shop',
 };
 export const SOLUTION_HINT: Record<SolutionKind, string> = {
   onsite_repair: 'Send a technician to fix it where it stopped',
@@ -132,6 +137,7 @@ export const SOLUTION_HINT: Record<SolutionKind, string> = {
   towing_garage: 'Tow the car to a garage and track the repair',
   alt_transport: 'Taxi / van / driver while the customer waits',
   termination: 'End the booking early and work out the refund',
+  customer_repair: 'e.g. battery — the customer gets it replaced; we pay the shop or take it off the bill',
 };
 export const SOLUTION_STATUS_LABEL: Record<SolutionStatus, string> = {
   planned: 'Pending', in_progress: 'In progress', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled',
@@ -287,6 +293,7 @@ const FIELD_LABEL: Record<string, string> = {
   depositAmount: 'Deposit (Rs)', transportType: 'Transport type', passengers: 'Passengers', fare: 'Fare (Rs)',
   terminateAt: 'Terminate at', terminationReason: 'Termination reason', customerAgreedAt: 'Customer agreed at', deductionsNote: 'Deductions note',
   refundMethod: 'Refund method', refundReference: 'Refund reference',
+  repairPayMode: 'Who paid the shop',
 };
 // bookkeeping fields set by the system — not shown as edits
 const SKIP = new Set(['id', 'incidentId', 'kind', 'status', 'createdBy', 'createdAt', 'updatedAt', 'assignedBy', 'assignedAt']);

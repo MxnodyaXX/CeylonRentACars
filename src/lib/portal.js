@@ -117,10 +117,60 @@ export async function uploadFile(bucket, path, file) {
 
 /** Your profile, bookings and booking requests */
 export async function loadMine() {
-  const [profile, bookings, requests] = await Promise.all([
+  const [profile, bookings, requests, agreements] = await Promise.all([
     rpc('my_profile').catch(() => []),          // older database without my_profile: still show bookings
     rpc('my_bookings'),
     rpc('my_requests'),
+    rpc('my_agreements').catch(() => []),       // before the e-Agreement update (file 23): none
   ]);
-  return { profile: profile?.[0] ?? {}, bookings: bookings ?? [], requests: requests ?? [] };
+  return { profile: profile?.[0] ?? {}, bookings: bookings ?? [], requests: requests ?? [], agreements: agreements ?? [] };
 }
+
+/* ── Booking e-Agreement (/booking-agreement/<link>) ─────────────────────────
+ * The page works before signing in (the link is the key to read it); accepting, declining and reporting a
+ * payment need the SMS-code sign-in to the agreement's own number — the database checks that, not this file.
+ */
+
+/** "CODE: words" from the database → an Error with .code and a readable message */
+function dbError(raw, fallback) {
+  const m = /^([A-Z_]+): ([\s\S]*)$/.exec(String(raw || ''));
+  const text = m ? m[2] : fallback;
+  const err = new Error(text.charAt(0).toUpperCase() + text.slice(1));
+  err.code = m ? m[1] : 'ERROR';
+  return err;
+}
+
+/** Call a function as the signed-in customer, or as a visitor when nobody is signed in */
+export async function agreementRpc(name, args = {}, fallback = 'Something went wrong — please try again.') {
+  const t = await token();
+  const res = await fetch(`${URL}/rest/v1/rpc/${name}`, {
+    method: 'POST', headers: { ...base, Authorization: `Bearer ${t || KEY}` }, body: JSON.stringify(args),
+  }).catch(() => null);
+  if (!res) throw dbError('', 'No connection — please check your internet and try again.');
+  if (res.status === 401 && t) { save(null); return agreementRpc(name, args, fallback); }   // an old session: try as a visitor
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw dbError(body?.code === 'P0001' ? body.message : '', fallback);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+/** The agreement as a PDF file (accepted ones are the stored, fingerprinted copy) */
+export async function downloadAgreementPdf(linkToken, reference) {
+  const t = await token();
+  const res = await fetch(`${URL}/functions/v1/agreement-pdf`, {
+    method: 'POST', headers: { ...base, Authorization: `Bearer ${t || KEY}` }, body: JSON.stringify({ token: linkToken }),
+  }).catch(() => null);
+  if (!res || !res.ok) {
+    const body = res ? await res.json().catch(() => ({})) : {};
+    throw new Error(body.error || 'We couldn’t make the PDF right now — please try again.');
+  }
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL_.createObjectURL(blob);
+  a.download = `${reference || 'booking-agreement'}.pdf`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL_.revokeObjectURL(a.href), 10000);
+}
+const URL_ = globalThis.URL;   // this file's URL constant is the Supabase address

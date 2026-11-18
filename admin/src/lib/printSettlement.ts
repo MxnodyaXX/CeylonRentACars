@@ -37,12 +37,13 @@ export function settlementHtml(s: OwnerSettlement, owner?: Owner): string {
     <div class="meta"><b>${no}</b><div>${esc(owner?.name)}</div><div class="muted">${esc(owner?.phone)}${owner?.accountNumber ? ` · ${esc([owner.bankName, owner.accountNumber].filter(Boolean).join(' '))}` : ''}</div></div>
   </div>
   <p class="muted">Rentals completed in ${periodLabel(s.period)} (and any earlier ones not paid yet). Customers pay the company; the company pays your share whether or not the customer has paid in full.</p>
+  ${section('Fixed amounts for your vehicles', ['fixed'])}
   ${section('Your rentals', ['rental'])}
   ${section('Referral fees you earned', ['referral'])}
   ${section('Amounts you owe back', ['deduction'])}
   ${section('Expenses the company paid on your vehicles', ['expense'])}
   <table class="totals">
-    <tr><td>Your share of rentals</td><td class="num">${rs(s.rentals)}</td></tr>
+    <tr><td>${s.lines.some((l) => l.kind === 'fixed') ? (s.lines.some((l) => l.kind === 'rental') ? 'Fixed amounts + your share of rentals' : 'Fixed amounts') : 'Your share of rentals'}</td><td class="num">${rs(s.rentals)}</td></tr>
     ${s.referralFees ? `<tr><td>Referral fees</td><td class="num">${rs(s.referralFees)}</td></tr>` : ''}
     ${s.deductions ? `<tr><td>Owed back</td><td class="num minus">${money(s.deductions)}</td></tr>` : ''}
     ${s.expenses ? `<tr><td>Expenses on your vehicles</td><td class="num minus">− ${rs(s.expenses)}</td></tr>` : ''}
