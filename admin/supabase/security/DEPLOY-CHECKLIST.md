@@ -558,3 +558,60 @@ PDF) and **My bookings → Agreements**. Admin: **Inquiry → Booking e-Agreemen
 3. Check once: open a test breakdown, add the solution, enter a shop bill and choose **Customer paid — take it off the final bill**.
    The booking shows a "Paid at a repair shop" line, the balance drops by that amount, Accounts shows no new money in,
    and no payment SMS is sent. Reversing the "Reimbursement" line on the breakdown puts the amount back on the bill.
+
+## Part 25 — Team members can "Mark vehicle as ready" (after Part 7 / file 07 and Part 14 / file 16)
+
+1. SQL Editor → run `27_ready_by_team.sql` (replaces one function; safe to re-run). If 07 is ever run again, run 27 again after it.
+2. Push the admin app.
+3. Permissions → Team → open the person (e.g. Dinithi) → Fleet → tick **Return cars to service** (it also ticks Breakdowns).
+   They sign out and in once (or wait up to an hour) for it to apply.
+4. Undo: run 07 again (rollback/27 says the same).
+
+## Part 26 — Personal bookings (after Part 14 / file 16)
+
+1. SQL Editor → run `28_personal_bookings.sql` (adds bookings.personal; only admins can change it; safe to re-run).
+2. Push the admin app.
+3. Open the booking (e.g. CRC-2026-QB0U) as an admin → **Personal** button → confirm. It gets a violet "Personal" badge and banner.
+   It stays on the calendar with its own payment log, but leaves Company accounts, the dashboards' revenue, Commissions,
+   Owner payouts and Credit. "Make it a company booking" on the banner puts it back.
+4. Undo: rollback/28 (personal bookings count as company money again — check them first).
+
+## Part 27 — The commission agreed with each owner (after Part 14 / file 16 and file 21)
+
+1. SQL Editor → run `29_owner_share_terms.sql` (adds vehicles.owner_share; safe to re-run). It also fixes Finance not being
+   able to save "How the owner is paid" without "Edit vehicle details" (the same fix is now in 16).
+2. Push the admin app.
+3. Vehicles → Edit a car → **How the owner is paid** → Share of each rental → **Commission agreed with this owner**
+   (e.g. 15%, at least Rs 1,000 a day). Leave "Company default" where there's no special agreement.
+4. New bookings on that car start with it; at **Complete rental**, option 1 is "Owner's agreed rate".
+5. Undo: rollback/29 (cars go back to the company default; bookings keep what's saved on them).
+
+## Part 28 — Owners don't get the company's customers (after Part 1 / file 01)
+
+1. SQL Editor → run `30_owner_entered_bookings.sql` (adds bookings.entered_by_owner; safe to re-run).
+2. Push the admin app.
+3. Check with an owner login: bookings on their car show the customer as first name + initials ("Dushmantha N."),
+   no phone, e-mail, NIC, documents or history; no Customers / Inquiries / Messages pages; only alerts addressed to them.
+   Bookings the owner entered themselves, or referred, still show in full.
+4. Undo: rollback/30 (then only the bookings they referred stay in full).
+
+## Part 29 — Owner privacy in the database (after Parts 26–28 / files 28, 30, and file 21)
+
+1. SQL Editor → run `31_owner_privacy.sql` (safe to re-run). If 01 is ever run again, run 31 again after it.
+2. Push the admin app (it loads an owner's other bookings from `owner_bookings()` and saves their changes through
+   `owner_update_booking()`; before 31 is run it still works the old way).
+3. Run `verify.sql` — all PASS.
+4. Check with an owner login: bookings show "First N." with no phone; a handover on their car still saves;
+   a fixed-amount car shows no amounts; the Commissions page has no lines for fixed-amount bookings.
+5. Undo: rollback/31, then run 01 again (puts back its inquiry rule for owners).
+
+## Part 30 — Owner portal switch: full view or payouts only (after Part 29 / file 31)
+
+1. SQL Editor → run `32_owner_amounts_switch.sql` (safe to re-run). If 31 is ever run again, run 32 again after it.
+2. Push the admin app. The switch is in **Settings → Messaging & security → Show bookings and rental amounts to owners**
+   (admin only). It starts **on** — nothing changes for owners until you turn it off.
+3. Run `verify.sql` — all PASS.
+4. Turn it off, then check with an owner login: the menu shows only Vehicles, Alerts, My payouts and Settings;
+   Bookings / Handovers / Dashboard links take them to My payouts; My payouts shows Your Earnings, Pending Payout,
+   the monthly statements and the pending list — no rents, bills, revenue or rent history.
+5. Undo: run 31 again, then rollback/32.

@@ -3,8 +3,9 @@ import { ChevronDown, Copy, Key, Loader2, ShieldCheck, ShieldOff, ToggleLeft, To
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { cleanUsername } from '../../lib/staffAuth';
-import { ABILITIES, JOBS, jobLabel, jobOf, presetFor, toggleAbility } from '../../lib/staffRoles';
-import type { AppUser, StaffAbility, StaffJob } from '../../types/auth';
+import { ABILITIES, JOBS, PARTS, jobLabel, jobOf, partOn, presetFor, toggleAbility, togglePart } from '../../lib/staffRoles';
+import type { AppUser, StaffAbility, StaffJob, StaffPart, StaffPerms } from '../../types/auth';
+import { askConfirm } from '../../lib/dialog';
 
 /*
  * Permissions → Team: one login per employee. The job fills in the usual abilities; the admin can
@@ -12,7 +13,7 @@ import type { AppUser, StaffAbility, StaffJob } from '../../types/auth';
  * time the person signs in or their session refreshes (within an hour).
  */
 
-type Perms = Partial<Record<StaffAbility, boolean>>;
+type Perms = StaffPerms;
 const GROUPS = ['Bookings', 'Fleet', 'Money', 'People'] as const;
 
 function Credentials({ username, password, onDone }: { username: string; password: string; onDone: () => void }) {
@@ -33,24 +34,79 @@ function Credentials({ username, password, onDone }: { username: string; passwor
   );
 }
 
-/** The abilities, grouped, as switches */
-function AbilitySwitches({ perms, onToggle, disabled }: { perms: Perms; onToggle: (k: StaffAbility) => void; disabled?: boolean }) {
+const Switch = ({ on, size = 22 }: { on: boolean; size?: number }) =>
+  on ? <ToggleRight size={size} className="text-navy-700 flex-shrink-0" /> : <ToggleLeft size={size} className="text-navy-300 flex-shrink-0" />;
+
+/** One ability made of parts: its row switches all of it; the arrow opens the parts to switch one by one */
+function AbilityAccordion({ a, perms, onToggle, onTogglePart, disabled }: {
+  a: (typeof ABILITIES)[number]; perms: Perms; onToggle: (k: StaffAbility) => void; onTogglePart: (k: StaffPart) => void; disabled?: boolean;
+}) {
+  const parts = PARTS[a.key]!;
+  const onCount = parts.filter((p) => partOn(perms, p.key)).length;
+  const on = !!perms[a.key];
+  const some = on && onCount < parts.length;
+  const [open, setOpen] = useState(some);
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className={`rounded-xl transition-colors ${open ? 'bg-navy-50 ring-1 ring-navy-100' : 'bg-navy-50/60'}`}>
+      <div className="flex items-center gap-1 pr-3">
+        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+                className="flex-1 min-w-0 flex items-center gap-2 pl-3 py-2 text-left">
+          <ChevronDown size={15} className={`text-navy-400 flex-shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+          <span className="min-w-0">
+            <span className={`flex items-center gap-2 text-sm font-medium ${on ? 'text-navy-800' : 'text-navy-400'}`}>
+              {a.label}
+              <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold ${some ? 'bg-amber-100 text-amber-800' : on ? 'bg-white text-navy-500' : 'bg-white text-navy-300'}`}>
+                {on ? onCount : 0} of {parts.length}
+              </span>
+            </span>
+            <span className="block text-[11px] text-navy-400 leading-snug">{open ? 'Switch each part on or off below' : a.hint}</span>
+          </span>
+        </button>
+        <button type="button" disabled={disabled} onClick={() => onToggle(a.key)} aria-label={`${a.label}: all ${on ? 'off' : 'on'}`}
+                title={on ? 'Switch all of it off' : 'Switch all of it on'} className="p-1 -m-1 rounded-lg hover:bg-white disabled:opacity-50">
+          <Switch on={on} />
+        </button>
+      </div>
+      {open && (
+        <div className="ml-7 mr-2 mb-2 border-l-2 border-navy-100 pl-2 space-y-1">
+          {parts.map((p) => {
+            const pOn = partOn(perms, p.key);
+            return (
+              <button key={p.key} type="button" disabled={disabled} onClick={() => onTogglePart(p.key)}
+                      className="w-full flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5 text-left hover:bg-white disabled:opacity-50 transition-colors">
+                <span className="min-w-0">
+                  <span className={`block text-[13px] font-medium ${pOn ? 'text-navy-800' : 'text-navy-400'}`}>{p.label}</span>
+                  <span className="block text-[11px] text-navy-400 leading-snug">{p.hint}</span>
+                </span>
+                <Switch on={pOn} size={20} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The abilities, grouped, as switches — an ability made of parts opens to switch them one by one */
+function AbilitySwitches({ perms, onToggle, onTogglePart, disabled }: { perms: Perms; onToggle: (k: StaffAbility) => void; onTogglePart: (k: StaffPart) => void; disabled?: boolean }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-2 items-start">
       {GROUPS.map((g) => (
         <div key={g}>
           <p className="text-[11px] font-semibold text-navy-400 uppercase tracking-wider mb-1.5">{g}</p>
           <div className="space-y-1.5">
             {ABILITIES.filter((a) => a.group === g).map((a) => {
+              if (PARTS[a.key]) return <AbilityAccordion key={a.key} a={a} perms={perms} onToggle={onToggle} onTogglePart={onTogglePart} disabled={disabled} />;
               const on = !!perms[a.key];
               return (
                 <button key={a.key} type="button" disabled={disabled} onClick={() => onToggle(a.key)}
                         className="w-full flex items-center justify-between gap-3 bg-navy-50/60 rounded-xl px-3 py-2 text-left hover:bg-navy-50 disabled:opacity-50 transition-colors">
-                  <span className="min-w-0">
+                  <span className="min-w-0 pl-[23px]">
                     <span className={`block text-sm font-medium ${on ? 'text-navy-800' : 'text-navy-400'}`}>{a.label}</span>
                     <span className="block text-[11px] text-navy-400 leading-snug">{a.hint}</span>
                   </span>
-                  {on ? <ToggleRight size={22} className="text-navy-700 flex-shrink-0" /> : <ToggleLeft size={22} className="text-navy-300 flex-shrink-0" />}
+                  <Switch on={on} />
                 </button>
               );
             })}
@@ -114,7 +170,7 @@ function NewTeamLogin({ taken, onCreated }: { taken: Set<string>; onCreated: (c:
       </div>
       <div>
         <p className="text-xs font-medium text-navy-500 mb-2">What they can do — set from the job, change any switch for this person</p>
-        <AbilitySwitches perms={perms} onToggle={(k) => setPerms((p) => toggleAbility(p, k))} />
+        <AbilitySwitches perms={perms} onToggle={(k) => setPerms((p) => toggleAbility(p, k))} onTogglePart={(k) => setPerms((p) => togglePart(p, k))} />
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <div className="flex justify-end">
@@ -133,7 +189,7 @@ function TeamCard({ u, onCredentials }: { u: AppUser; onCredentials: (c: { usern
   const perms = (u.permissions ?? {}) as Perms;
   const job = jobOf(u.job);
   const preset = u.job ? presetFor(u.job) : {};
-  const differs = ABILITIES.some((a) => !!perms[a.key] !== !!preset[a.key]);
+  const differs = ABILITIES.some((a) => !!perms[a.key] !== !!preset[a.key]) || Object.values(PARTS).some((ps) => ps!.some((p) => perms[p.key] === false));
 
   const save = async (p: Parameters<typeof updateTeamLogin>[1], done?: string) => {
     setBusy(true);
@@ -143,7 +199,7 @@ function TeamCard({ u, onCredentials }: { u: AppUser; onCredentials: (c: { usern
     else if (done) toast.success(done, `${u.name}: it applies the next time they sign in or within an hour.`);
   };
   const reset = async () => {
-    if (!confirm(`Give ${u.username} a new temporary password? Their current password stops working.`)) return;
+    if (!await askConfirm(`Give ${u.username} a new temporary password? Their current password stops working.`)) return;
     setBusy(true);
     const pw = await resetPassword(u.id);
     setBusy(false);
@@ -180,9 +236,9 @@ function TeamCard({ u, onCredentials }: { u: AppUser; onCredentials: (c: { usern
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-xs font-medium text-navy-500 flex items-center gap-2">Job
               <select className="input !py-1.5 !w-auto text-xs" value={u.job ?? ''} disabled={busy}
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const j = e.target.value as StaffJob;
-                        if (confirm(`Make ${u.name} ${jobLabel(j)}? Their switches are reset to that job's usual abilities.`)) save({ job: j, permissions: presetFor(j) }, 'Job changed');
+                        if (await askConfirm(`Make ${u.name} ${jobLabel(j)}? Their switches are reset to that job's usual abilities.`)) save({ job: j, permissions: presetFor(j) }, 'Job changed');
                       }}>
                 {JOBS.map((j) => <option key={j.key} value={j.key}>{j.label}</option>)}
               </select>
@@ -190,12 +246,12 @@ function TeamCard({ u, onCredentials }: { u: AppUser; onCredentials: (c: { usern
             <span className="flex-1" />
             <button type="button" onClick={reset} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-navy-50 px-2.5 py-1.5 text-xs font-semibold text-navy-600 hover:bg-navy-100"><Key size={12} /> New password</button>
             <button type="button" disabled={busy}
-                    onClick={() => { if (u.disabled || confirm(`Switch off ${u.name}'s login? They can't sign in until you switch it back on.`)) save({ disabled: !u.disabled }, u.disabled ? 'Login switched on' : 'Login switched off'); }}
+                    onClick={async () => { if (u.disabled || await askConfirm(`Switch off ${u.name}'s login? They can't sign in until you switch it back on.`)) save({ disabled: !u.disabled }, u.disabled ? 'Login switched on' : 'Login switched off'); }}
                     className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold ${u.disabled ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'bg-red-50 text-red-600 hover:bg-red-100'}`}>
               {u.disabled ? <><ShieldCheck size={12} /> Switch on</> : <><ShieldOff size={12} /> Switch off</>}
             </button>
           </div>
-          <AbilitySwitches perms={perms} disabled={busy || u.disabled} onToggle={(k) => save({ permissions: toggleAbility(perms, k) })} />
+          <AbilitySwitches perms={perms} disabled={busy || u.disabled} onToggle={(k) => save({ permissions: toggleAbility(perms, k) })} onTogglePart={(k) => save({ permissions: togglePart(perms, k) })} />
           {differs && u.job && (
             <button type="button" disabled={busy} onClick={() => save({ permissions: presetFor(u.job!) }, 'Abilities reset')}
                     className="text-xs font-semibold text-navy-500 hover:text-navy-800 inline-flex items-center gap-1"><RotateCcw size={12} /> Back to the usual {job?.label} abilities</button>

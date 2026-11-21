@@ -1,6 +1,6 @@
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import type { AppUser, OwnerPermissions, StaffAbility, StaffJob } from '../types/auth';
+import type { AppUser, OwnerPermissions, StaffJob, StaffPerms } from '../types/auth';
 // Same rules the server applies (one copy, shared with the Edge Function)
 export { passwordProblem, tempPassword } from '../../supabase/functions/_shared/password';
 
@@ -63,9 +63,9 @@ export const listStaff = () => call<{ users: StaffLogin[] }>({ action: 'list' })
 export const createStaff = (p: { username: string; password?: string; name: string; ownerId?: string; contactEmail?: string; nic?: string }) =>
   call<{ user: StaffLogin; tempPassword?: string }>({ action: 'create', ...p });
 /** A team member's login (Operations / Finance / Fleet) — the server makes a temporary password */
-export const createTeamStaff = (p: { username: string; name: string; job: StaffJob; permissions: Partial<Record<StaffAbility, boolean>> }) =>
+export const createTeamStaff = (p: { username: string; name: string; job: StaffJob; permissions: StaffPerms }) =>
   call<{ user: StaffLogin; tempPassword: string }>({ action: 'create', ...p });
-export const updateStaff = (id: string, p: { name?: string; job?: StaffJob; permissions?: Partial<OwnerPermissions> | Partial<Record<StaffAbility, boolean>>; disabled?: boolean }) =>
+export const updateStaff = (id: string, p: { name?: string; job?: StaffJob; permissions?: Partial<OwnerPermissions> | StaffPerms; disabled?: boolean }) =>
   call<{ user: StaffLogin }>({ action: 'update', id, ...p }).then((r) => r.user);
 /** New temporary password for an owner login (shown to the admin once) */
 export const resetStaffPassword = (id: string) =>

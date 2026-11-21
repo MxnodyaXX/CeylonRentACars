@@ -1,4 +1,8 @@
 import { useState, useMemo } from 'react';
+import { HIDDEN_CONTACT, useCustomerPrivacy } from '../../lib/ownerPrivacy';
+import { FIXED_LABEL, HIDDEN_AMOUNT, isFixedBooking, isFixedCar, useAmountsOff } from '../../lib/ownerMoney';
+import { termsSummary } from '../../lib/ownerTerms';
+import { companyCommissions, isPersonal } from '../../lib/personal';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -17,7 +21,7 @@ import { Booking, VehicleHandover } from '../../types';
 import { bookingDiscount } from '../../lib/revenue';
 import { durationLabel } from '../../lib/rentalPeriod';
 import { bookingTouchesVehicles, legsOf, ownerCommissions, splitNote } from '../../lib/exchange';
-import { bookingDue } from '../../lib/credit';
+import { bookingBill, bookingDue } from '../../lib/credit';
 import OwnerStatements from './OwnerStatements';
 
 const BAR_COLORS = ['#E11D2A', '#10B981', '#F59E0B', '#8B5CF6', '#111114', '#EC4899'];
@@ -77,7 +81,11 @@ function RentDetailModal({ booking, handovers, onClose }: {
   onClose: () => void;
 }) {
   const { vehicles, drivers } = useStore();
+  // the company's customer: first name + initials, no contact details (the owner's own customers in full)
+  const cp = useCustomerPrivacy();
+  const amountsOff = useAmountsOff();
   if (!booking) return null;
+  const noMoney = amountsOff || isFixedBooking(booking, vehicles);
 
   const vehicle  = vehicles.find((v) => v.id === booking.vehicleId);
   const driver   = booking.driverId ? drivers.find((d) => d.id === booking.driverId) : null;
@@ -120,10 +128,12 @@ function RentDetailModal({ booking, handovers, onClose }: {
           <div>
             <p className="text-xs font-bold text-navy-500 uppercase tracking-wide mb-2">Customer</p>
             <div>
-              <Row icon={<User size={14}/>}       label="Name"    value={booking.customerName} />
+              <Row icon={<User size={14}/>}       label="Name"    value={cp.name(booking)} />
+              {cp.hides(booking) ? <Row icon={<Phone size={14}/>} label="Contact" value={HIDDEN_CONTACT} /> : <>
               <Row icon={<Phone size={14}/>}      label="Phone"   value={booking.customerPhone} />
               <Row icon={<Mail size={14}/>}       label="Email"   value={booking.customerEmail} />
               <Row icon={<CreditCard size={14}/>} label="NIC"     value={booking.customerNIC} />
+              </>}
             </div>
           </div>
 
@@ -150,7 +160,7 @@ function RentDetailModal({ booking, handovers, onClose }: {
               {(ret?.extraKm ?? 0) > 0 && (
                 <>
                   <Row icon={<Gauge size={14}/>}  label="Extra Km"       value={`${ret!.extraKm!.toLocaleString()} km`} />
-                  <Row icon={<DollarSign size={14}/>} label="Extra Km Charge" value={`Rs ${(ret!.extraKmCharge ?? 0).toLocaleString()}`} valueClass="text-amber-700" />
+                  {!noMoney && <Row icon={<DollarSign size={14}/>} label="Extra Km Charge" value={`Rs ${(ret!.extraKmCharge ?? 0).toLocaleString()}`} valueClass="text-amber-700" />}
                 </>
               )}
               {delivery?.fuelLevel && <Row icon={<Gauge size={14}/>} label="Fuel (out)" value={delivery.fuelLevel} />}
@@ -159,6 +169,12 @@ function RentDetailModal({ booking, handovers, onClose }: {
           </div>
 
           {/* Financials */}
+          {noMoney ? (
+          <div>
+            <p className="text-xs font-bold text-navy-500 uppercase tracking-wide mb-2">Financials</p>
+            <p className="text-sm text-navy-500">{amountsOff ? 'Rental amounts are not shown. Your payout for this rental is in the Rent History and Pending Payouts lists.' : `${FIXED_LABEL} — you're paid a fixed amount for this car.`}</p>
+          </div>
+          ) : (
           <div>
             <p className="text-xs font-bold text-navy-500 uppercase tracking-wide mb-2">Financials</p>
             <div>
@@ -182,6 +198,7 @@ function RentDetailModal({ booking, handovers, onClose }: {
               )}
             </div>
           </div>
+          )}
         </div>
 
         {/* Notes */}
@@ -244,9 +261,15 @@ function pdfShell(title: string, ownerName: string, count: number, thead: string
 
 /* ══════════════════════════════════════════════════════════════════ */
 export default function OwnerView() {
-  const { commissions, vehicles, bookings, owners, handovers, drivers, addNotification } = useStore();
+  const { commissions: allCommissions, vehicles, bookings, owners, handovers, drivers, addNotification } = useStore();
+  const cp = useCustomerPrivacy();
+  // personal bookings (not company business) are not part of the owner's earnings and payouts
+  const commissions = useMemo(() => companyCommissions(allCommissions, bookings), [allCommissions, bookings]);
   const { currentUser } = useAuthStore();
   const ownerId = currentUser?.ownerId ?? '';
+  // the admin switched rental amounts off for owners: payouts only (Settings → Show rental amounts to owners)
+  const amountsOff = useAmountsOff();
+  const totalCell = (b: Booking, total: number) => (fixedBk(b) ? FIXED_LABEL : amountsOff ? HIDDEN_AMOUNT : total);
 
   const [alertOpen,    setAlertOpen]    = useState(false);
   const [alertRemarks, setAlertRemarks] = useState('');
@@ -257,6 +280,7 @@ export default function OwnerView() {
   const myName       = myOwner?.name ?? '';
   const myVehicles   = vehicles.filter((v) => v.ownerId === ownerId);
   const myVehicleIds = useMemo(() => new Set(myVehicles.map((v) => v.id)), [myVehicles]);
+  // personal bookings show in the owner's rent history (marked Personal, no payout) and in the revenue split
   const myBookings   = useMemo(() => bookings.filter((b) => bookingTouchesVehicles(b, myVehicleIds)), [bookings, myVehicleIds]);
   /** This owner's part of a booking — after a mid-trip exchange only their own car's days and share */
   const mine = (b: Booking) => {
@@ -269,15 +293,31 @@ export default function OwnerView() {
       ownerPayout: cs.reduce((sum, c) => sum + c.ownerPayout, 0),
     } : undefined;
     const exchanged = !!b.exchanges?.length;
+    const rent = exchanged ? legs.reduce((sum, l) => sum + l.revenue, 0) : b.totalAmount;
+    // what the rental brought in is its FINAL bill — rent + extra charges (extra km…) − deductions − discount;
+    // after a mid-trip exchange, this owner's share of it, in proportion to their car's rent
+    const billTotal = Math.round(b.totalAmount > 0 ? bookingBill(b) * (rent / b.totalAmount) : bookingBill(b));
     return {
       comm,
-      total: exchanged ? legs.reduce((sum, l) => sum + l.revenue, 0) : b.totalAmount,
+      rent,
+      total: billTotal,
       days: exchanged ? legs.reduce((sum, l) => sum + l.days, 0) : b.totalDays,
       vehicleId: legs[legs.length - 1]?.vehicleId ?? b.vehicleId,
       exchanged,
     };
   };
-  const myCommissions  = commissions.filter((c) => c.ownerId === ownerId);
+  /** Payout status shown for a rental: Personal bookings have no payout */
+  // a FIXED-amount car's rental: the owner is paid the fixed amount, so no amounts or payout per rental
+  const fixedBk = (b: Booking) => isFixedBooking(b, vehicles);
+  const payStatus = (b: Booking, comm?: { status: string }) => b.status === 'Cancelled' ? 'Cancelled' : fixedBk(b) ? 'Fixed' : isPersonal(b) ? 'Personal' : comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
+  const allMyCommissions = commissions.filter((c) => c.ownerId === ownerId);
+  // a cancelled booking with nothing paid out earned nothing — left out of the revenue, earnings and charts
+  const myCommissions  = allMyCommissions.filter((c) => {
+    const bk = bookings.find((b) => b.id === c.bookingId);
+    if (bk && fixedBk(bk)) return false;   // fixed-amount car: its rentals' money isn't the owner's to see
+    return !(c.ownerPayout === 0 && bk?.status === 'Cancelled');
+  });
+  // a cancelled booking with nothing to pay isn't a pending payout (a kept cancellation fee still is)
   const pendingPayouts = myCommissions.filter((c) => c.status === 'Pending');
 
   /* Income earned by referring OTHER owners' vehicles */
@@ -287,11 +327,18 @@ export default function OwnerView() {
   );
 
   /* ── KPIs ──────────────────────────────────────────────────────── */
-  // Net of any discount granted on the underlying booking.
-  const totalRevenue     = myCommissions.reduce((s, c) => {
-    const bk = bookings.find((b) => b.id === c.bookingId);
-    return s + c.totalIncome - (bk ? bookingDiscount(bk) : 0);
-  }, 0);
+  // company bookings on this owner's cars, at their FINAL bills (the same figure as the Total column below) …
+  const companyBookings  = myBookings.filter((b) => !isPersonal(b) && !fixedBk(b) && b.status !== 'Cancelled');
+  const myBookingIds     = new Set(myBookings.map((b) => b.id));
+  // … plus earnings on other bookings (their car as a breakdown replacement)
+  const otherIncome      = myCommissions.filter((c) => !myBookingIds.has(c.bookingId)).reduce((s, c) => s + c.totalIncome, 0);
+  const totalRevenue     = companyBookings.reduce((s, b) => s + mine(b).total, 0) + otherIncome;
+  // personal bookings on this owner's cars (not company business — no commission, no payout)
+  const personalRevenue  = myBookings.filter((b) => isPersonal(b) && !fixedBk(b) && b.status !== 'Cancelled')
+    .reduce((s, b) => s + mine(b).total, 0);   // the final bill (charges, deductions and discount already in)
+  const personalCount    = myBookings.filter((b) => isPersonal(b) && !fixedBk(b) && b.status !== 'Cancelled').length;
+  // this owner's cars on fixed terms today (shown with their terms instead of earnings)
+  const fixedCars        = myVehicles.filter((v) => isFixedCar(v));
   const totalReferralFee = myCommissions.reduce((s, c) => s + (c.coordinatorFee ?? 0), 0);
   const totalEarnings    = myCommissions.reduce((s, c) => s + c.ownerPayout, 0);
   const pendingAmount    = pendingPayouts.reduce((s, c) => s + c.ownerPayout, 0);
@@ -306,7 +353,7 @@ export default function OwnerView() {
       bookings: vComms.length,
       color:    BAR_COLORS[i % BAR_COLORS.length],
     };
-  }).filter((d) => d.revenue > 0);
+  }).filter((d) => (amountsOff ? d.payout !== 0 : d.revenue > 0));
 
   /* ── Income by referral source chart ──────────────────────────── */
   const referralChartData = useMemo(() => {
@@ -325,6 +372,7 @@ export default function OwnerView() {
   /* ── Rent history filters ──────────────────────────────────────── */
   const [rhSearch,   setRhSearch]   = useState('');
   const [rhStatus,   setRhStatus]   = useState('');
+  const [rhRental,   setRhRental]   = useState('');   // Confirmed / Ongoing / Completed / Cancelled
   const [rhPeriod,   setRhPeriod]   = useState<PeriodKey>('all');
   const [rhDateFrom, setRhDateFrom] = useState('');
   const [rhDateTo,   setRhDateTo]   = useState('');
@@ -335,29 +383,30 @@ export default function OwnerView() {
     return [...myBookings]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .filter((b) => {
+        if (rhRental && shownStatus(b) !== rhRental) return false;
         if (rhStatus) {
           const comm = mine(b).comm;
-          const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
+          const cs   = payStatus(b, comm);
           if (cs !== rhStatus) return false;
         }
         if (rhDateRange.from && b.startDate < rhDateRange.from) return false;
         if (rhDateRange.to   && b.startDate > rhDateRange.to)   return false;
         if (q) {
           const v = vehicles.find((vv) => vv.id === b.vehicleId);
-          const hay = [b.customerName, b.customerPhone, v?.brand, v?.model, v?.vehicleNumber]
+          const hay = [cp.name(b), cp.phone(b), v?.brand, v?.model, v?.vehicleNumber]
             .filter(Boolean).join(' ').toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
       });
-  }, [myBookings, rhStatus, rhDateRange, rhSearch, vehicles, commissions]);
+  }, [myBookings, rhStatus, rhRental, rhDateRange, rhSearch, vehicles, commissions]);
 
-  const rhBillable         = filteredRentHistory.filter((b) => b.status !== 'Cancelled');
+  const rhBillable         = filteredRentHistory.filter((b) => b.status !== 'Cancelled' && !fixedBk(b));
   const rhTotalAmount      = rhBillable.reduce((s, b) => s + mine(b).total, 0);
   const rhTotalReferralFee = rhBillable.reduce((s, b) => s + (mine(b).comm?.coordinatorFee ?? 0), 0);
   const rhTotalOwnerGets   = rhBillable.reduce((s, b) => s + (mine(b).comm?.ownerPayout ?? 0), 0);
-  const rhFiltersActive    = !!(rhSearch.trim() || rhStatus || rhPeriod !== 'all');
-  const clearRhFilters     = () => { setRhSearch(''); setRhStatus(''); setRhPeriod('all'); setRhDateFrom(''); setRhDateTo(''); };
+  const rhFiltersActive    = !!(rhSearch.trim() || rhStatus || rhRental || rhPeriod !== 'all');
+  const clearRhFilters     = () => { setRhSearch(''); setRhStatus(''); setRhRental(''); setRhPeriod('all'); setRhDateFrom(''); setRhDateTo(''); };
 
   /* ── Referral income filters ───────────────────────────────────── */
   const [riSearch,   setRiSearch]   = useState('');
@@ -380,7 +429,7 @@ export default function OwnerView() {
         if (q) {
           const v  = vehicles.find((vv) => vv.id === c.vehicleId);
           const ow = owners.find((o) => o.id === c.ownerId);
-          const hay = [bk?.customerName, bk?.customerPhone, v?.brand, v?.model, v?.vehicleNumber, ow?.name]
+          const hay = [bk && cp.name(bk), bk && cp.phone(bk), v?.brand, v?.model, v?.vehicleNumber, ow?.name]
             .filter(Boolean).join(' ').toLowerCase();
           if (!hay.includes(q)) return false;
         }
@@ -396,14 +445,14 @@ export default function OwnerView() {
 
   /* ── CSV / PDF exports ─────────────────────────────────────────── */
   const exportRhCSV = () => {
-    const cols = ['Booking', 'Phone', 'Vehicle', 'Reg No', 'Date Period', 'Referral', 'Total', 'Referral Fee', 'Owner Gets', 'Status'] as const;
+    const cols = ['Booking', 'Phone', 'Vehicle', 'Reg No', 'Date Period', 'Referral', 'Total', 'Referral Fee', 'Owner Gets', 'Rental', 'Payout'] as const;
     type Row = Record<(typeof cols)[number], string | number>;
     const rows: Row[] = filteredRentHistory.map((b) => {
       const m    = mine(b);
       const v    = vehicles.find((vv) => vv.id === m.vehicleId);
       const comm = m.comm;
-      const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
-      return { Booking: b.customerName, Phone: b.customerPhone, Vehicle: v ? `${v.brand} ${v.model}` : '', 'Reg No': v?.vehicleNumber ?? '', 'Date Period': `${b.startDate} to ${b.endDate}`, Referral: b.referral || comm?.referral || 'Direct', Total: m.total, 'Referral Fee': comm?.coordinatorFee ?? 0, 'Owner Gets': comm?.ownerPayout ?? 0, Status: cs };
+      const cs   = payStatus(b, comm);
+      return { Booking: cp.name(b), Phone: cp.phone(b), Vehicle: v ? `${v.brand} ${v.model}` : '', 'Reg No': v?.vehicleNumber ?? '', 'Date Period': `${b.startDate} to ${b.endDate}`, Referral: b.referral || comm?.referral || 'Direct', Total: totalCell(b, m.total), 'Referral Fee': amountsOff ? HIDDEN_AMOUNT : comm?.coordinatorFee ?? 0, 'Owner Gets': comm?.ownerPayout ?? 0, Rental: shownStatus(b), Payout: b.status === 'Cancelled' ? '—' : cs };
     });
     const lines = [cols.join(','), ...rows.map((r) => cols.map((h) => esc(r[h])).join(','))];
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
@@ -416,12 +465,12 @@ export default function OwnerView() {
       const m    = mine(b);
       const v    = vehicles.find((vv) => vv.id === m.vehicleId);
       const comm = m.comm;
-      const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
+      const cs   = payStatus(b, comm);
       const ref  = b.referral || comm?.referral || 'Direct';
-      return `<tr><td>${b.customerName}<br><small>${b.customerPhone}</small></td><td>${v ? `${v.brand} ${v.model}` : '—'}<br><small>${v?.vehicleNumber ?? ''}</small></td><td>${b.startDate}<br><small>to ${b.endDate} · ${m.days}d${m.exchanged ? ' (exchanged)' : ''}</small></td><td>${ref}</td><td class="num">${fmtRs(m.total)}</td><td class="num">${(comm?.coordinatorFee ?? 0) > 0 ? fmtRs(comm!.coordinatorFee!) : '—'}</td><td class="num">${fmtRs(comm?.ownerPayout ?? 0)}</td><td class="ctr"><span class="badge">${cs}</span></td></tr>`;
+      return `<tr><td>${cp.name(b)}<br><small>${cp.phone(b)}</small></td><td>${v ? `${v.brand} ${v.model}` : '—'}<br><small>${v?.vehicleNumber ?? ''}</small></td><td>${b.startDate}<br><small>to ${b.endDate} · ${m.days}d${m.exchanged ? ' (exchanged)' : ''}</small></td><td>${ref}</td><td class="num">${(() => { const t = totalCell(b, m.total); return typeof t === 'number' ? fmtRs(t) : t; })()}</td><td class="num">${!amountsOff && (comm?.coordinatorFee ?? 0) > 0 ? fmtRs(comm!.coordinatorFee!) : '—'}</td><td class="num">${fmtRs(comm?.ownerPayout ?? 0)}</td><td class="ctr"><span class="badge">${shownStatus(b)}</span></td><td class="ctr"><span class="badge">${b.status === 'Cancelled' ? '—' : cs}</span></td></tr>`;
     }).join('');
-    const thead = '<tr><th>Booking</th><th>Vehicle</th><th>Date Period</th><th>Referral</th><th class="num">Total</th><th class="num">Referral Fee</th><th class="num">Owner Gets</th><th class="ctr">Status</th></tr>';
-    const tfoot = `<tr><td colspan="4">TOTALS · ${filteredRentHistory.length} record${filteredRentHistory.length !== 1 ? 's' : ''}</td><td class="num">${fmtRs(rhTotalAmount)}</td><td class="num">${rhTotalReferralFee > 0 ? fmtRs(rhTotalReferralFee) : '—'}</td><td class="num">${fmtRs(rhTotalOwnerGets)}</td><td></td></tr>`;
+    const thead = '<tr><th>Booking</th><th>Vehicle</th><th>Date Period</th><th>Referral</th><th class="num">Total</th><th class="num">Referral Fee</th><th class="num">Owner Gets</th><th class="ctr">Rental</th><th class="ctr">Payout</th></tr>';
+    const tfoot = `<tr><td colspan="4">TOTALS · ${filteredRentHistory.length} record${filteredRentHistory.length !== 1 ? 's' : ''}</td><td class="num">${amountsOff ? '—' : fmtRs(rhTotalAmount)}</td><td class="num">${!amountsOff && rhTotalReferralFee > 0 ? fmtRs(rhTotalReferralFee) : '—'}</td><td class="num">${fmtRs(rhTotalOwnerGets)}</td><td></td><td></td></tr>`;
     openPdf(pdfShell('Rent History', myName, filteredRentHistory.length, thead, body, tfoot));
   };
 
@@ -432,7 +481,7 @@ export default function OwnerView() {
       const bk = bookings.find((b) => b.id === c.bookingId);
       const v  = vehicles.find((vv) => vv.id === c.vehicleId);
       const ow = owners.find((o) => o.id === c.ownerId);
-      return { Booking: bk?.customerName ?? '', Vehicle: v ? `${v.brand} ${v.model}` : '', 'Reg No': v?.vehicleNumber ?? '', 'Date Period': bk ? `${bk.startDate} to ${bk.endDate}` : '', Owner: ow?.name ?? '—', Total: c.totalIncome, 'Referral Fee': c.coordinatorFee ?? 0, 'Owner Gets': c.ownerPayout, Status: c.status };
+      return { Booking: bk ? cp.name(bk) : '', Vehicle: v ? `${v.brand} ${v.model}` : '', 'Reg No': v?.vehicleNumber ?? '', 'Date Period': bk ? `${bk.startDate} to ${bk.endDate}` : '', Owner: ow?.name ?? '—', Total: amountsOff ? HIDDEN_AMOUNT : c.totalIncome, 'Referral Fee': c.coordinatorFee ?? 0, 'Owner Gets': c.ownerPayout, Status: c.status };
     });
     const lines = [cols.join(','), ...rows.map((r) => cols.map((h) => esc(r[h])).join(','))];
     const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
@@ -445,10 +494,10 @@ export default function OwnerView() {
       const bk = bookings.find((b) => b.id === c.bookingId);
       const v  = vehicles.find((vv) => vv.id === c.vehicleId);
       const ow = owners.find((o) => o.id === c.ownerId);
-      return `<tr><td>${bk?.customerName ?? '—'}<br><small>${bk?.customerPhone ?? ''}</small></td><td>${v ? `${v.brand} ${v.model}` : '—'}<br><small>${v?.vehicleNumber ?? ''}</small></td><td>${bk ? `${bk.startDate} to ${bk.endDate}` : '—'}</td><td>${ow?.name ?? '—'}</td><td class="num">${fmtRs(c.totalIncome)}</td><td class="num">${fmtRs(c.coordinatorFee ?? 0)}</td><td class="num">${fmtRs(c.ownerPayout)}</td><td class="ctr"><span class="badge">${c.status}</span></td></tr>`;
+      return `<tr><td>${bk ? cp.name(bk) : '—'}<br><small>${bk ? cp.phone(bk) : ''}</small></td><td>${v ? `${v.brand} ${v.model}` : '—'}<br><small>${v?.vehicleNumber ?? ''}</small></td><td>${bk ? `${bk.startDate} to ${bk.endDate}` : '—'}</td><td>${ow?.name ?? '—'}</td><td class="num">${amountsOff ? '—' : fmtRs(c.totalIncome)}</td><td class="num">${fmtRs(c.coordinatorFee ?? 0)}</td><td class="num">${fmtRs(c.ownerPayout)}</td><td class="ctr"><span class="badge">${c.status}</span></td></tr>`;
     }).join('');
     const thead = '<tr><th>Booking</th><th>Vehicle</th><th>Date Period</th><th>Owner</th><th class="num">Total</th><th class="num">Referral Fee</th><th class="num">Owner Gets</th><th class="ctr">Status</th></tr>';
-    const tfoot = `<tr><td colspan="4">TOTALS · ${filteredReferralIncome.length} referral${filteredReferralIncome.length !== 1 ? 's' : ''}</td><td class="num">${fmtRs(riTotalIncome)}</td><td class="num">${fmtRs(riTotalFee)}</td><td class="num">${fmtRs(riTotalOwnerPayout)}</td><td></td></tr>`;
+    const tfoot = `<tr><td colspan="4">TOTALS · ${filteredReferralIncome.length} referral${filteredReferralIncome.length !== 1 ? 's' : ''}</td><td class="num">${amountsOff ? '—' : fmtRs(riTotalIncome)}</td><td class="num">${fmtRs(riTotalFee)}</td><td class="num">${fmtRs(riTotalOwnerPayout)}</td><td></td></tr>`;
     openPdf(pdfShell('Referral Income', myName, filteredReferralIncome.length, thead, body, tfoot));
   };
 
@@ -466,10 +515,55 @@ export default function OwnerView() {
   return (
     <>
       {/* ── KPI strip ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* ── Fixed-amount cars: their terms, never what the rentals earn ── */}
+      {fixedCars.length > 0 && (
+        <div className="card mb-4 border border-violet-100 bg-violet-50/40">
+          <p className="text-sm font-semibold text-violet-900">Fixed-amount car{fixedCars.length === 1 ? '' : 's'}</p>
+          <ul className="mt-2 space-y-1">
+            {fixedCars.map((v) => (
+              <li key={v.id} className="flex flex-wrap justify-between gap-x-4 text-sm">
+                <span className="text-navy-800">{v.brand} {v.model} <span className="font-mono text-xs text-navy-400">{v.vehicleNumber}</span></span>
+                <span className="font-semibold text-violet-800">{termsSummary(v.ownerTerms!)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-violet-700 mt-2">You're paid this fixed amount whether the car is rented or not, so its rentals are listed below without amounts. Each payment appears in your monthly payout statements.</p>
+        </div>
+      )}
+
+      {amountsOff && (
+        <div className="card mb-4 border border-navy-100 bg-navy-50/40">
+          <p className="text-sm font-semibold text-navy-800">Your payouts</p>
+          <p className="text-[11px] text-navy-500 mt-1">What Ceylon Rent A Cars pays you and whether each payout is pending or received. Your monthly statements are below.</p>
+        </div>
+      )}
+
+      {/* ── Revenue: company bookings + personal bookings ── */}
+      {!amountsOff && <div className="card mb-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white flex-shrink-0 bg-navy-700"><DollarSign size={18} /></div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-navy-400 font-medium">Total Revenue</p>
+            <p className="text-2xl font-bold text-navy-800">Rs {(totalRevenue + personalRevenue).toLocaleString()}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+          <div className="rounded-xl bg-navy-50/70 px-4 py-3">
+            <p className="text-xs font-semibold text-navy-600">Company bookings</p>
+            <p className="text-lg font-bold text-navy-800">Rs {totalRevenue.toLocaleString()}</p>
+            <p className="text-[11px] text-navy-400">{companyBookings.length} rental{companyBookings.length === 1 ? '' : 's'} · commission taken, the rest paid out to you</p>
+          </div>
+          <div className="rounded-xl bg-violet-50 px-4 py-3">
+            <p className="text-xs font-semibold text-violet-800">Personal bookings</p>
+            <p className="text-lg font-bold text-violet-900">Rs {personalRevenue.toLocaleString()}</p>
+            <p className="text-[11px] text-violet-700">{personalCount} booking{personalCount === 1 ? '' : 's'} · not company business — no commission or payout</p>
+          </div>
+        </div>
+      </div>}
+
+      <div className={`grid grid-cols-1 gap-4 mb-6 ${amountsOff ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
         {[
-          { label: 'Total Revenue',       value: `Rs ${totalRevenue.toLocaleString()}`,     icon: DollarSign, color: 'bg-navy-700'    },
-          { label: 'Referral Fees Paid',  value: `Rs ${totalReferralFee.toLocaleString()}`, icon: Percent,    color: 'bg-amber-500'   },
+          ...(amountsOff ? [] : [{ label: 'Referral Fees Paid',  value: `Rs ${totalReferralFee.toLocaleString()}`, icon: Percent,    color: 'bg-amber-500'   }]),
           { label: 'Your Earnings',       value: `Rs ${totalEarnings.toLocaleString()}`,    icon: TrendingUp, color: 'bg-emerald-500' },
           { label: 'Pending Payout',      value: `Rs ${pendingAmount.toLocaleString()}`,    icon: Bell,       color: pendingAmount > 0 ? 'bg-amber-500' : 'bg-navy-300' },
         ].map(({ label, value, icon: Icon, color }) => (
@@ -486,7 +580,7 @@ export default function OwnerView() {
       {/* ── Charts ─────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
         <div className="card">
-          <p className="section-title mb-4">Revenue by Vehicle</p>
+          <p className="section-title mb-4">{amountsOff ? 'Payouts by Vehicle' : 'Revenue by Vehicle'}</p>
           {vehicleChart.length > 0 ? (
             <>
               <ResponsiveContainer width="100%" height={200}>
@@ -494,7 +588,7 @@ export default function OwnerView() {
                   <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#71717A' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 11, fill: '#71717A' }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v / 1000}k`} />
                   <Tooltip formatter={(v: number, name: string) => [`Rs ${v.toLocaleString()}`, name === 'revenue' ? 'Total Revenue' : 'Your Payout']} contentStyle={{ borderRadius: 10, border: 'none', fontSize: 12 }} />
-                  <Bar dataKey="revenue" radius={[6, 6, 0, 0]}>{vehicleChart.map((d, i) => <Cell key={i} fill={d.color} />)}</Bar>
+                  {!amountsOff && <Bar dataKey="revenue" radius={[6, 6, 0, 0]}>{vehicleChart.map((d, i) => <Cell key={i} fill={d.color} />)}</Bar>}
                   <Bar dataKey="payout"  radius={[6, 6, 0, 0]} fill="#10B981" opacity={0.6} />
                 </BarChart>
               </ResponsiveContainer>
@@ -515,7 +609,7 @@ export default function OwnerView() {
           )}
         </div>
 
-        <div className="card">
+        {!amountsOff && <div className="card">
           <p className="section-title mb-4">Income by Referral Source</p>
           {referralChartData.length > 0 ? (
             <>
@@ -542,16 +636,16 @@ export default function OwnerView() {
           ) : (
             <div className="h-48 flex items-center justify-center text-navy-400 text-sm">No referral data yet.</div>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* ── Payouts with a reason (breakdown replacements, owed-back amounts) ── */}
-      {myCommissions.some((c) => c.note) && (
+      {allMyCommissions.some((c) => c.note) && (
         <div className="card mb-6">
           <p className="section-title mb-1">Breakdown replacements &amp; adjustments</p>
           <p className="text-xs text-navy-400 mb-3">Payouts that aren't one of your own bookings — e.g. your car used as a replacement for another car that broke down.</p>
           <div className="space-y-2">
-            {myCommissions.filter((c) => c.note).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => {
+            {allMyCommissions.filter((c) => c.note).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((c) => {
               const [kind, detail] = splitNote(c.note);
               const v = vehicles.find((vv) => vv.id === c.vehicleId);
               return (
@@ -595,8 +689,8 @@ export default function OwnerView() {
                 return (
                   <div key={c.id} className="flex items-center gap-3 p-3 bg-amber-50/60 rounded-xl">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-navy-800 truncate">{kind ?? booking?.customerName ?? '—'}</p>
-                      <p className="text-xs text-navy-400">{detail ?? `${vehicle?.brand ?? ''} ${vehicle?.model ?? ''} · ${booking?.startDate ?? ''}`}</p>
+                      <p className="text-sm font-semibold text-navy-800 truncate">{kind ?? (booking ? cp.name(booking) : vehicle ? `${vehicle.brand} ${vehicle.model} · ${vehicle.vehicleNumber}` : 'Rental')}</p>
+                      <p className="text-xs text-navy-400">{detail ?? (booking ? `${vehicle?.brand ?? ''} ${vehicle?.model ?? ''} · ${booking.startDate}` : `Rental payout · ${c.createdAt.slice(0, 10)}`)}</p>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <p className="text-sm font-bold text-amber-700">Rs {c.ownerPayout.toLocaleString()}</p>
@@ -617,16 +711,16 @@ export default function OwnerView() {
       </div>
 
       {/* ── Rent History ────────────────────────────────────────────── */}
-      <div className="card mb-6">
+      {!amountsOff && <div className="card mb-6">
         <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
           <div>
             <p className="section-title">Rent History</p>
             <p className="text-xs text-navy-400 mt-0.5">
               {filteredRentHistory.length} of {myBookings.length} bookings
               {filteredRentHistory.some((b) => b.status === 'Cancelled') && <span className="text-navy-300"> (excl. cancelled)</span>}
-              {' · '}Total Rs {rhTotalAmount.toLocaleString()}
+              {!amountsOff && <>{' · '}Total Rs {rhTotalAmount.toLocaleString()}</>}
               {' · '}Owner Gets Rs {rhTotalOwnerGets.toLocaleString()}
-              {rhTotalReferralFee > 0 && <span className="text-amber-600"> · Referral Rs {rhTotalReferralFee.toLocaleString()}</span>}
+              {!amountsOff && rhTotalReferralFee > 0 && <span className="text-amber-600"> · Referral Rs {rhTotalReferralFee.toLocaleString()}</span>}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -646,9 +740,13 @@ export default function OwnerView() {
             <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-navy-400 pointer-events-none" />
             <input className="input pl-10 text-sm" value={rhSearch} onChange={(e) => setRhSearch(e.target.value)} placeholder="Search customer, vehicle…" />
           </div>
-          <div className="w-44">
-            <Select value={rhStatus} onChange={setRhStatus} placeholder="All status"
-              options={['Pending', 'Received', 'Credit'].map((s) => ({ value: s, label: s }))} />
+          <div className="w-40">
+            <Select value={rhRental} onChange={setRhRental} placeholder="All rentals"
+              options={['Confirmed', 'Ongoing', 'Completed', 'Cancelled'].map((s) => ({ value: s, label: s }))} />
+          </div>
+          <div className="w-40">
+            <Select value={rhStatus} onChange={setRhStatus} placeholder="All payouts"
+              options={['Pending', 'Received', 'Credit', 'Personal', 'Fixed'].map((s) => ({ value: s, label: s }))} />
           </div>
           {rhFiltersActive && (
             <button onClick={clearRhFilters} className="flex items-center gap-1.5 text-xs font-medium text-navy-500 hover:text-navy-800 bg-navy-50 hover:bg-navy-100 px-3.5 py-2.5 rounded-xl transition-colors flex-shrink-0">
@@ -666,10 +764,11 @@ export default function OwnerView() {
                 <th className="table-head text-left pb-3">Vehicle</th>
                 <th className="table-head text-left pb-3">Date Period</th>
                 <th className="table-head text-left pb-3">Referral</th>
-                <th className="table-head text-right pb-3">Total</th>
-                <th className="table-head text-right pb-3">Referral Fee</th>
+                {!amountsOff && <th className="table-head text-right pb-3">Total</th>}
+                {!amountsOff && <th className="table-head text-right pb-3">Referral Fee</th>}
                 <th className="table-head text-right pb-3">Owner Gets</th>
-                <th className="table-head text-right pb-3">Status</th>
+                <th className="table-head text-right pb-3" title="Where the rental is: Confirmed (upcoming), Ongoing (on rent), Completed or Cancelled">Rental</th>
+                <th className="table-head text-right pb-3" title="Your payout for it: Pending (not paid yet) or Received">Payout</th>
                 <th className="table-head text-center pb-3">Details</th>
               </tr>
             </thead>
@@ -678,13 +777,13 @@ export default function OwnerView() {
                 const m    = mine(b);
                 const v    = vehicles.find((vv) => vv.id === m.vehicleId);
                 const comm = m.comm;
-                const cs   = comm?.status === 'Paid' ? 'Received' : (comm?.status ?? 'Pending');
+                const cs   = payStatus(b, comm);
                 const ref  = b.referral || comm?.referral || 'Direct';
                 return (
                   <tr key={b.id} className="table-row">
                     <td className="py-3">
-                      <p className="text-sm font-medium text-navy-800">{b.customerName}</p>
-                      <p className="text-xs text-navy-400">{b.customerPhone}</p>
+                      <p className="text-sm font-medium text-navy-800">{cp.name(b)}{b.status === 'Cancelled' && <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cancelled</span>}</p>
+                      <p className="text-xs text-navy-400">{cp.hides(b) ? HIDDEN_CONTACT : b.customerPhone}</p>
                     </td>
                     <td className="py-3">
                       <p className="text-sm text-navy-700">{v?.brand} {v?.model}</p>
@@ -697,16 +796,21 @@ export default function OwnerView() {
                     <td className="py-3">
                       <span className="text-xs bg-navy-50 text-navy-600 px-2 py-0.5 rounded-full">{ref}</span>
                     </td>
-                    <td className="py-3 text-right text-sm font-semibold text-navy-800">Rs {m.total.toLocaleString()}</td>
+                    {!amountsOff && <><td className={`py-3 text-right text-sm font-semibold ${b.status === 'Cancelled' ? 'text-navy-300 line-through' : 'text-navy-800'}`} title={b.status === 'Cancelled' ? 'Cancelled — not counted in your revenue or payouts' : undefined}>
+                      {fixedBk(b) ? <span className="text-[11px] font-semibold text-violet-700" title="You're paid a fixed amount for this car — rental amounts aren't shown">{FIXED_LABEL}</span> : <>
+                      Rs {m.total.toLocaleString()}
+                      {m.total !== m.rent && <span className={`block text-[11px] font-normal ${isPersonal(b) ? 'text-violet-700' : 'text-navy-400'}`} title="Rent, plus extra charges (extra km…), less deductions and discount">rent Rs {Math.round(m.rent).toLocaleString()} · final bill</span>}</>}
+                    </td>
                     <td className="py-3 text-right">
                       {(comm?.coordinatorFee ?? 0) > 0
                         ? <span className="text-sm font-semibold text-amber-700">Rs {comm!.coordinatorFee!.toLocaleString()}</span>
                         : <span className="text-sm text-navy-300">—</span>}
-                    </td>
+                    </td></>}
                     <td className="py-3 text-right text-sm font-semibold text-emerald-700">
-                      Rs {(comm?.ownerPayout ?? 0).toLocaleString()}
+                      {isPersonal(b) || fixedBk(b) || b.status === 'Cancelled' ? <span className="text-navy-300 font-normal" title={b.status === 'Cancelled' ? 'Cancelled — no payout' : 'Personal booking — no payout'}>—</span> : `Rs ${(comm?.ownerPayout ?? 0).toLocaleString()}`}
                     </td>
-                    <td className="py-3 text-right"><StatusBadge status={cs} /></td>
+                    <td className="py-3 text-right"><StatusBadge status={shownStatus(b)} /></td>
+                    <td className="py-3 text-right">{b.status === 'Cancelled' ? <span className="text-sm text-navy-300">—</span> : <StatusBadge status={cs} />}</td>
                     <td className="py-3 text-center">
                       <button
                         onClick={() => setDetailBooking(b)}
@@ -720,7 +824,7 @@ export default function OwnerView() {
                 );
               })}
               {filteredRentHistory.length === 0 && (
-                <tr><td colSpan={9} className="text-center py-12 text-navy-400 text-sm">
+                <tr><td colSpan={amountsOff ? 8 : 10} className="text-center py-12 text-navy-400 text-sm">
                   {myBookings.length === 0 ? 'No rent history yet.' : 'No records match your filters.'}
                 </td></tr>
               )}
@@ -729,19 +833,19 @@ export default function OwnerView() {
               <tfoot>
                 <tr className="border-t-2 border-navy-100">
                   <td colSpan={4} className="py-3 text-xs font-semibold text-navy-500 uppercase tracking-wide">Totals</td>
-                  <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {rhTotalAmount.toLocaleString()}</td>
-                  <td className="py-3 text-right text-sm font-bold text-amber-700">{rhTotalReferralFee > 0 ? `Rs ${rhTotalReferralFee.toLocaleString()}` : '—'}</td>
+                  {!amountsOff && <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {rhTotalAmount.toLocaleString()}</td>}
+                  {!amountsOff && <td className="py-3 text-right text-sm font-bold text-amber-700">{rhTotalReferralFee > 0 ? `Rs ${rhTotalReferralFee.toLocaleString()}` : '—'}</td>}
                   <td className="py-3 text-right text-sm font-bold text-emerald-700">Rs {rhTotalOwnerGets.toLocaleString()}</td>
-                  <td /><td />
+                  <td /><td /><td />
                 </tr>
               </tfoot>
             )}
           </table>
         </div>
-      </div>
+      </div>}
 
       {/* ── Referral Income (earned by referring others) ─────────────── */}
-      <div className="card mb-6">
+      {!amountsOff && <div className="card mb-6">
         <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
           <div>
             <p className="section-title">Referral Income</p>
@@ -802,7 +906,7 @@ export default function OwnerView() {
                     <th className="table-head text-left pb-3">Vehicle</th>
                     <th className="table-head text-left pb-3">Date Period</th>
                     <th className="table-head text-left pb-3">Owner</th>
-                    <th className="table-head text-right pb-3">Total</th>
+                    {!amountsOff && <th className="table-head text-right pb-3">Total</th>}
                     <th className="table-head text-right pb-3">Referral Fee</th>
                     <th className="table-head text-right pb-3">Owner Gets</th>
                     <th className="table-head text-right pb-3">Status</th>
@@ -816,8 +920,8 @@ export default function OwnerView() {
                     return (
                       <tr key={c.id} className="table-row">
                         <td className="py-3">
-                          <p className="text-sm font-medium text-navy-800">{bk?.customerName ?? '—'}</p>
-                          <p className="text-xs text-navy-400">{bk?.customerPhone}</p>
+                          <p className="text-sm font-medium text-navy-800">{bk ? cp.name(bk) : '—'}</p>
+                          <p className="text-xs text-navy-400">{bk ? cp.phone(bk) : ''}</p>
                         </td>
                         <td className="py-3">
                           <p className="text-sm text-navy-700">{v?.brand} {v?.model}</p>
@@ -830,7 +934,7 @@ export default function OwnerView() {
                         <td className="py-3">
                           <p className="text-sm text-navy-700">{ow?.name ?? '—'}</p>
                         </td>
-                        <td className="py-3 text-right text-sm text-navy-600">Rs {c.totalIncome.toLocaleString()}</td>
+                        {!amountsOff && <td className="py-3 text-right text-sm text-navy-600">Rs {c.totalIncome.toLocaleString()}</td>}
                         <td className="py-3 text-right text-sm font-semibold text-emerald-700">Rs {(c.coordinatorFee ?? 0).toLocaleString()}</td>
                         <td className="py-3 text-right text-sm font-semibold text-navy-800">Rs {c.ownerPayout.toLocaleString()}</td>
                         <td className="py-3 text-right"><StatusBadge status={c.status} /></td>
@@ -838,14 +942,14 @@ export default function OwnerView() {
                     );
                   })}
                   {filteredReferralIncome.length === 0 && (
-                    <tr><td colSpan={8} className="text-center py-10 text-navy-400 text-sm">No records match your filters.</td></tr>
+                    <tr><td colSpan={amountsOff ? 7 : 8} className="text-center py-10 text-navy-400 text-sm">No records match your filters.</td></tr>
                   )}
                 </tbody>
                 {filteredReferralIncome.length > 0 && (
                   <tfoot>
                     <tr className="border-t-2 border-navy-100">
                       <td colSpan={4} className="py-3 text-xs font-semibold text-navy-500 uppercase tracking-wide">Totals</td>
-                      <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {riTotalIncome.toLocaleString()}</td>
+                      {!amountsOff && <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {riTotalIncome.toLocaleString()}</td>}
                       <td className="py-3 text-right text-sm font-bold text-emerald-700">Rs {riTotalFee.toLocaleString()}</td>
                       <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {riTotalOwnerPayout.toLocaleString()}</td>
                       <td />
@@ -856,7 +960,7 @@ export default function OwnerView() {
             </div>
           </>
         )}
-      </div>
+      </div>}
 
       {/* ── Rent Detail Modal ───────────────────────────────────────── */}
       <RentDetailModal booking={detailBooking} handovers={handovers} onClose={() => setDetailBooking(null)} />

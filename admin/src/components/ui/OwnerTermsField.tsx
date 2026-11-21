@@ -1,13 +1,68 @@
+import { useEffect } from 'react';
 import DateInput from './DateInput';
-import type { OwnerTerms } from '../../types';
-import { termsSummary } from '../../lib/ownerTerms';
+import Select from './Select';
+import type { OwnerShare, OwnerTerms } from '../../types';
+import { shareSummary, termsSummary } from '../../lib/ownerTerms';
+import { SHARE_TYPES, useCompanyShare } from '../../lib/companyShare';
+
+/**
+ * Share of each rental: the commission agreed with this owner. New bookings on the car start with it, and
+ * "Complete rental" offers it as the owner's agreed rate. Not set = the company default.
+ */
+function AgreedShare({ share, onChange, disabled }: { share: OwnerShare | null; onChange: (s: OwnerShare | null) => void; disabled?: boolean }) {
+  const { method, loaded, load } = useCompanyShare();
+  useEffect(() => { if (!loaded) load(); }, [loaded, load]);
+  const none = share?.type === 'fixed' && share.value === 0;
+  const pctLike = share?.type === 'percent' || share?.type === 'percent_min';
+  const pick = (v: string) => {
+    if (v === 'default') return onChange(null);
+    if (v === 'none') return onChange({ type: 'fixed', value: 0 });
+    const t = v as OwnerShare['type'];
+    onChange(t === 'percent_min' ? { type: t, value: method.value, min: method.min ?? 1000 }
+      : t === 'percent' ? { type: t, value: method.value }
+      : t === 'per_day' ? { type: t, value: method.min ?? 1000 }
+      : { type: t, value: 5000 });
+  };
+  return (
+    <div className="rounded-xl border border-navy-100 p-3 space-y-2">
+      <p className="text-xs font-semibold text-navy-700">Commission agreed with this owner</p>
+      <div className="grid gap-2 sm:grid-cols-[1fr_8rem_9rem]">
+        <Select value={!share ? 'default' : none ? 'none' : share.type} onChange={pick} disabled={disabled}
+                options={[
+                  { value: 'default', label: 'Company default', sub: shareSummary({ type: method.type, value: method.value, min: method.min }) },
+                  ...SHARE_TYPES.map((s) => ({ value: s.value, label: s.label, sub: s.sub })),
+                  { value: 'none', label: 'No commission', sub: 'the owner gets the whole rental' },
+                ]} />
+        {share && !none && (
+          <label className="text-[11px] text-navy-400">{pctLike ? 'Percent' : share.type === 'per_day' ? 'Rs per day' : 'Rs per trip'}
+            <input className="input !py-1.5 mt-0.5" type="number" min={0} max={pctLike ? 100 : undefined} step={pctLike ? 0.5 : 100} disabled={disabled}
+                   value={share.value} onChange={(e) => onChange({ ...share, value: Math.max(0, Number(e.target.value) || 0) })} />
+          </label>
+        )}
+        {share?.type === 'percent_min' && (
+          <label className="text-[11px] text-navy-400">Minimum per day (Rs)
+            <input className="input !py-1.5 mt-0.5" type="number" min={0} step={100} disabled={disabled}
+                   value={share.min ?? 0} onChange={(e) => onChange({ ...share, min: Math.max(0, Number(e.target.value) || 0) })} />
+          </label>
+        )}
+      </div>
+      <p className="text-[11px] text-navy-400">
+        {share ? <>The company takes <b className="text-navy-700">{shareSummary(share)}</b> on this car's rentals; the owner gets the rest of each final bill.</>
+          : <>Uses the company default ({shareSummary({ type: method.type, value: method.value, min: method.min })}).</>}
+        {' '}New bookings start with it, and "Complete rental" offers it as the owner's agreed rate.
+      </p>
+    </div>
+  );
+}
 
 /**
  * How the car's owner is paid: a share of each rental (the usual way) or a fixed amount
  * (every month, or once for the whole term) whether the car is rented or not.
  */
-export default function OwnerTermsField({ value, onChange, disabled }: {
+export default function OwnerTermsField({ value, onChange, disabled, share, onShareChange }: {
   value: OwnerTerms | null | undefined; onChange: (t: OwnerTerms | null) => void; disabled?: boolean;
+  /** share of each rental: the commission agreed with this owner (null = the company default) */
+  share?: OwnerShare | null; onShareChange?: (s: OwnerShare | null) => void;
 }) {
   const t = value ?? null;
   const today = new Date().toISOString().slice(0, 10);
@@ -27,6 +82,8 @@ export default function OwnerTermsField({ value, onChange, disabled }: {
         <Opt on={!t} title="Share of each rental" sub="The company keeps its commission, the owner gets the rest" onClick={() => onChange(null)} />
         <Opt on={!!t} title="Fixed amount" sub="Paid whether the car is rented or not · no commission" onClick={() => { if (!t) set({}); }} />
       </div>
+
+      {!t && onShareChange && <AgreedShare share={share ?? null} onChange={onShareChange} disabled={disabled} />}
 
       {t && (
         <>

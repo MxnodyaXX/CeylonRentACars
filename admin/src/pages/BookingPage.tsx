@@ -14,7 +14,7 @@ export default function BookingPage() {
   const navigate = useNavigate();
   const b = useStore((s) => s.bookings.find((x) => x.id === id));
   // editing a booking: admins, and team members who create & edit bookings (the details view only shows the button to them)
-  const mayEdit = useAuthStore((s) => s.isAdmin() || (s.currentUser?.role === 'staff' && s.can('canBook')));
+  const mayEdit = useAuthStore((s) => s.isAdmin() || (s.currentUser?.role === 'staff' && s.can('canBookEdit')));
   const [editing, setEditing] = useState<Booking | null>(null);
   const [cancelling, setCancelling] = useState<Booking | null>(null);
 

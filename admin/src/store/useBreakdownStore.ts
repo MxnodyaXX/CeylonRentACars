@@ -117,7 +117,7 @@ interface BdState extends BdData {
   /** Correct a finished replacement (times, days, rate, readings, notes) — owner payouts follow (admin) */
   editSwap: (swapId: string, patch: SwapEdit, reason: string, by: string, isAdmin: boolean) => string | null;
   /** Explicit return to service: outcome + safety confirmation; checked again by the database */
-  markVehicleReady: (incidentId: string, x: { outcome: string; safe: boolean; comments?: string; approvedAt?: string; by: string; isAdmin: boolean }) => Promise<string | null>;
+  markVehicleReady: (incidentId: string, x: { outcome: string; safe: boolean; comments?: string; approvedAt?: string; by: string; allowed: boolean }) => Promise<string | null>;
   linkLatestExchange: (solutionId: string, by: string) => string | null;
   applyPriceDifference: (solutionId: string, amount: number, by: string) => string | null;
   /** Customer fixes it at a shop: the company pays the shop (now or later), or the customer paid and it comes off their final bill */
@@ -873,7 +873,7 @@ export const useBreakdownStore = create<BdState>()(persist((set, get) => {
     markVehicleReady: async (incidentId, x) => {
       const i = incidentOf(incidentId);
       if (!i) return 'Breakdown not found.';
-      if (!x.isAdmin) return 'Only an admin can return a vehicle to service.';
+      if (!x.allowed) return 'Only an admin, or a team member allowed to return cars to service, can do this.';
       if (!i.holdVehicleId || i.holdClearedAt) return 'This breakdown has no active maintenance hold.';
       if (!x.outcome.trim()) return 'Record the repair or inspection outcome.';
       if (!x.safe) return 'Confirm the vehicle is safe for rental.';

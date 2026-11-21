@@ -16,6 +16,7 @@ import {
   AGREEMENT_STATUS, EVENT_LABEL, GATE_BANNER, SITE_URL, downloadPdf, eag, eagEnabled, eagError, lk, sendBySms,
   type Agreement, type Overview, type Quotation,
 } from '../../lib/eagreement';
+import { askText } from '../../lib/dialog';
 
 const rs = (n?: number | null) => `Rs ${Math.round(Number(n) || 0).toLocaleString('en-LK')}`;
 const btn = 'inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-50';
@@ -65,7 +66,7 @@ export default function EAgreementPanel({ inquiry }: { inquiry: Inquiry }) {
   const open = ag && ['DRAFT', 'SENT', 'VIEWED'].includes(ag.status) && ag.status !== 'SUPERSEDED';
   const waiting = ov.waitlist.find((w) => w.status === 'WAITING' || w.status === 'OFFERED');
   const manualOk = ov.exceptions.find((x) => x.kind === 'MANUAL_ACCEPTANCE' && x.status === 'APPROVED');
-  const mayQuote = can('canSendAgreements'), mayAdvance = can('canRequestAdvance'), mayBook = can('canBook'), mayPay = can('canTakePayments') || can('canVerifyPayments');
+  const mayQuote = can('canSendAgreements'), mayAdvance = can('canRequestAdvance'), mayBook = can('canBookCreate'), mayPay = can('canTakePayments') || can('canVerifyPayments');
   const holdLive = hold?.status === 'ACTIVE';
 
   /* ── sending ── */
@@ -147,7 +148,7 @@ export default function EAgreementPanel({ inquiry }: { inquiry: Inquiry }) {
             {ag.status !== 'DRAFT' && (manualOk
               ? <button type="button" className={soft} onClick={() => { setReason(''); setModal('manual'); }}><ShieldCheck size={15} /> Record manual acceptance</button>
               : <button type="button" className={soft} disabled={!!busy} title="Only if the agreement page can't be used — a business approver must approve it"
-                        onClick={() => { const why = prompt('Why can’t the customer accept online? (an approver must agree — at least 10 characters)'); if (why) act('ask', () => eag.requestException('MANUAL_ACCEPTANCE', inquiry.id, null, why), 'Asked for approval — see e-Agreements → Exceptions'); }}>
+                        onClick={async () => { const why = await askText('Why can’t the customer accept online? (an approver must agree — at least 10 characters)'); if (why) act('ask', () => eag.requestException('MANUAL_ACCEPTANCE', inquiry.id, null, why), 'Asked for approval — see e-Agreements → Exceptions'); }}>
                   <ShieldCheck size={15} /> Ask for manual acceptance</button>)}
           </>
         )}

@@ -453,7 +453,7 @@ import { financeStatus, vehicleHistory } from '../../src/lib/breakdownLedger'
 import { phaseOf } from '../../src/lib/breakdowns'
 
 const vStatus = (id: string) => main().vehicles.find((v) => v.id === id)!.status
-const readyX = (o = {}) => ({ outcome: 'Radiator replaced — road-tested', safe: true, by: 'Admin', isAdmin: true, ...o })
+const readyX = (o = {}) => ({ outcome: 'Radiator replaced — road-tested', safe: true, by: 'Admin', allowed: true, ...o })
 
 describe('breakdowns — maintenance hold', () => {
   it('reporting puts the vehicle under maintenance and blocks new bookings (its own booking continues)', () => {
@@ -499,7 +499,7 @@ describe('breakdowns — maintenance hold', () => {
 
   it('Mark vehicle as ready: admin only, needs the outcome and the safety confirmation', async () => {
     const b = world(); const i = report(b)
-    expect(await bd().markVehicleReady(i.id, readyX({ isAdmin: false }))).toMatch(/Only an admin/)
+    expect(await bd().markVehicleReady(i.id, readyX({ allowed: false }))).toMatch(/Only an admin/)
     expect(await bd().markVehicleReady(i.id, readyX({ safe: false }))).toMatch(/safe for rental/)
     expect(await bd().markVehicleReady(i.id, readyX({ outcome: ' ' }))).toMatch(/outcome/)
     expect(await bd().markVehicleReady(i.id, readyX({ approvedAt: new Date(Date.now() + 864e5).toISOString() }))).toMatch(/future/)
@@ -641,7 +641,7 @@ describe('breakdowns — replacement swap and swap back', () => {
     const w = bd().swaps[0]
     const back = { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back' as const, replacementOdometer: 900, replacementFuel: '1/2', originalOdometer: 10410, originalFuel: 'Full' }
     expect(bd().closeSwap(w.id, back)).toMatch(/Mark vehicle as ready/)
-    expect(await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })).toBeNull()
+    expect(await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })).toBeNull()
 
     const bk = main().bookings.find((x) => x.id === b)!
     const m = swapMoney(bk, 'vA', 15000, 2)
@@ -739,7 +739,7 @@ describe('breakdowns — swap back when the original owner was already paid', ()
     const main0 = main().commissions.find((c) => c.bookingId === b)!
     useStore.setState((st) => ({ commissions: st.commissions.map((c) => (c.id === main0.id ? { ...c, status: 'Paid' as const } : c)) }))
     bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', originalOdometer: 10400, replacementOdometer: 500 })
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     const pending0 = main().owners.find((o) => o.id === 'oA')!.pendingPayout
     expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 900, originalOdometer: 10410 })).toBeNull()
 
@@ -766,7 +766,7 @@ describe('breakdowns — replacement owner agreed a custom daily rate', () => {
     expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', rate: 11000, originalOdometer: 10400, replacementOdometer: 500 })).toBeNull()
     expect(bd().swaps[0].replacementRate).toBe(11000)                       // listed 15,000
     expect(bd().events.at(-1)!.text).toMatch(/agreed Rs 11,000\/day.*listed Rs 15,000/)
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', rate: 10000, replacementOdometer: 900, originalOdometer: 10410 })).toBeNull()
     const w = bd().swaps[0]
     expect(w).toMatchObject({ replacementRate: 10000, replacementPayout: 20000, days: 2 })
@@ -782,7 +782,7 @@ describe('breakdowns — replacement payout reason for the owner', () => {
     const main0 = main().commissions.find((c) => c.bookingId === b)!
     useStore.setState((st) => ({ commissions: st.commissions.map((c) => (c.id === main0.id ? { ...c, status: 'Paid' as const } : c)) }))
     bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', rate: 5000, originalOdometer: 10400, replacementOdometer: 500 })
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 900, originalOdometer: 10410 })).toBeNull()
     const w = bd().swaps[0]
     const pay = main().commissions.find((c) => c.id === w.commissionId)!
@@ -816,7 +816,7 @@ describe('breakdowns — mileage on every swap', () => {
     expect(bd().startSwap(s.id, out({ originalOdometer: 9000 }))).toMatch(/lower than its last one on this trip \(10,000 km\)/)
     expect(bd().swaps).toHaveLength(0)
     expect(bd().startSwap(s.id, out())).toBeNull()
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     const w = bd().swaps[0]
     const back = { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back' as const, replacementOdometer: 1120, originalOdometer: 10310 }
     expect(bd().closeSwap(w.id, { ...back, replacementOdometer: undefined })).toMatch(/comes back from the customer/)
@@ -831,7 +831,7 @@ describe('breakdowns — mileage on every swap', () => {
   it('the bill counts the booked car before and after the breakdown plus the replacement — not the garage km', async () => {
     const { b, i, s } = setup()
     bd().startSwap(s.id, out())
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 1120, originalOdometer: 10310 })
     const t = tripKmFor(main().bookings.find((x) => x.id === b)!, { returnKm: 10500 })
     expect(t.legs.map((l) => [l.car, l.km])).toEqual([['CBU-0745', 300], ['CBB-2222', 620], ['CBU-0745', 190]])
@@ -858,7 +858,7 @@ describe('breakdowns — mileage on every swap', () => {
     // each replacement owner is paid for their own days
     expect(main().commissions.find((c) => c.id === bd().swaps[0].commissionId)!.vehicleId).toBe('vB')
 
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     expect(bd().closeSwap(bd().swaps[1].id, { at: iso('2026-07-06T09:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 2400, originalOdometer: 10300 })).toBeNull()
     expect(bd().solutions.find((x) => x.id === s.id)!.status).toBe('completed')
     const t = tripKmFor(main().bookings.find((x) => x.id === b)!, { returnKm: 10500 })
@@ -921,7 +921,7 @@ describe('breakdowns — vehicle usage phases (each car its own odometer)', () =
   it("the booked car's reading going back is checked against its own odometer, and can be corrected (logged)", async () => {
     const { b, i, s } = setup()
     bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', originalOdometer: 12380, replacementOdometer: 2600 })
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     // typed CBB-2222's (the replacement's) end reading for CBU-0745 by mistake
     bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 13000, originalOdometer: 13000 })
     let t = tripKmFor(bk(b), { returnKm: 13500 })
@@ -953,7 +953,7 @@ describe('breakdowns — vehicle usage phases (each car its own odometer)', () =
       const day = String(2 + n * 2).padStart(2, '0'), next = String(3 + n * 2).padStart(2, '0')
       km += 100
       expect(bd().startSwap(s.id, { at: iso(`2026-07-${day}T12:00:00`), by: 'A', replacementVehicleId: n % 2 ? 'vC' : 'vB', originalOdometer: km, replacementOdometer: rkm })).toBeNull()
-      await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+      await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
       rkm += 50
       expect(bd().closeSwap(bd().swaps.at(-1)!.id, { at: iso(`2026-07-${next}T12:00:00`), by: 'A', outcome: 'swapped_back', replacementOdometer: rkm, originalOdometer: km })).toBeNull()
       rkm += 1000   // the replacement does other work before its next turn
@@ -977,7 +977,7 @@ describe('breakdowns — correcting a finished replacement', () => {
       useStore.setState((st) => ({ commissions: st.commissions.map((c) => (c.id === m0.id ? { ...c, status: 'Paid' as const } : c)) }))
     }
     bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', rate: 5000, originalOdometer: 10400, replacementOdometer: 500 })
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     expect(bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 900, originalOdometer: 10410 })).toBeNull()
     return { b, i, w: bd().swaps[0] }
   }
@@ -1049,7 +1049,7 @@ describe('breakdowns — readings from trip meters (Trip A / B / C)', () => {
     const b = world(); const i = report(b, { mileage: 24708 })
     const s = bd().addSolution(i.id, 'replacement', 'A').solution!
     expect(bd().startSwap(s.id, { at: iso('2026-07-03T12:00:00'), by: 'A', replacementVehicleId: 'vB', originalOdometer: 24708, originalMeter: 'A', replacementOdometer: 2450 })).toBeNull()
-    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', isAdmin: true })
+    await bd().markVehicleReady(i.id, { outcome: 'Repaired', safe: true, by: 'Admin', allowed: true })
     return { b, i, s, close: () => bd().closeSwap(bd().swaps[0].id, { at: iso('2026-07-05T12:00:00'), by: 'A', outcome: 'swapped_back', replacementOdometer: 3100, originalOdometer: 559, originalMeter }) }
   }
 

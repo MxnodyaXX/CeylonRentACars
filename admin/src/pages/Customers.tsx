@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useOwnerMoney } from '../lib/ownerMoney';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
@@ -117,8 +118,10 @@ export default function Customers() {
       .filter((b) => b.customerPhone === c.phone)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+  // an owner doesn't see what their fixed-amount cars' rentals brought in
+  const om = useOwnerMoney();
   const totalSpend = (c: Customer) =>
-    getHistory(c).reduce((sum, b) => sum + b.paidAmount, 0);
+    getHistory(c).filter((b) => !om.hides(b)).reduce((sum, b) => sum + b.paidAmount, 0);
 
   // Summary stats
   const totalCustomers = customers.length;
@@ -336,12 +339,14 @@ export default function Customers() {
 
                               {/* Amount */}
                               <div className="text-right flex-shrink-0 mr-2">
+                                {om.hides(b) ? <p className="text-[10px] font-semibold text-violet-700" title={om.why(b)}>{om.label(b)}</p> : <>
                                 <p className="text-xs font-bold text-navy-800">Rs {b.totalAmount.toLocaleString()}</p>
                                 {balance > 0 ? (
                                   <p className="text-[10px] text-red-500">Bal: Rs {balance.toLocaleString()}</p>
                                 ) : (
                                   <p className="text-[10px] text-emerald-600">Settled</p>
                                 )}
+                                </>}
                               </div>
 
                               {/* Status */}
@@ -363,7 +368,7 @@ export default function Customers() {
                         <div className="flex items-center justify-between px-3 py-2 border-t border-navy-100 mt-1">
                           <span className="text-xs text-navy-400">{history.length} rental{history.length !== 1 ? 's' : ''} total</span>
                           <span className="text-xs font-bold text-navy-700">
-                            Rs {history.reduce((s, b) => s + b.totalAmount, 0).toLocaleString()} gross
+                            Rs {history.filter((b) => !om.hides(b)).reduce((s, b) => s + b.totalAmount, 0).toLocaleString()} gross
                             <span className="font-normal text-navy-400 ml-1">
                               · Rs {spend.toLocaleString()} paid
                             </span>

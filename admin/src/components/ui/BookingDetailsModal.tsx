@@ -1,4 +1,6 @@
 import { channelOf, referrerOf } from '../../lib/channels';
+import { useOwnerMoney } from '../../lib/ownerMoney';
+import { HIDDEN_CONTACT, maskName, useCustomerPrivacy } from '../../lib/ownerPrivacy';
 import { referralFeeWorking } from '../../lib/referral';
 import { useCompanyFinance } from '../../lib/companyFinance';
 import { companyShareOf, shareBaseOf, shareBaseParts, shareWorking } from '../../lib/companyShare';
@@ -6,6 +8,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, ArrowLeftRight, ArrowRight, CalendarPlus, Camera, CheckCircle, ClipboardList, Copy, CreditCard, ExternalLink, FileSignature,
   FileText, History, Loader2, Receipt, MessageCircle, MessageSquare, Pencil, Phone, PlayCircle, Plus, Printer, ShieldAlert, ShieldCheck, Star, Trash2, Upload, Wallet, XCircle,
+  UserRound,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Modal from './Modal';
@@ -27,7 +30,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
 import { printInvoice } from '../../lib/printInvoice';
 import {
-  CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, plainNotes, priceBreakdown, chargeLine, type PriceLine, rs, uploadBookingFile, newId, shownStatus,
+  CHECK_ITEMS, customerDetailsMessage, customerDetailsToAsk, missingInfo, parseChanges, bookingNo, deleteBookingFile, depositHeld, fileUrl, historyOf, ledgerOf, legacyAdvance, plainNotes, priceBreakdown, chargeLine, type PriceLine, rs, uploadBookingFile, newId, shownStatus,
 } from '../../lib/bookingRecord';
 import { durationLabel, UNIT, RentalType } from '../../lib/rentalPeriod';
 import { SHOP_PAID_METHOD, bookingBill, bookingCredit, bookingDue } from '../../lib/credit';
@@ -40,6 +43,7 @@ import { feedbackMessage, linkFor } from '../../pages/Feedback';
 import type {
   ActivityEntry, Booking, BookingDocument, ChargeKind, CustomerInfo, DocumentKind, HandoverChecklist, PaymentEntry, PaymentKind, RentalAgreement,
 } from '../../types';
+import { askConfirm } from '../../lib/dialog';
 
 type Tab = 'overview' | 'payments' | 'vehicle' | 'documents' | 'breakdowns' | 'history';
 const TABS: { id: Tab; label: string; icon: typeof FileText }[] = [
@@ -103,11 +107,15 @@ function useMay() {
   const staff = currentUser?.role === 'staff';
   const team = (a: Parameters<typeof can>[0]) => !staff || can(a);
   return {
-    book: team('canBook'),
-    edit: isAdmin() || (staff && can('canBook')),
+    // parts of an ability can be switched off one by one (Permissions → Team)
+    change: team('canBookEdit'),
+    cancel: team('canBookCancel'),
+    edit: isAdmin() || (staff && can('canBookEdit')),
     pay: team('canTakePayments'),
-    money: isAdmin() || (staff && can('canTakePayments')),
-    handover: team('canViewHandovers'),
+    parts: { record: team('canPayRecord'), refund: team('canPayRefund'), deposit: team('canPayDeposit'), charges: team('canPayCharges') },
+    money: isAdmin() || (staff && can('canPayCharges')),
+    pickup: team('canHandoverPickup'),
+    giveBack: team('canHandoverReturn'),
     breakdowns: isAdmin() || (staff && can('canManageBreakdowns')),
   };
 }
@@ -130,9 +138,15 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const { bookings, vehicles, owners, drivers, customers, commissions, handovers } = store;
   const { currentUser, isAdmin } = useAuthStore();
   const may = useMay();
+  const om = useOwnerMoney();
+  const cp = useCustomerPrivacy();
   const by = currentUser?.name ?? 'Staff';
   const b = bookings.find((x) => x.id === bookingId);
-  const [tab, setTab] = useState<Tab>(startTab ?? (page ? 'payments' : 'overview'));
+  const [tab, setTab] = useState<Tab>(() => {
+    const first = startTab ?? (page ? 'payments' : 'overview');
+    // an owner's fixed-amount car has no Payments tab
+    return first === 'payments' && om.hides(b) ? (page ? 'vehicle' : 'overview') : first;
+  });
   const [dialog, setDialog] = useState<null | 'pickup' | 'return' | 'recover' | 'extend' | 'swap' | 'exchange'>(null);
 
   if (!b) return null;
@@ -149,6 +163,19 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
     openWhatsApp(b.customerPhone, text);
     store.logBookingActivity(b.id, { by, type: 'Message', text: `WhatsApp: ${what}` });
   };
+  // personal booking (not company business): kept on record, left out of every company money figure — admin only
+  const setPersonal = async (on: boolean) => {
+    const lines = commissions.filter((c) => c.bookingId === b.id);
+    if (on && lines.some((c) => c.status === 'Paid' || c.settlementId)) {
+      toast.error('Already in an owner payout', "This booking's owner share is already in a prepared or paid payout. Take it out of that payout first (Owner payouts → reopen).");
+      return;
+    }
+    if (!await askConfirm(on
+      ? `Mark ${no} as a personal booking?\n\nIt stays on record and keeps the car booked, but it's left out of the company accounts, revenue, commissions, owner payouts and credit.`
+      : `Make ${no} a company booking again? Its money goes back into the accounts, revenue and owner payouts.`)) return;
+    store.logBookingActivity(b.id, { by, type: 'Edited', text: on ? 'Marked as a personal booking — left out of company money' : 'Made a company booking again' }, { personal: on });
+    toast.success(on ? 'Marked personal' : 'Company booking again', on ? 'Kept on record, left out of the company money.' : 'Counted in the company money again.');
+  };
   const copyNo = () => navigator.clipboard?.writeText(no).then(() => toast.success('Copied', no)).catch(() => undefined);
 
   const openInTab = (
@@ -159,7 +186,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   );
 
   /* ── pieces shared by the pop-up and the full page ── */
-  const contact = (
+  const contact = cp.hides(b) ? <p className="text-xs text-navy-400">{HIDDEN_CONTACT}</p> : (
     <div className="flex gap-1.5">
       <a href={`tel:${b.customerPhone}`} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Phone size={12} /> {b.customerPhone}</a>
       <button type="button" onClick={() => sendWhatsApp(buildBookingWhatsAppMsg(b, vehicle), 'booking details')} className={`${smallBtn} bg-emerald-500 text-white hover:bg-emerald-600`}><MessageCircle size={12} /> WhatsApp</button>
@@ -173,6 +200,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
       <StatusPill status={shownStatus(b)} />
       {b.rentalType && b.rentalType !== 'Daily' && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700">{b.rentalType}</span>}
       {b.insertedByAdmin && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">Owner entry</span>}
+      {b.personal && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800" title="Not company business — left out of the accounts, revenue and owner payouts">Personal</span>}
     </>
   );
   const created = `Created ${fmtDateTime(b.createdAt)} · ${referrerOf(b.referral) ?? 'Direct'}${channelOf(b) ? ` · via ${channelOf(b)}` : ''}`;
@@ -181,6 +209,12 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const critical = miss.some((i) => i.critical);
   const alerts = (
     <>
+      {b.personal && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-900 flex flex-wrap items-center gap-2">
+          <span className="flex-1 min-w-[12rem]"><b>Personal booking</b> — kept on record and the car stays booked, but it's not counted in the company accounts, revenue, commissions, owner payouts or credit.</span>
+          {isAdmin() && <button type="button" onClick={() => setPersonal(false)} className={`${smallBtn} bg-white text-violet-800 border border-violet-200 hover:bg-violet-100`}>Make it a company booking</button>}
+        </div>
+      )}
       {customer?.doNotRent && (
         <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 flex gap-2">
           <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
@@ -212,7 +246,10 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   );
 
   // on the full page the overview stays on screen, so it isn't a tab there
-  const tabs = page ? TABS.filter((x) => x.id !== 'overview') : TABS;
+  const noMoney = om.hides(b);
+  const noPeople = cp.hides(b);
+  const tabs = (page ? TABS.filter((x) => x.id !== 'overview') : TABS)
+    .filter((x) => !(noMoney && x.id === 'payments') && !(noPeople && (x.id === 'documents' || x.id === 'history')));
   const tabBar = (
     <div className={`flex gap-1 overflow-x-auto no-scrollbar border-b border-navy-100 ${page ? 'px-2' : '-mx-1 px-1'}`}>
       {tabs.map(({ id, label, icon: I }) => (
@@ -227,14 +264,14 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
   const tabContent = (
     <>
       {tab === 'overview' && overview}
-      {tab === 'payments' && <Payments b={b} by={by} canPay={may.pay} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
-      {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} canHandover={may.handover} />}
-      {tab === 'documents' && <Documents b={b} by={by} canDelete={isAdmin()} onPrintAgreement={() => {
+      {tab === 'payments' && !noMoney && <Payments b={b} by={by} canPay={may.pay} parts={may.parts} price={price} commissionPayout={b.exchanges?.length ? legsOf(b).reduce((sum, l) => sum + l.payout, 0) : mainCommission(commissions, b)?.ownerPayout} includedKm={(vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1)} extraKmRate={vehicle?.extraKmRate ?? 50} />}
+      {tab === 'vehicle' && <VehicleTab b={b} vehicle={vehicle} legacy={handovers.filter((h) => h.bookingId === b.id)} onPickup={() => setDialog('pickup')} onReturn={() => setDialog('return')} canPickup={may.pickup} canReturn={may.giveBack} />}
+      {tab === 'documents' && !noPeople && <Documents b={b} by={by} canDelete={isAdmin()} onPrintAgreement={() => {
         printBookingAgreement(b, vehicle, { owner, driverName: driver?.name, staff: by });
         store.logBookingActivity(b.id, { by, type: 'Agreement', text: 'Rental agreement printed' }, { agreement: { ...(b.agreement ?? {}), printedAt: new Date().toISOString() } });
       }} />}
       {tab === 'breakdowns' && <BookingBreakdownsTab b={b} canReport={may.breakdowns && (b.status === 'Ongoing' || b.status === 'Confirmed')} />}
-      {tab === 'history' && <HistoryTab b={b} by={by} legacy={handovers.filter((h) => h.bookingId === b.id)} />}
+      {tab === 'history' && !noPeople && <HistoryTab b={b} by={by} legacy={handovers.filter((h) => h.bookingId === b.id)} />}
     </>
   );
 
@@ -243,37 +280,38 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
     <>
       <button type="button" onClick={() => printBookingConfirmation(b, vehicle, driver)} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Printer size={13} /> Receipt</button>
       <button type="button" onClick={() => { setTab('documents'); }} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><FileSignature size={13} /> Agreement</button>
-      {may.pay && <button type="button" onClick={() => setTab('payments')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CreditCard size={13} /> Record payment</button>}
+      {may.pay && !noMoney && <button type="button" onClick={() => setTab('payments')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CreditCard size={13} /> Record payment</button>}
+      {isAdmin() && !b.personal && <button type="button" onClick={() => setPersonal(true)} title="Not company business — keep the record, leave it out of the company money" className={`${smallBtn} bg-violet-50 text-violet-800 hover:bg-violet-100`}><UserRound size={13} /> Personal</button>}
       {may.edit && <button type="button" onClick={() => onEdit(b)} className={`${smallBtn} bg-amber-100 text-amber-800 hover:bg-amber-200`}><Pencil size={13} /> Edit</button>}
       <span className="flex-1" />
       {/* the vehicle was deleted: nothing can be started, swapped or completed — the admin can delete the booking */}
       {!vehicle && isAdmin() && (
-        <button type="button" onClick={() => {
-          if (!confirm(`Delete ${b.customerName}'s booking for good? Its vehicle no longer exists. This can't be undone.`)) return;
+        <button type="button" onClick={async () => {
+          if (!await askConfirm(`Delete ${b.customerName}'s booking for good? Its vehicle no longer exists. This can't be undone.`)) return;
           onClose();
           store.deleteBooking(b.id);
         }} className="inline-flex items-center gap-1.5 rounded-xl bg-red-600 hover:bg-red-700 px-4 py-2 text-sm font-semibold text-white"><Trash2 size={15} /> Delete booking</button>
       )}
-      {vehicle && may.book && b.status === 'Confirmed' && (
+      {vehicle && may.change && b.status === 'Confirmed' && (
         <button type="button" onClick={() => setDialog('swap')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><ArrowLeftRight size={13} /> Swap vehicle</button>
       )}
-      {vehicle && may.book && b.status === 'Ongoing' && (
+      {vehicle && may.change && b.status === 'Ongoing' && (
         <button type="button" onClick={() => setDialog('exchange')} className={`${smallBtn} bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200`}><ArrowLeftRight size={13} /> Exchange vehicle</button>
       )}
-      {vehicle && may.book && b.status === 'Ongoing' && (
+      {vehicle && may.change && b.status === 'Ongoing' && (
         <button type="button" onClick={() => setDialog('extend')} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><CalendarPlus size={13} /> Extend</button>
       )}
       {vehicle && b.status === 'Confirmed' && (
         <>
-          {may.book && <button type="button" onClick={() => onCancel(b)} className={`${smallBtn} text-red-600 hover:bg-red-50 border border-red-200`}><XCircle size={13} /> Cancel</button>}
-          {may.handover && <button type="button" onClick={() => setDialog('pickup')} className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><PlayCircle size={15} /> Start rental</button>}
+          {may.cancel && <button type="button" onClick={() => onCancel(b)} className={`${smallBtn} text-red-600 hover:bg-red-50 border border-red-200`}><XCircle size={13} /> Cancel</button>}
+          {may.pickup && <button type="button" onClick={() => setDialog('pickup')} className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><PlayCircle size={15} /> Start rental</button>}
         </>
       )}
       {vehicle && b.status === 'Ongoing' && (
         <>{isAdmin() && <button type="button" onClick={() => setDialog('recover')} title="The company takes the vehicle back (non-payment, fraud…)" className={`${smallBtn} text-red-700 hover:bg-red-50 border border-red-200`}><ShieldAlert size={13} /> Recover vehicle</button>}
-        {may.handover && <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button>}</>
+        {may.giveBack && <button type="button" onClick={() => setDialog('return')} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"><CheckCircle size={15} /> Complete rental</button>}</>
       )}
-      {shownStatus(b) === 'Completed' && (
+      {shownStatus(b) === 'Completed' && !cp.hides(b) && (
         <button type="button" onClick={() => sendWhatsApp(feedbackMessage(b.customerName.trim().split(' ')[0], vehicle ? `${vehicle.brand} ${vehicle.model}` : 'your vehicle', b.startDate, b.endDate, linkFor(b.vehicleId, b.customerName)), 'review request')}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 hover:bg-navy-700 px-4 py-2 text-sm font-semibold text-white"><Star size={15} /> Ask for a review</button>
       )}
@@ -286,7 +324,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
       <div className="rounded-2xl border border-navy-100 bg-white px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <button type="button" onClick={onClose} title="All bookings" className="w-8 h-8 -ml-1 rounded-lg flex items-center justify-center text-navy-500 hover:bg-navy-50 hover:text-navy-800"><ArrowLeft size={16} /></button>
         <div className="flex flex-wrap items-center gap-2 min-w-0">{badges}</div>
-        <p className="text-lg font-bold text-navy-900 truncate">{b.customerName}</p>
+        <p className="text-lg font-bold text-navy-900 truncate">{cp.name(b)}</p>
         <p className="text-xs text-navy-400 hidden xl:block">{created}</p>
         <span className="flex-1" />
         {contact}
@@ -307,7 +345,7 @@ export default function BookingDetailsModal({ bookingId, onClose, onEdit, onCanc
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">{badges}</div>
-            <p className="text-xl font-bold text-navy-900 mt-1">{b.customerName}</p>
+            <p className="text-xl font-bold text-navy-900 mt-1">{cp.name(b)}</p>
             <p className="text-xs text-navy-400">{created}</p>
           </div>
           {contact}
@@ -379,6 +417,11 @@ function Overview({ b, by, price, extra, narrow }: {
 }) {
   const { logBookingActivity, editBooking, clearCredit, vehicles: allVehicles } = useStore();
   const may = useMay();
+  // an owner's fixed-amount car: no rental amounts (they're paid the fixed amount whatever it earns)
+  const om = useOwnerMoney();
+  const hideMoney = om.hides(b);
+  // an owner: the company's customer as first name + initials, no contact details or documents
+  const hidePeople = useCustomerPrivacy().hides(b);
   const { vehicle, owner, driver } = extra;
   const moneyIn = ledgerOf(b).filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
   const credit = bookingCredit(b);
@@ -444,7 +487,7 @@ function Overview({ b, by, price, extra, narrow }: {
         <KV k="Driver" v={driver ? `${driver.name} · ${driver.phone}` : 'Self drive'} />
         <KV k="Pickup" v={<>{fmtDate(b.startDate)} {fmtTime(b.startTime)}<br /><span className="text-navy-400 font-normal">{b.pickupLocation || 'Location not set'}</span></>} />
         <KV k="Return" v={<>{fmtDate(b.endDate)} {fmtTime(b.endTime)}<br /><span className="text-navy-400 font-normal">{b.dropLocation || b.pickupLocation || 'Location not set'}</span></>} />
-        <KV k="Length" v={`${durationLabel(b)}${type !== 'Daily' && b.unitRate ? ` × ${rs(b.unitRate)} ${UNIT[type].rate}` : ''}`} />
+        <KV k="Length" v={`${durationLabel(b)}${type !== 'Daily' && b.unitRate && !hideMoney ? ` × ${rs(b.unitRate)} ${UNIT[type].rate}` : ''}`} />
         {(b.checklists?.pickup || b.checklists?.return) && (() => {
           // after a mid-trip exchange the booking's pickup is the replacement's — the trip began with the first car
           const out = b.exchanges?.[0]?.pickup ?? b.checklists?.pickup;
@@ -459,6 +502,11 @@ function Overview({ b, by, price, extra, narrow }: {
         <p className={`text-xs font-semibold mt-2 ${t.tone === 'warn' ? 'text-red-600' : t.tone === 'live' ? 'text-emerald-700' : t.tone === 'soon' ? 'text-sky-700' : 'text-navy-400'}`}>{t.text}</p>
       </Card>
 
+      {hideMoney ? (
+        <Card title="Price" icon={Wallet}>
+          <p className="text-sm text-violet-800"><b>{om.label(b)}.</b> {om.why(b)}.</p>
+        </Card>
+      ) : (
       <Card title="Price" icon={Wallet}>
         <PriceLines lines={price.lines} />
         {unlistedLeftover && (
@@ -511,7 +559,14 @@ function Overview({ b, by, price, extra, narrow }: {
           )}
         </div>
       </Card>
+      )}
 
+      {hidePeople ? (
+        <Card title="Customer" icon={FileText}>
+          <p className="text-sm font-semibold text-navy-800">{maskName(b.customerName)}</p>
+          <p className="text-xs text-navy-400 mt-1">The customer's contact details and documents are kept by Ceylon Rent A Cars. {HIDDEN_CONTACT}.</p>
+        </Card>
+      ) : (
       <Card title="Customer" icon={FileText} action={!editing && <button type="button" onClick={() => setEditing(true)} className={`${smallBtn} bg-navy-50 text-navy-700 hover:bg-navy-100`}><Pencil size={11} /> Edit</button>}>
         {editing ? (
           <div className="space-y-2">
@@ -566,6 +621,7 @@ function Overview({ b, by, price, extra, narrow }: {
           </>
         )}
       </Card>
+      )}
 
       <Card title="Notes" icon={FileText}>
         <p className="text-[11px] font-semibold text-navy-400 mb-1">Booking notes</p>
@@ -623,7 +679,11 @@ function LegacySplit({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by
   const day0 = b.startDate;
   const [lines, setLines] = useState<{ kind: PaymentKind; date: string; amount: string; method: string; receiptNo: string }[]>(
     deposit ? [{ kind: 'Deposit received', date: day0, amount: String(row.amount), method: 'Cash', receiptNo: '' }]
-      : [{ kind: 'Advance', date: day0, amount: '', method: 'Cash', receiptNo: '' }, { kind: 'Payment', date: day0, amount: String(row.amount), method: 'Cash', receiptNo: '' }]);
+      : (() => { // start from what was typed on the booking: its Advance, and the rest as a payment
+          const adv = Math.min(legacyAdvance(b), row.amount);
+          return [{ kind: 'Advance' as PaymentKind, date: (b.createdAt ?? day0).slice(0, 10), amount: adv ? String(adv) : '', method: 'Cash', receiptNo: '' },
+            ...(row.amount - adv > 0 ? [{ kind: 'Payment' as PaymentKind, date: day0, amount: String(row.amount - adv), method: 'Cash', receiptNo: '' }] : [])];
+        })());
   const total = lines.reduce((s, l) => s + (Math.round(Number(l.amount) || 0)), 0);
   const left = row.amount - total;
   const set = (i: number, k: string, v: string) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
@@ -659,13 +719,15 @@ function LegacySplit({ b, row, by, onDone }: { b: Booking; row: PaymentEntry; by
   );
 }
 
-function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmRate }: {
-  b: Booking; by: string; canPay: boolean; price: ReturnType<typeof priceBreakdown>; commissionPayout?: number; includedKm: number; extraKmRate: number;
+function Payments({ b, by, canPay, parts, price, commissionPayout, includedKm, extraKmRate }: {
+  b: Booking; by: string; canPay: boolean; parts: { record: boolean; refund: boolean; deposit: boolean; charges: boolean }; price: ReturnType<typeof priceBreakdown>; commissionPayout?: number; includedKm: number; extraKmRate: number;
 }) {
   const { recordPayment, settleDeposit, addCharge, waiveCharge, vehicles, payFromDeposit } = useStore();
   const ledger = ledgerOf(b);
   const held = depositHeld(b);
-  const [pay, setPay] = useState({ kind: 'Payment' as PaymentKind, amount: price.due || 0, method: 'Cash', receiptNo: '', note: '', accountId: '' });
+  // the payment types this login may record (Permissions → Team → Payments & deposits)
+  const kinds = PAYMENT_KINDS.filter((k) => (k === 'Payment' || k === 'Advance') ? parts.record : k === 'Refund' ? parts.refund : parts.deposit);
+  const [pay, setPay] = useState({ kind: (kinds[0] ?? 'Payment') as PaymentKind, amount: price.due || 0, method: 'Cash', receiptNo: '', note: '', accountId: '' });
   const finAccounts = useCompanyFinance((s) => s.accounts);
   const methodAccounts = useCompanyFinance((s) => s.settings.methodAccounts);
   const finLoaded = useCompanyFinance((s) => s.loaded);
@@ -732,9 +794,9 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
                     <td className="px-1 text-navy-800 font-medium whitespace-nowrap">{p.kind}</td>
                     <td className="px-1 text-navy-600">{p.method}</td>
                     <td className="px-1 text-navy-500 text-xs">{[p.receiptNo, p.note].filter(Boolean).join(' · ') || '—'}
-                      {canPay && p.id.startsWith('legacy') && splitting !== p.id && (
+                      {parts.record && p.id.startsWith('legacy') && splitting !== p.id && (
                         <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-xs font-semibold text-amber-800 underline">Split into the real entries</button>)}
-                      {canPay && !p.id.startsWith('legacy') && p.method !== 'Security deposit' && p.method !== SHOP_PAID_METHOD && splitting !== p.id && (
+                      {parts.record && !p.id.startsWith('legacy') && p.method !== 'Security deposit' && p.method !== SHOP_PAID_METHOD && splitting !== p.id && (
                         <button type="button" onClick={() => setSplitting(p.id)} className="ml-2 text-[11px] text-navy-400 hover:text-navy-800 underline">Correct</button>)}</td>
                     <td className="px-1 text-navy-500 text-xs">{p.by}</td>
                     <td className={`px-1 text-right font-semibold whitespace-nowrap ${sign(p.kind) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{sign(p.kind) < 0 ? '−' : '+'}{rs(p.amount)}</td>
@@ -749,11 +811,11 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
           </div>
         )}
 
-        {!canPay && <p className="mt-3 pt-3 border-t border-navy-100 text-xs text-navy-400">Payments are recorded by Finance.</p>}
-        {canPay && <div className={`mt-3 pt-3 border-t border-navy-100 grid grid-cols-2 gap-2 items-end ${finAccounts.length ? "sm:grid-cols-7" : "sm:grid-cols-6"}`}>
+        {!kinds.length && <p className="mt-3 pt-3 border-t border-navy-100 text-xs text-navy-400">Payments are recorded by Finance.</p>}
+        {kinds.length > 0 && <div className={`mt-3 pt-3 border-t border-navy-100 grid grid-cols-2 gap-2 items-end ${finAccounts.length ? "sm:grid-cols-7" : "sm:grid-cols-6"}`}>
           <label className="text-[11px] text-navy-400 col-span-2 sm:col-span-1">Type
             <select className="input !py-1.5 text-sm mt-0.5" value={pay.kind} onChange={(e) => setPay((x) => ({ ...x, kind: e.target.value as PaymentKind, amount: e.target.value === 'Payment' ? price.due : e.target.value === 'Deposit returned' ? held : 0 }))}>
-              {PAYMENT_KINDS.map((k) => <option key={k}>{k}</option>)}
+              {kinds.map((k) => <option key={k}>{k}</option>)}
             </select>
           </label>
           <label className="text-[11px] text-navy-400">Amount (Rs)<input className="input !py-1.5 text-sm mt-0.5" type="number" min="0" value={pay.amount || ''} onChange={(e) => setPay((x) => ({ ...x, amount: Math.max(0, Number(e.target.value) || 0) }))} /></label>
@@ -780,7 +842,7 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
       <div className="grid gap-3 lg:grid-cols-2 items-start">
         <div className="space-y-3 min-w-0">
           <Card title="Security deposit" icon={ShieldCheck}>
-            {!b.depositType ? <p className="text-sm text-navy-400">No deposit recorded.{canPay && <> Use the payment form with "Deposit received" to add one.</>}</p> : (
+            {!b.depositType ? <p className="text-sm text-navy-400">No deposit recorded.{parts.deposit && <> Use the payment form with "Deposit received" to add one.</>}</p> : (
               <>
                 <KV k="Type" v={b.depositType === 'cash' ? 'Cash' : b.depositType === 'vehicle' ? 'Vehicle' : 'Other'} />
                 {b.depositType === 'cash' ? (
@@ -794,16 +856,16 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
                 ) : <KV k="Held item" v={b.depositAssetDescription} />}
                 {b.depositNotes && <p className="text-xs text-navy-500 mt-1">{b.depositNotes}</p>}
                 {/* the deposit can pay what's still owed — the rest is then returned below */}
-              {canPay && b.depositType === 'cash' && held > 0 && price.due > 0 && (
+              {parts.deposit && b.depositType === 'cash' && held > 0 && price.due > 0 && (
                 <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900 space-y-1.5">
                   <p>The customer still owes <b>{rs(price.due)}</b>. The deposit can pay <b>{rs(Math.min(held, price.due))}</b> of it{price.due > held ? ` — they pay the other ${rs(price.due - held)}` : held > price.due ? ` — ${rs(held - price.due)} of the deposit is left to return` : ''}.</p>
                   <button type="button" className={`${smallBtn} bg-amber-600 text-white hover:bg-amber-700`}
-                          onClick={() => { if (confirm(`Pay ${rs(Math.min(held, price.due))} of the bill from the ${b.customerName}'s deposit?`)) payFromDeposit(b.id, Math.min(held, price.due), by); }}>
+                          onClick={async () => { if (await askConfirm(`Pay ${rs(Math.min(held, price.due))} of the bill from the ${b.customerName}'s deposit?`)) payFromDeposit(b.id, Math.min(held, price.due), by); }}>
                     Use {rs(Math.min(held, price.due))} of the deposit for the bill
                   </button>
                 </div>
               )}
-              {canPay && b.depositType === 'cash' && held > 0 && (
+              {parts.deposit && b.depositType === 'cash' && held > 0 && (
                   <div className="mt-3 pt-3 border-t border-navy-100 space-y-2">
                     <p className="text-[11px] font-semibold text-navy-500">Settle the deposit</p>
                     <div className="grid grid-cols-3 gap-2">
@@ -834,18 +896,18 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
                     </span>
                     <span className="flex items-center gap-2 flex-shrink-0">
                       <b className={c.amount < 0 ? 'text-emerald-700' : ''}>{c.amount < 0 ? `− ${rs(-c.amount)}` : rs(c.amount)}</b>
-                      {canPay && c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">{c.amount < 0 ? 'Remove' : 'Waive'}</button>}
+                      {parts.charges && c.status === 'Charged' && <button type="button" onClick={() => waiveCharge(b.id, c.id, by)} className="text-[11px] text-navy-400 hover:text-red-600">{c.amount < 0 ? 'Remove' : 'Waive'}</button>}
                     </span>
                   </li>
                 ); })}
               </ul>
             )}
-            {kmToBill > 0 && !canPay && (
+            {kmToBill > 0 && !parts.charges && (
               <p className="mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900">
                 The return shows <b>{kmToBill.toLocaleString()} extra km</b> not on the bill yet — Finance adds the charge.
               </p>
             )}
-            {kmToBill > 0 && canPay && (
+            {kmToBill > 0 && parts.charges && (
               <button type="button" onClick={() => addCharge(b.id, { kind: 'Other', amount: kmToBill * extraKmRate, date: today(),
                         note: `Extra km: ${kmToBill.toLocaleString()} km × Rs ${extraKmRate}${billedKm ? ` (${trip!.total!.toLocaleString()} km over the trip, ${billedKm.toLocaleString()} extra km billed before)` : ''}`, by })}
                       className="w-full mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs text-amber-900 text-left">
@@ -859,7 +921,7 @@ function Payments({ b, by, canPay, price, commissionPayout, includedKm, extraKmR
                 Odometer readings of a breakdown replacement are missing, so the km of that car aren't on the bill yet — enter them on the Vehicle tab.
               </p>
             )}
-            {canPay && <><div className="grid grid-cols-2 gap-2">
+            {parts.charges && <><div className="grid grid-cols-2 gap-2">
               <select className="input !py-1.5 text-sm" value={charge.kind} onChange={(e) => setCharge((x) => ({ ...x, kind: e.target.value as ChargeKind }))}>{CHARGE_KINDS.map((k) => <option key={k}>{k}</option>)}</select>
               <input className="input !py-1.5 text-sm" type="number" min="0" placeholder="Amount (Rs)" value={charge.amount || ''} onChange={(e) => setCharge((x) => ({ ...x, amount: Math.max(0, Number(e.target.value) || 0) }))} />
               <input className="input !py-1.5 text-sm" type="date" value={charge.date} onChange={(e) => setCharge((x) => ({ ...x, date: e.target.value }))} />
@@ -993,8 +1055,8 @@ function ChecklistCard({ title, list, onRecord, recordLabel, canRecord }: { titl
   );
 }
 
-function VehicleTab({ b, vehicle, legacy, onPickup, onReturn, canHandover }: {
-  b: Booking; vehicle?: import('../../types').Vehicle; legacy: import('../../types').VehicleHandover[]; onPickup: () => void; onReturn: () => void; canHandover: boolean;
+function VehicleTab({ b, vehicle, legacy, onPickup, onReturn, canPickup, canReturn }: {
+  b: Booking; vehicle?: import('../../types').Vehicle; legacy: import('../../types').VehicleHandover[]; onPickup: () => void; onReturn: () => void; canPickup: boolean; canReturn: boolean;
 }) {
   const included = (vehicle?.includedKmPerDay ?? 100) * (b.totalDays || 1);
   const swaps = useBreakdownStore((s) => s.swaps);
@@ -1006,8 +1068,8 @@ function VehicleTab({ b, vehicle, legacy, onPickup, onReturn, canHandover }: {
   return (
     <div className="space-y-3">
       <div className="grid gap-3 md:grid-cols-2">
-        <ChecklistCard title="Pickup (handover)" list={b.checklists?.pickup} onRecord={onPickup} recordLabel="Hand over & start" canRecord={canHandover && b.status === 'Confirmed'} />
-        <ChecklistCard title="Return" list={b.checklists?.return} onRecord={onReturn} recordLabel="Receive & complete" canRecord={canHandover && b.status === 'Ongoing'} />
+        <ChecklistCard title="Pickup (handover)" list={b.checklists?.pickup} onRecord={onPickup} recordLabel="Hand over & start" canRecord={canPickup && b.status === 'Confirmed'} />
+        <ChecklistCard title="Return" list={b.checklists?.return} onRecord={onReturn} recordLabel="Receive & complete" canRecord={canReturn && b.status === 'Ongoing'} />
       </div>
       <div className={`grid gap-3 ${trip.legs.length > 1 ? "" : "md:grid-cols-2"}`}>
         <Card title="Mileage" icon={ShieldCheck}>
@@ -1107,8 +1169,8 @@ function Documents({ b, by, canDelete, onPrintAgreement }: { b: Booking; by: str
   const open = async (d: BookingDocument) => {
     try { window.open(await fileUrl(d.path), '_blank'); } catch (e) { toast.error('Could not open the file', (e as Error).message); }
   };
-  const remove = (d: BookingDocument) => {
-    if (!confirm(`Delete "${d.name}"?`)) return;
+  const remove = async (d: BookingDocument) => {
+    if (!await askConfirm(`Delete "${d.name}"?`)) return;
     deleteBookingFile(d.path);
     logBookingActivity(b.id, { by, type: 'Document', text: `${d.kind} deleted (${d.name})` }, { documents: docs.filter((x) => x.id !== d.id) });
   };

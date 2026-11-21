@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AlertCircle, ArrowRight, Camera, CheckCircle, ChevronDown, Clock, Info, Loader2, PlayCircle, Plus, Receipt, Repeat, ShieldAlert, Trash2, X } from 'lucide-react';
 import Modal from './Modal';
 import SignaturePad from './SignaturePad';
+import { shareSummary } from '../../lib/ownerTerms';
 import { useStore } from '../../store/useStore';
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
@@ -20,6 +21,7 @@ import KmReading from './KmReading';
 import { METER_LABEL, kmWithMeter, meterOf } from '../../lib/tripKm';
 import type { BdSwap } from '../../lib/breakdowns';
 import type { ReactNode } from 'react';
+import { askConfirm } from '../../lib/dialog';
 
 type CoOpt = 'booked' | 'percent' | 'amount' | 'perday' | 'none';
 
@@ -308,8 +310,16 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
   const kmCoRate = kmCo.trim() === '' ? kmCoDefault : Math.max(0, Number(kmCo) || 0);
   const kmFields = (opt: CoOpt): Pick<Booking, 'companyKmRate' | 'companyKmKm' | 'companyKmCharge'> | null =>
     opt === 'perday' && kmCharge > 0 ? { companyKmRate: kmCoRate, companyKmKm: kmMode === 'amount' ? extraKm : billKm, companyKmCharge: kmCharge } : null;
+  // option 1 is the commission agreed with the car's owner (Vehicles → How the owner is paid), when one is set;
+  // otherwise what's on the booking. It's saved only when it differs from the booking.
+  const agreed = vehicle?.ownerShare ?? null;
+  const agreedFields = agreed ? { companyShareType: agreed.type, companyShareValue: agreed.value, companyShareMin: agreed.type === 'percent_min' ? agreed.min : undefined } : null;
+  const agreedDiffers = !!agreedFields && (agreedFields.companyShareType !== b.companyShareType || agreedFields.companyShareValue !== (b.companyShareValue ?? 0)
+    || (agreedFields.companyShareMin ?? null) !== (b.companyShareType === 'percent_min' ? b.companyShareMin ?? null : null));
+  const ownerName = useStore.getState().owners.find((o) => o.id === vehicle?.ownerId)?.name ?? 'the owner';
   const fieldsOf = (opt: CoOpt): Pick<Booking, 'companyShareType' | 'companyShareValue' | 'companyShareMin'> | null =>
-    opt === 'percent' ? { companyShareType: 'percent', companyShareValue: Math.max(0, Math.min(100, Number(coPct) || 0)), companyShareMin: undefined }
+    opt === 'booked' ? (agreedDiffers ? agreedFields : null)
+    : opt === 'percent' ? { companyShareType: 'percent', companyShareValue: Math.max(0, Math.min(100, Number(coPct) || 0)), companyShareMin: undefined }
     : opt === 'amount' ? { companyShareType: 'fixed', companyShareValue: Math.max(0, Math.round(Number(coAmt) || 0)), companyShareMin: undefined }
     : opt === 'perday' ? { companyShareType: 'per_day', companyShareValue: coDayN, companyShareMin: undefined }
     : opt === 'none' ? { companyShareType: 'fixed', companyShareValue: 0, companyShareMin: undefined }
@@ -827,8 +837,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                   const rentPaid = row?.status === 'Paid';
                   const paid = rentPaid && (kmAmount === 0 || kmRow?.status === 'Paid');
                   const unpaid = (rentPaid ? 0 : row?.ownerPayout ?? 0) + (kmRow?.status === 'Paid' ? 0 : kmAmount);
-                  const markPaid = () => {
-                    if (!confirm(`Mark ${rs(unpaid)} as paid to ${carNo(w.replacementVehicleId)}'s owner?`)) return;
+                  const markPaid = async () => {
+                    if (!await askConfirm(`Mark ${rs(unpaid)} as paid to ${carNo(w.replacementVehicleId)}'s owner?`)) return;
                     addKmPayout(w);   // the extra km line is created first, so it is paid together
                     const ids = [w.commissionId, kmPayoutId(w)];
                     useStore.getState().commissions.filter((c) => ids.includes(c.id) && c.status !== 'Paid').forEach((c) => updateCommission(c.id, { status: 'Paid' }));
@@ -1039,7 +1049,8 @@ export default function HandoverModal({ booking: b, kind, onClose, onDone }: { b
                 <p className="text-xs font-semibold text-navy-700 pt-2">How does the company take its commission on this trip?</p>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <CoCard n={1} active={coOpt === 'booked'} onPick={() => setCoOpt('booked')} amount={cutFor('booked')}
-                    title="Company rate" sub={`On the booking: ${methodText(b)}`} />
+                    title={agreed ? "Owner's agreed rate" : 'Company rate'}
+                    sub={agreed ? `Agreed with ${ownerName}: ${shareSummary(agreed)}${agreedDiffers ? ` (the booking had ${methodText(b)})` : ''}` : `On the booking: ${methodText(b)}`} />
                   <CoCard n={2} active={coOpt === 'percent'} onPick={() => setCoOpt('percent')} amount={cutFor('percent')}
                     title="Custom % for this trip" sub="A percentage of the whole final bill">
                     <span className="flex items-center gap-1.5">

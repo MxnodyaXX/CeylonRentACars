@@ -95,7 +95,7 @@ export default function CreditManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered]);
 
-  if (!isAdmin() && !(currentUser?.role === 'staff' && can('canViewFinance'))) {
+  if (!isAdmin() && !(currentUser?.role === 'staff' && can('canFinanceCredit'))) {
     return (
       <div>
         <Header title="Credit Management" subtitle="Outstanding customer credit" />

@@ -8,17 +8,20 @@ import { BdIncident, READY_OUTCOMES } from '../../lib/breakdowns';
 import { uploadBookingFile } from '../../lib/bookingRecord';
 import { toast } from '../../store/useToast';
 import { Chips, ErrorLine, Field, Grid, fromLocalInput, nowLocal, when } from './bdui';
+import { askConfirm } from '../../lib/dialog';
 
 /**
  * The broken vehicle's operational status for this breakdown:
- *   UNDER MAINTENANCE (hold placed when the breakdown was reported) → admin confirms it safe → READY.
+ *   UNDER MAINTENANCE (hold placed when the breakdown was reported) → an admin (or a team member allowed
+ *   to return cars to service) confirms it safe → READY.
  * Completing a repair / replacement never does this by itself.
  */
 export default function VehicleReadiness({ i }: { i: BdIncident }) {
   const store = useBreakdownStore();
   const { vehicles } = useStore();
   const by = useAuthStore((s) => s.currentUser?.name) ?? 'Staff';
-  const isAdmin = useAuthStore((s) => s.isAdmin)();
+  // admins, and team members with "Return cars to service" (Permissions → Team); the server checks the same
+  const mayReady = useAuthStore((s) => s.isAdmin() || (s.currentUser?.role === 'staff' && s.can('canMarkVehicleReady') && s.can('canManageBreakdowns')));
   const vid = i.holdVehicleId ?? i.vehicleId;
   const v = vehicles.find((x) => x.id === vid);
   const otherHold = !i.holdVehicleId ? store.activeHold(i.vehicleId) : undefined;
@@ -39,13 +42,13 @@ export default function VehicleReadiness({ i }: { i: BdIncident }) {
     if (!outcome) { setErr('Choose the repair or inspection outcome.'); return; }
     if (outcome === 'Other' && !detail.trim()) { setErr('Describe the outcome.'); return; }
     if (!safe) { setErr('Confirm the vehicle is safe for rental.'); return; }
-    if (!confirm(`Return ${name} to service? It becomes available for bookings again.`)) return;
+    if (!await askConfirm(`Return ${name} to service? It becomes available for bookings again.`)) return;
     setBusy(true);
     for (const file of files) {   // evidence first, so it is on record with the approval
       try { store.addDocument({ incidentId: i.id, kind: 'report', name: file.name, path: await uploadBookingFile(i.bookingId, file), uploadedBy: by }); }
       catch (e) { toast.error(`${file.name} not uploaded`, (e as Error).message); }
     }
-    const e = await store.markVehicleReady(i.id, { outcome: full, safe, comments, approvedAt: fromLocalInput(at), by, isAdmin });
+    const e = await store.markVehicleReady(i.id, { outcome: full, safe, comments, approvedAt: fromLocalInput(at), by, allowed: mayReady });
     setBusy(false);
     if (e) { setErr(e); return; }
     toast.success('Vehicle ready', `${name} is back in service.`);
@@ -80,7 +83,7 @@ export default function VehicleReadiness({ i }: { i: BdIncident }) {
           <p className="font-semibold text-red-800 flex items-center gap-1.5"><ShieldAlert size={16} /> {name} — UNDER MAINTENANCE</p>
           <p className="text-red-900">Since {when(i.holdPlacedAt)} · not available for new bookings. Completing a repair or replacement doesn't change this.</p>
         </div>
-        {isAdmin && !open && <button type="button" className="btn-primary !py-1.5 text-sm inline-flex items-center gap-1.5" onClick={() => setOpen(true)}><CheckCircle2 size={14} /> Mark vehicle as ready</button>}
+        {mayReady && !open && <button type="button" className="btn-primary !py-1.5 text-sm inline-flex items-center gap-1.5" onClick={() => setOpen(true)}><CheckCircle2 size={14} /> Mark vehicle as ready</button>}
       </div>
       {open && (
         <div className="rounded-xl bg-white border border-red-100 p-3 space-y-3">

@@ -122,8 +122,9 @@ export const smsTemplates = {
     `Dear ${name}, thank you for choosing ${BRAND}. We hope you enjoyed your rental and would love your feedback${link ? `: ${link}` : '.'}`,
 
   // ── Vehicle owner ─────────────────────────────────────────────────────────
-  ownerVehicleBooked: (ownerName: string, vehicle: string, start: string, end: string, amount: number) =>
-    `Dear ${ownerName}, good news - your vehicle ${vehicle} has been booked (${start} to ${end}) for ${rs(amount)}. - ${BRAND}.`,
+  /** amount null = a fixed-amount car: the owner is not told what the rental earned */
+  ownerVehicleBooked: (ownerName: string, vehicle: string, start: string, end: string, amount: number | null) =>
+    `Dear ${ownerName}, good news - your vehicle ${vehicle} has been booked (${start} to ${end})${amount == null ? '' : ` for ${rs(amount)}`}. - ${BRAND}.`,
 
   ownerHandover: (ownerName: string, vehicle: string, action: 'handed over' | 'returned') =>
     `Dear ${ownerName}, your vehicle ${vehicle} has been ${action}.${action === 'returned' ? ' It is now back in the fleet.' : ''} - ${BRAND}.`,

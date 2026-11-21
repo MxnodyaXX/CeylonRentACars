@@ -80,6 +80,7 @@ export function buildLedger(d: Books): LedgerEntry[] {
   d.bookings.forEach((b) => {
     if (b.status === 'Cancelled' && !(b.payments ?? []).length && !b.paidAmount) return;
     if (isDuplicate(b)) return;
+    if (b.personal) return;   // a personal booking is not company money (security/28)
     // a cancelled booking's deposit goes back with the cancellation — it is never money the company holds
     const cancelled = b.status === 'Cancelled';
     const car = carOf(d, b.vehicleId);

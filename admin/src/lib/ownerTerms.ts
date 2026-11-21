@@ -1,4 +1,4 @@
-import type { OwnerTerms, Vehicle } from '../types';
+import type { OwnerShare, OwnerTerms, Vehicle } from '../types';
 
 /*
  * Fixed-amount cars: the owner gets a fixed amount (every month, or once at the end of the term) whether
@@ -21,6 +21,29 @@ export function readOwnerTerms(raw: unknown): OwnerTerms | null {
   const schedule = r.schedule === 'term' ? 'term' : 'monthly';
   if (r.type !== 'fixed' || !start || !(amount > 0) || (schedule === 'term' && !end)) return null;
   return { type: 'fixed', schedule, amount: Math.round(amount), start, end, ...(typeof r.note === 'string' && r.note.trim() ? { note: r.note.trim() } : {}) };
+}
+
+/** The agreed commission on a car (vehicles.owner_share) — anything unusable → null (the company default applies) */
+export function readOwnerShare(raw: unknown): OwnerShare | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const type = r.type as OwnerShare['type'];
+  const value = Number(r.value);
+  if (!['percent', 'percent_min', 'per_day', 'fixed'].includes(type) || !(value >= 0)) return null;
+  if ((type === 'percent' || type === 'percent_min') && value > 100) return null;
+  const min = Number(r.min);
+  if (type === 'percent_min') return { type, value, min: min >= 0 ? min : 0 };
+  return { type, value };
+}
+
+/** "15%, at least Rs 1,000 a day" · "12% of the rental" · "Rs 1,000 a day" · "Rs 5,000 a trip" · "No commission" */
+export function shareSummary(s: OwnerShare): string {
+  switch (s.type) {
+    case 'percent': return `${s.value}% of the rental`;
+    case 'percent_min': return `${s.value}%, at least ${rsN(s.min ?? 0)} a day`;
+    case 'per_day': return `${rsN(s.value)} a day`;
+    case 'fixed': return s.value === 0 ? 'No commission' : `${rsN(s.value)} a trip`;
+  }
 }
 
 /** The car's fixed terms if they cover this day */

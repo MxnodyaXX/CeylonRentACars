@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { readOwnerTerms } from './ownerTerms'
+import { readOwnerShare, readOwnerTerms } from './ownerTerms'
 import type {
   Vehicle, Owner, Booking, Inquiry, Commission,
   Expense, Driver, Notification, VehicleHandover, Customer, WeddingDetails,
@@ -49,6 +49,7 @@ function vFromDb(r: Record<string, unknown>): Vehicle {
     weddingOnly: r.wedding_only === true,
     wedding: readWedding(r.wedding_details),
     ownerTerms: readOwnerTerms(r.owner_terms),
+    ownerShare: readOwnerShare(r.owner_share),
     weddingStage: readStage(r.wedding_stage),
   }
 }
@@ -88,6 +89,7 @@ function vToDb(v: Vehicle) {
     ...(v.weddingOnly && { wedding_only: true }),
     ...(v.wedding && { wedding_details: v.wedding }),
     ...(v.ownerTerms && { owner_terms: v.ownerTerms }),
+    ...(v.ownerShare && { owner_share: v.ownerShare }),
   }
 }
 
@@ -134,6 +136,7 @@ const BOOKING_EXT: [keyof Booking, string][] = [
   ['companyShareType', 'company_share_type'], ['companyShareValue', 'company_share_value'], ['companyShareMin', 'company_share_min'],
   ['companyKmRate', 'company_km_rate'], ['companyKmKm', 'company_km_km'], ['companyKmCharge', 'company_km_charge'],
   ['priceMode', 'price_mode'], ['standardRate', 'standard_rate'], ['partDayAmount', 'part_day_amount'],
+  ['personal', 'personal'],
 ]
 function bookingExtRow(u: Partial<Booking>) {
   const row: Record<string, unknown> = {}
@@ -167,6 +170,11 @@ async function withExt(core: PromiseLike<{ error: unknown }>, id: string, ext: R
  * readings, charges, payments, history…) is still saved, and a manual booking's save chain carries on.
  */
 async function updateExt(id: string, ext: Record<string, unknown>) {
+  // an owner: through owner_update_booking() (31) — a row they can't read can't be updated directly
+  if (await isOwnerLogin()) {
+    const res = await supabase.rpc('owner_update_booking', { p_id: id, p_patch: ext })
+    if (!res.error || !/owner_update_booking|could not find the function|schema cache/i.test(res.error.message)) return res
+  }
   let rest = { ...ext }
   const missing: string[] = []
   for (let i = 0; i < 25; i++) {
@@ -258,6 +266,8 @@ function bFromDb(r: Record<string, unknown>): Booking {
     agreement: (r.agreement as Booking['agreement']) ?? undefined,
     activity: Array.isArray(r.activity) ? (r.activity as Booking['activity']) : undefined,
     internalNotes: (r.internal_notes as string) ?? undefined,
+    personal: (r.personal as boolean) || undefined,
+    enteredByOwner: (r.entered_by_owner as string) ?? undefined,
   }
 }
 
@@ -310,6 +320,8 @@ function bToDb(b: Booking) {
   if (b.creditSettled)              row.credit_settled      = b.creditSettled;
   if (b.creditResponsibility != null) row.credit_responsibility = b.creditResponsibility;
   if (b.badDebt)                    row.bad_debt            = b.badDebt;
+  // an owner's own entry (30) — set in the first save: afterwards nobody but an admin can change it
+  if (b.enteredByOwner)             row.entered_by_owner    = b.enteredByOwner;
   return row;
 }
 
@@ -503,6 +515,30 @@ async function fetchTable<T>(
 // DB API
 // ─────────────────────────────────────────────────────────────────────────────
 
+/*
+ * Owner logins (security/31_owner_privacy.sql): the bookings table gives an owner only the full rows of their own
+ * customers; every other booking on their car comes from owner_bookings() — the customer as first name + initials,
+ * no contact details, and no amounts on a fixed-amount car. Their changes go through owner_update_booking().
+ */
+async function isOwnerLogin(): Promise<boolean> {
+  const { data } = await supabase.auth.getSession()
+  return (data.session?.user?.app_metadata as { role?: string } | undefined)?.role === 'owner'
+}
+async function ownerBookings(): Promise<Booking[]> {
+  if (!(await isOwnerLogin())) return []
+  const { data, error } = await supabase.rpc('owner_bookings')
+  if (error) return []   // 31 not run yet: the bookings table still gives them everything
+  return ((data ?? []) as Record<string, unknown>[]).map(bFromDb)
+}
+/* Settings → "Show rental amounts to owners" switched OFF (security/32): an owner's payout lines come from
+   owner_commissions() — what they're paid and the status, without the rental total or company commission */
+async function ownerCommissions(): Promise<Commission[]> {
+  if (!(await isOwnerLogin())) return []
+  const { data, error } = await supabase.rpc('owner_commissions')
+  if (error) return []   // 32 not run yet: the commissions table still gives them their lines
+  return ((data ?? []) as Record<string, unknown>[]).map(cFromDb)
+}
+
 export async function dbFetchAll() {
   const [vehicles, owners, bookings, inquiries, commissions, expenses, drivers, notifications, handovers, customers] =
     await Promise.all([
@@ -517,6 +553,16 @@ export async function dbFetchAll() {
       fetchTable<VehicleHandover>('handovers', hFromDb),
       fetchTable<Customer>('customers', custFromDb),
     ])
+  // an owner's other bookings, masked (none for anyone else)
+  const [masked, payoutLines] = await Promise.all([ownerBookings(), ownerCommissions()])
+  if (payoutLines.length) {
+    const have = new Set(commissions.map((c) => c.id))
+    commissions.push(...payoutLines.filter((c) => !have.has(c.id)))
+  }
+  if (masked.length) {
+    const have = new Set(bookings.map((b) => b.id))
+    bookings.push(...masked.filter((b) => !have.has(b.id)))
+  }
   return { vehicles, owners, bookings, inquiries, commissions, expenses, drivers, notifications, handovers, customers }
 }
 
@@ -559,6 +605,7 @@ export const db = {
     if (u.webWedding !== undefined) row.web_wedding = u.webWedding
     if (u.weddingOnly !== undefined) row.wedding_only = u.weddingOnly
     if ('ownerTerms' in u) row.owner_terms = u.ownerTerms ?? null
+    if ('ownerShare' in u) row.owner_share = u.ownerShare ?? null
     if ('wedding' in u) row.wedding_details = u.wedding ?? null
     if ('weddingStage' in u) row.wedding_stage = u.weddingStage ?? null
     return inOrder(`vehicles:${id}`, () => supabase.from('vehicles').update(row).eq('id', id))
@@ -640,9 +687,16 @@ export const db = {
     if (u.referral !== undefined) row.referral = u.referral
     if (u.referralFee !== undefined) row.referral_fee = u.referralFee
     const ext = bookingExtRow(u)
-    return inOrder(`bookings:${id}`, () => Object.keys(row).length
-      ? withExt(supabase.from('bookings').update(row).eq('id', id), id, ext)
-      : updateExt(id, ext))
+    return inOrder(`bookings:${id}`, async () => {
+      // an owner: through owner_update_booking() — it keeps what they can't see (31); before 31 is run, as before
+      if (await isOwnerLogin()) {
+        const res = await supabase.rpc('owner_update_booking', { p_id: id, p_patch: { ...row, ...ext } })
+        if (!res.error || !/owner_update_booking|could not find the function|schema cache/i.test(res.error.message)) return res
+      }
+      return Object.keys(row).length
+        ? withExt(supabase.from('bookings').update(row).eq('id', id), id, ext)
+        : updateExt(id, ext)
+    })
   },
 
   // ── Inquiries ─────────────────────────────────────────────────────────────

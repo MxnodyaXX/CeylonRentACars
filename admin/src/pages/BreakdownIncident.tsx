@@ -22,6 +22,7 @@ import { toast } from '../store/useToast';
 import SolutionPanel, { SOLUTION_CHOICES } from '../components/breakdowns/SolutionPanel';
 import { ExpenseEditor, LedgerSummary, PaymentForm, PaymentList, ResponsibilityEditor, SettlementActions, openFile } from '../components/breakdowns/MoneyPanels';
 import { Chips, ErrorLine, Field, Grid, KV, Pill, Section, rs, when } from '../components/breakdowns/bdui';
+import { askConfirm, askText } from '../lib/dialog';
 
 const TABS = [
   ['overview', 'Overview', ClipboardList], ['timeline', 'Timeline', History], ['diagnosis', 'Diagnosis', Stethoscope],
@@ -207,9 +208,9 @@ function SolutionsTab({ i, sols, by, readOnly, focusId }: { i: BdIncident; sols:
   const expenses = useBreakdownStore((s) => s.expenses);
   const documents = useBreakdownStore((s) => s.documents);
   const dupes = readOnly ? [] : leftoverSolutions(sols, forIncident(expenses, i.id), forIncident(documents, i.id));
-  const tidy = () => {
+  const tidy = async () => {
     const names = dupes.map((d) => SOLUTION_LABEL[d.kind]).join(', ');
-    if (!confirm(`Remove ${dupes.length} unused solution${dupes.length === 1 ? '' : 's'} (${names})? Nothing was entered in ${dupes.length === 1 ? 'it' : 'them'}. ${dupes.length === 1 ? 'It stays' : 'They stay'} on record under "Show cancelled".`)) return;
+    if (!await askConfirm(`Remove ${dupes.length} unused solution${dupes.length === 1 ? '' : 's'} (${names})? Nothing was entered in ${dupes.length === 1 ? 'it' : 'them'}. ${dupes.length === 1 ? 'It stays' : 'They stay'} on record under "Show cancelled".`)) return;
     dupes.forEach((d) => setStatus(d.id, 'cancelled', by, { result: 'Not used — picked by mistake' }));
     toast.success('Unused solutions removed', `${dupes.length} removed from the list`);
   };
@@ -467,9 +468,9 @@ function Resolution({ i, by, isAdmin }: { i: BdIncident; by: string; isAdmin: bo
           <div className="flex flex-wrap gap-2 justify-end">
             {(i.status === 'open' || i.status === 'disputed') && <button type="button" className="btn-primary !py-1.5 text-sm" onClick={() => run(() => store.resolve(i.id, text, by))}>Mark resolved</button>}
             {i.status === 'resolved' && <button type="button" className="btn-primary !py-1.5 text-sm" onClick={() => run(() => store.close(i.id, by))}>Close incident</button>}
-            {i.status === 'open' && <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { const r = prompt('What is disputed / being investigated?'); if (r !== null) store.setDisputed(i.id, true, r, by); }}>Mark disputed</button>}
-            {i.status === 'disputed' && <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { const r = prompt('How was the dispute settled?'); if (r !== null) store.setDisputed(i.id, false, r, by); }}>Dispute settled</button>}
-            {(i.status === 'resolved' || i.status === 'closed') && <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { const r = prompt('Why reopen it?'); if (r) store.reopen(i.id, r, by); }}>Reopen</button>}
+            {i.status === 'open' && <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={async () => { const r = await askText('What is disputed / being investigated?'); if (r !== null) store.setDisputed(i.id, true, r, by); }}>Mark disputed</button>}
+            {i.status === 'disputed' && <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={async () => { const r = await askText('How was the dispute settled?'); if (r !== null) store.setDisputed(i.id, false, r, by); }}>Dispute settled</button>}
+            {(i.status === 'resolved' || i.status === 'closed') && <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={async () => { const r = await askText('Why reopen it?'); if (r) store.reopen(i.id, r, by); }}>Reopen</button>}
           </div>
         )}
         {i.resolvedAt && <p className="text-xs text-navy-500">Resolved {when(i.resolvedAt)}{i.resolution ? ` — ${i.resolution}` : ''}{i.closedAt ? ` · closed ${when(i.closedAt)}` : ''}</p>}

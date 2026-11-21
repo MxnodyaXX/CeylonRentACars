@@ -1,4 +1,5 @@
 import { Booking, Vehicle } from '../types';
+import { legsOf } from './exchange';
 
 /* ─────────────────────────────────────────────────────────────────────────
    Revenue = money actually earned. The gross bill is `totalAmount`; any
@@ -11,7 +12,8 @@ import { Booking, Vehicle } from '../types';
    after the booking is created, so the rolled-up field can't track it).
    ──────────────────────────────────────────────────────────────────────── */
 
-const isActive = (b: Booking) => b.status !== 'Cancelled';
+// cancelled bookings and personal ones (not company business) earn the company nothing
+const isActive = (b: Booking) => b.status !== 'Cancelled' && !b.personal;
 
 /** Gross bill for a booking, before any discount (cancelled = 0). */
 export const bookingGross = (b: Booking): number => (isActive(b) ? b.totalAmount : 0);
@@ -38,9 +40,23 @@ export const netRevenue = (bookings: Booking[]): number =>
 export const vehicleDiscount = (vehicleId: string, bookings: Booking[]): number =>
   bookings.reduce((s, b) => (b.vehicleId === vehicleId ? s + bookingDiscount(b) : s), 0);
 
-/** Net revenue for one vehicle = its gross rollup minus its discounts. */
+/**
+ * Net revenue for one vehicle: the FINAL bills of its bookings (rent + extra charges − deductions − discount),
+ * worked out from the bookings themselves. The stored `vehicle.revenue` rollup only ever adds the rent, so
+ * extra km and other charges were missing from it (e.g. rent 98,000 + extra km 66,000 showed as 98,000).
+ * After a mid-trip exchange each car counts its own part, in proportion to its share of the rent.
+ */
 export const vehicleNetRevenue = (vehicle: Vehicle, bookings: Booking[]): number =>
-  Math.max(0, vehicle.revenue - vehicleDiscount(vehicle.id, bookings));
+  Math.max(0, Math.round(bookings.reduce((s, b) => s + vehicleBillShare(vehicle.id, b), 0)));
+
+/** One car's part of a booking's final bill (0 for cancelled / personal bookings and other cars) */
+export function vehicleBillShare(vehicleId: string, b: Booking): number {
+  if (!isActive(b)) return 0;
+  const bill = b.totalAmount + (b.extraCharges ?? 0) - (b.discount ?? 0);
+  if (!b.exchanges?.length) return b.vehicleId === vehicleId ? bill : 0;
+  const rent = legsOf(b).filter((l) => l.vehicleId === vehicleId).reduce((s, l) => s + l.revenue, 0);
+  return b.totalAmount > 0 ? bill * (rent / b.totalAmount) : 0;
+}
 
 /** Net revenue summed across many vehicles. */
 export const vehiclesNetRevenue = (vehicles: Vehicle[], bookings: Booking[]): number =>

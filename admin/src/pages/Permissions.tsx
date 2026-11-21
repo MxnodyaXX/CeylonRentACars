@@ -6,6 +6,7 @@ import { ShieldCheck, ShieldOff, ToggleLeft, ToggleRight, UserPlus, Key, RotateC
 import { toast } from '../store/useToast';
 import { OwnerPermissions } from '../types/auth';
 import TeamLogins from '../components/ui/TeamLogins';
+import { askConfirm } from '../lib/dialog';
 
 // ── Permission definitions ────────────────────────────────────────────────────
 
@@ -20,9 +21,7 @@ const PAGE_PERMS: { key: keyof Omit<OwnerPermissions, 'disabled'>; label: string
   { key: 'canViewExpenses',   label: 'Expenses Page',   desc: 'See the Expenses section'                      },
   { key: 'canViewHandovers',  label: 'Handovers Page',  desc: 'See vehicle handover records'                  },
   { key: 'canViewDrivers',    label: 'Drivers Page',    desc: 'See the Drivers section'                       },
-  { key: 'canViewCustomers',  label: 'Customers Page',  desc: 'See the Customers section'                     },
   { key: 'canViewReferrals',  label: 'Referrals Page',  desc: 'See the Referrals section'                     },
-  { key: 'canViewInquiries',  label: 'Inquiries Page',  desc: 'See customer inquiries'                        },
   { key: 'canViewIncomplete', label: 'Incomplete Page', desc: 'See incomplete / draft processes'              },
 ];
 
@@ -82,7 +81,7 @@ export default function Permissions() {
     setBusy(null);
   };
   const reset = async (ownerId: string, userId: string, username: string) => {
-    if (!confirm(`Give ${username} a new temporary password? Their current password stops working.`)) return;
+    if (!await askConfirm(`Give ${username} a new temporary password? Their current password stops working.`)) return;
     setBusy(ownerId);
     const pin = await resetPassword(userId);
     if (pin) setFresh((x) => ({ ...x, [ownerId]: { username, password: pin } }));
@@ -215,7 +214,7 @@ export default function Permissions() {
 
                   {/* Always-off notice */}
                   <p className="text-xs text-navy-400 pt-1">
-                    Owners never see: Owners list, Permissions, Credit Management, Settings — these are admin-only.
+                    Owners never see: Customers, Inquiries and Messages (the customers are the company's — owners see them as first name + initials, without contact details), Owners list, Permissions, Credit Management, Settings.
                   </p>
                 </div>
               )}

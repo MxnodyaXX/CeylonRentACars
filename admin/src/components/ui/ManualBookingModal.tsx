@@ -233,7 +233,8 @@ export default function ManualBookingModal({ onClose }: Props) {
   // Customer phone lookup
   useEffect(() => {
     if (form.customerPhone.length < 7) { setCustFound(null); return; }
-    const existing = customers.find((c) => c.phone === form.customerPhone);
+    // an owner doesn't get the company's stored customer details by typing a phone number (lib/ownerPrivacy)
+    const existing = currentUser?.role === 'owner' ? undefined : customers.find((c) => c.phone === form.customerPhone);
     if (existing) {
       setCustFound('found');
       const prev = lastDetails(existing.id, existing.phone);
@@ -444,8 +445,8 @@ export default function ManualBookingModal({ onClose }: Props) {
                     <User size={15} className="text-navy-500" />
                     <h3 className="text-sm font-semibold text-navy-700">Customer</h3>
                   </div>
-                  {/* New / Existing toggle */}
-                  <div className="flex items-center bg-navy-50 rounded-xl p-0.5 gap-0.5">
+                  {/* New / Existing toggle — not for an owner (the customer list is the company's) */}
+                  {currentUser?.role !== 'owner' && <div className="flex items-center bg-navy-50 rounded-xl p-0.5 gap-0.5">
                     <button
                       type="button"
                       onClick={() => { setCustomerMode('new'); setSelectedCustomerId(''); setForm((f) => ({ ...f, customerName: '', customerPhone: '', customerEmail: '', customerNIC: '', customerAddress: '' })); setCustFound(null); }}
@@ -460,7 +461,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                     >
                       <UserCheck size={12} /> Existing
                     </button>
-                  </div>
+                  </div>}
                 </div>
 
                 {customerMode === 'existing' ? (
@@ -756,6 +757,7 @@ export default function ManualBookingModal({ onClose }: Props) {
                     </Field>
                   </div>
                   <CompanyShareField className="sm:col-span-2" value={form} total={form.totalAmount} days={form.totalDays} rentalType={form.rentalType}
+              agreed={vehicles.find((v) => v.id === form.vehicleId)?.ownerShare ?? null}
                                      onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
                 </div>
               </section>

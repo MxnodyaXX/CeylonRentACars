@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { companyBookings, companyCommissions } from '../lib/personal';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
@@ -26,7 +27,10 @@ const emptyOwner = (): Omit<Owner, 'id' | 'createdAt' | 'totalEarnings' | 'pendi
 });
 
 export default function Owners() {
-  const { owners, vehicles, bookings, commissions, addOwner, updateOwner } = useStore();
+  const { owners, vehicles, bookings: allBookings, commissions: allCommissions, addOwner, updateOwner } = useStore();
+  // money here is company business only — personal bookings are left out
+  const bookings = useMemo(() => companyBookings(allBookings), [allBookings]);
+  const commissions = useMemo(() => companyCommissions(allCommissions, allBookings), [allCommissions, allBookings]);
   const { currentUser, isAdmin, can } = useAuthStore();
   // team: everyone with the Owners page sees contacts; payouts and statements are Finance's; editing is Brian's
   const team = currentUser?.role === 'staff';

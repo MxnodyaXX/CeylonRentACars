@@ -26,6 +26,7 @@ const PURPOSE_ICON: Record<string, typeof Car> = {
   'Wedding / event': PartyPopper, 'Visiting family': HeartHandshake, 'Long-term (monthly)': CalendarRange,
 };
 import type { BookingAgreement, Consultation, InquiryStage, Vehicle } from '../types';
+import { askConfirm } from '../lib/dialog';
 
 /* ---------- small building blocks ---------- */
 
@@ -412,8 +413,8 @@ export default function InquiryConsultation() {
   recordRef.current = recordChoice;
 
   /* ---------- finish ---------- */
-  const finish = () => {
-    if (todo.length && !confirm(`Still missing: ${todo.join(', ')}.\n\nMark questions that don't apply as "Not required", or "Ask later" to confirm before the quotation.\n\nFinish the consultation anyway?`)) return;
+  const finish = async () => {
+    if (todo.length && !await askConfirm(`Still missing: ${todo.join(', ')}.\n\nMark questions that don't apply as "Not required", or "Ask later" to confirm before the quotation.\n\nFinish the consultation anyway?`)) return;
     const done: Consultation = { ...c, completedAt: new Date().toISOString() };
     done.summary = buildSummary(inq, done, vehicles, fit);
     const lost = stage === 'LOST' || stage === 'CANCELLED' || stage === 'NO_RESPONSE';

@@ -3,13 +3,14 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { Siren,
   LayoutDashboard, Car, CalendarDays, MessageSquare,
   Percent, Users, Receipt, UserCheck, Bell, Settings, ShieldCheck, Truck, Contact, HandCoins, CreditCard, AlertTriangle, Globe,
-  ChevronsLeft, ChevronDown, Landmark, BookOpen, MessageCircle, Smartphone, MessageSquareHeart, Handshake, FileSignature, BadgeCheck, LucideIcon,
+  ChevronsLeft, ChevronDown, Landmark, BookOpen, MessageCircle, Smartphone, MessageSquareHeart, MessageSquareText, Handshake, FileSignature, BadgeCheck, Undo2, LucideIcon,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useStore } from '../../store/useStore';
 import { useWhatsAppUnread } from '../../lib/whatsappInbox';
 import { useAuthStore } from '../../store/useAuthStore';
 import { canOpen } from '../../lib/access';
+import { useAmountsOff, useOwnerAmounts } from '../../lib/ownerMoney';
 import { jobLabel } from '../../lib/staffRoles';
 
 type Link = { to: string; icon: LucideIcon; label: string };
@@ -22,6 +23,7 @@ const groups: { title: string; links: Link[] }[] = [
     { to: '/bookings',      icon: CalendarDays,    label: 'Bookings'    },
     { to: '/inquiries',     icon: MessageSquare,   label: 'Inquiries'   },
     { to: '/messages',      icon: MessageCircle,   label: 'Messages'    },
+    { to: '/sms-log',       icon: MessageSquareText, label: 'SMS log'   },
     { to: '/agreements',    icon: FileSignature,   label: 'e-Agreements' },
     { to: '/handovers',     icon: Truck,           label: 'Handovers'   },
     { to: '/breakdowns',    icon: Siren,           label: 'Breakdowns'  },
@@ -48,6 +50,7 @@ const groups: { title: string; links: Link[] }[] = [
     { to: '/whatsapp-setup', icon: Smartphone,     label: 'WhatsApp setup' },
     { to: '/feedback',      icon: MessageSquareHeart, label: 'Feedback' },
     { to: '/permissions',   icon: ShieldCheck,     label: 'Permissions' },
+    { to: '/changes',       icon: Undo2,           label: 'Undo changes' },
   ] },
 ];
 
@@ -83,7 +86,7 @@ export default function Sidebar() {
   const currentUser = useAuthStore((s) => s.currentUser);
   const unread      = useStore((s) =>
     s.notifications.filter((n) =>
-      !n.read && (isAdmin() || !n.ownerId || n.ownerId === currentUser?.ownerId),
+      !n.read && (isAdmin() || (!n.ownerId && currentUser?.role !== 'owner') || (!!n.ownerId && n.ownerId === currentUser?.ownerId)),
     ).length,
   );
   const draftCount  = useStore((s) => s.drafts.length);
@@ -127,10 +130,12 @@ export default function Sidebar() {
   }, []);
 
   // one list of who may open what (src/lib/access.ts) — the routes use it too
+  useOwnerAmounts((s) => s.show);   // re-draw the menu when the owner portal switch changes
+  const payoutsOnly = useAmountsOff();
   const canSee = (to: string) => canOpen(to);
 
   const visibleGroups = groups
-    .map((g) => ({ ...g, links: g.links.filter((l) => canSee(l.to)) }))
+    .map((g) => ({ ...g, links: g.links.filter((l) => canSee(l.to) && !(payoutsOnly && l.to === '/')).map((l) => (payoutsOnly && l.to === '/commissions' ? { ...l, label: 'My payouts' } : l)) }))
     .filter((g) => g.links.length > 0);
 
   // Mobile: every page the user can open, in one sideways-scrolling bar

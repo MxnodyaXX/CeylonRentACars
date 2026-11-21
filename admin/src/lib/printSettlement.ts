@@ -2,17 +2,18 @@
 import type { Owner, OwnerSettlement } from '../types';
 import { rs } from './bookingRecord';
 import { periodLabel } from './settlements';
+import { detailWithoutAmounts } from './statementText';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const day = (iso?: string) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
 const money = (n: number) => (n < 0 ? `− ${rs(-n)}` : rs(n));
 
-export function settlementHtml(s: OwnerSettlement, owner?: Owner): string {
+export function settlementHtml(s: OwnerSettlement, owner?: Owner, hideAmounts = false): string {
   const section = (title: string, kinds: string[]) => {
     const ls = s.lines.filter((l) => kinds.includes(l.kind));
     if (!ls.length) return '';
     return `<h3>${title}</h3><table><thead><tr><th>Date</th><th>Item</th><th class="num">Amount</th></tr></thead><tbody>${
-      ls.map((l) => `<tr><td>${day(l.date)}${l.carriedOver ? '<div class="muted">earlier month</div>' : ''}</td><td>${esc(l.label)}${l.detail ? `<div class="muted">${esc(l.detail)}</div>` : ''}</td><td class="num${l.amount < 0 ? ' minus' : ''}">${money(l.amount)}</td></tr>`).join('')
+      ls.map((l) => `<tr><td>${day(l.date)}${l.carriedOver ? '<div class="muted">earlier month</div>' : ''}</td><td>${esc(l.label)}${l.detail ? `<div class="muted">${esc(hideAmounts && l.kind === 'rental' ? detailWithoutAmounts(l.detail) : l.detail)}</div>` : ''}</td><td class="num${l.amount < 0 ? ' minus' : ''}">${money(l.amount)}</td></tr>`).join('')
     }</tbody></table>`;
   };
   const no = `PAY-${s.period.replace('-', '')}-${(owner?.name ?? s.ownerId).split(' ')[0].toUpperCase()}`;
@@ -58,10 +59,10 @@ export function settlementHtml(s: OwnerSettlement, owner?: Owner): string {
 }
 
 /** false when the browser blocked the window */
-export function printSettlement(s: OwnerSettlement, owner?: Owner): boolean {
+export function printSettlement(s: OwnerSettlement, owner?: Owner, hideAmounts = false): boolean {
   const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.write(settlementHtml(s, owner));
+  w.document.write(settlementHtml(s, owner, hideAmounts));
   w.document.close();
   setTimeout(() => w.print(), 300);
   return true;

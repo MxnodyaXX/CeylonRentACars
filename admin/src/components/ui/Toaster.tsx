@@ -1,5 +1,6 @@
 import { CheckCircle2, AlertTriangle, XCircle, Info, X } from 'lucide-react';
 import { useToast, ToastType } from '../../store/useToast';
+import DialogHost from './DialogHost';
 
 const styles: Record<ToastType, { icon: typeof CheckCircle2; ring: string; bar: string; iconColor: string }> = {
   success: { icon: CheckCircle2,  ring: 'border-l-emerald-500', bar: 'bg-emerald-500', iconColor: 'text-emerald-500' },
@@ -8,7 +9,12 @@ const styles: Record<ToastType, { icon: typeof CheckCircle2; ring: string; bar: 
   info:    { icon: Info,          ring: 'border-l-blue-500',    bar: 'bg-blue-500',    iconColor: 'text-blue-500' },
 };
 
+// the app's confirm / text pop-ups are drawn with the toasts, so every screen that has toasts has them
 export default function Toaster() {
+  return <><Toasts /><DialogHost /></>;
+}
+
+function Toasts() {
   const toasts  = useToast((s) => s.toasts);
   const dismiss = useToast((s) => s.dismiss);
 

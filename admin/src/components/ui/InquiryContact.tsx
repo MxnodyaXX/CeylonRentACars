@@ -5,6 +5,7 @@ import { toast } from '../../store/useToast';
 import { useAuthStore } from '../../store/useAuthStore';
 import { CHANNELS, OUTCOMES, FollowUp, addFollowUp, deleteFollowUp } from '../../lib/inquiryFollowups';
 import { prettyDate } from '../../lib/inquiryReview';
+import { askConfirm } from '../../lib/dialog';
 
 export const TONE: Record<string, string> = {
   green: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -56,7 +57,7 @@ export function ContactLog({
   };
 
   const remove = async (f: FollowUp) => {
-    if (!confirm('Delete this contact record?')) return;
+    if (!await askConfirm('Delete this contact record?')) return;
     try { await deleteFollowUp(f.id); onDeleted(f.id); }
     catch (e) { toast.error('Could not delete', (e as { message?: string })?.message ?? String(e)); }
   };

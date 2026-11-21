@@ -24,7 +24,7 @@ export function bookingDue(b: Booking): number {
  *  goes down (deductions, discount) or payments come in, the credit goes down with it.
  *  Cancelled bookings carry no credit. */
 export function bookingCredit(b: Booking): number {
-  if (b.status === 'Cancelled') return 0;
+  if (b.status === 'Cancelled' || b.personal) return 0;
   if (b.creditSettled) return 0;
   return Math.min(b.creditAmount ?? 0, Math.max(0, bookingDue(b) - (b.badDebt ?? 0)));
 }
@@ -80,7 +80,7 @@ export interface CreditRecord { booking: Booking; amount: number; settled: boole
  *  An open credit shows what is still owed on it; one fully covered by payments counts as settled. */
 export function creditRecords(bookings: Booking[]): CreditRecord[] {
   return bookings
-    .filter((b) => (b.creditAmount ?? 0) > 0 && b.status !== 'Cancelled')
+    .filter((b) => (b.creditAmount ?? 0) > 0 && b.status !== 'Cancelled' && !b.personal)
     .map((b) => {
       const open = bookingCredit(b);
       return { booking: b, amount: b.creditSettled || open === 0 ? b.creditAmount ?? 0 : open, settled: !!b.creditSettled || open === 0 };

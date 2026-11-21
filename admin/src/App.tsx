@@ -43,6 +43,9 @@ import CompanyAccounts from './pages/CompanyAccounts';
 import AgreementDesign from './pages/AgreementDesign';
 import Agreements from './pages/Agreements';
 import PaymentChecks from './pages/PaymentChecks';
+import SmsLog from './pages/SmsLog';
+import ChangeLog from './pages/ChangeLog';
+import { useOwnerAmounts } from './lib/ownerMoney';
 
 export default function App() {
   const currentUser = useAuthStore((s) => s.currentUser);
@@ -52,6 +55,7 @@ export default function App() {
   const loadAll     = useStore((s) => s.loadAll);
   const loaded      = useStore((s) => s.loaded);
   const [minDone, setMinDone] = useState(false);
+  useOwnerAmounts((s) => s.show);   // routes follow the owner portal switch
 
   useEffect(() => {
     initAuth();   // restore the saved Supabase session (if any)
@@ -64,7 +68,8 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || currentUser.mustChangePassword) return;
     loadAll();
-    const cleanup = setupRealtime(loadAll);
+    useOwnerAmounts.getState().load();
+    const cleanup = setupRealtime(() => { loadAll(); useOwnerAmounts.getState().load(); });
     return () => { cleanup?.(); };
   }, [currentUser?.id, currentUser?.mustChangePassword]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -128,8 +133,8 @@ export default function App() {
           {/* Who may open which page: src/lib/access.ts (the database enforces the same rules) */}
           <Route path="/"              element={<Dashboard />}     />
           <Route path="/vehicles"      element={<Vehicles />}      />
-          <Route path="/bookings"      element={<Bookings />}      />
-          <Route path="/bookings/:id"  element={<BookingPage />}   />
+          <Route path="/bookings"      element={allow('/bookings', <Bookings />)} />
+          <Route path="/bookings/:id"  element={allow('/bookings', <BookingPage />)} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/commissions"   element={allow('/commissions', <Commissions />)} />
           <Route path="/inquiries"     element={allow('/inquiries', <Inquiries />)} />
@@ -138,6 +143,8 @@ export default function App() {
           <Route path="/whatsapp-templates" element={isAdmin() ? <WhatsAppTemplates /> : <Navigate to="/messages" replace />} />
           <Route path="/whatsapp-setup" element={allow('/whatsapp-setup', <WhatsAppSetup />)} />
           <Route path="/messages"      element={allow('/messages', <Messages />)} />
+          <Route path="/sms-log"       element={allow('/sms-log', <SmsLog />)} />
+          <Route path="/changes"       element={allow('/changes', <ChangeLog />)} />
           <Route path="/expenses"      element={allow('/expenses', <Expenses />)} />
           <Route path="/drivers"       element={allow('/drivers', <Drivers />)} />
           <Route path="/handovers"     element={allow('/handovers', <Handovers />)} />

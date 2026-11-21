@@ -12,6 +12,7 @@ import { printPartnerAgreement } from '../lib/printPartnerAgreement';
 import { flagged, missingForApproval, type Missing } from '../lib/partnerVerification';
 import OwnerCall from '../components/partners/OwnerCall';
 import type { InspectionMethod, PartnerApplication, PartnerAppStatus, PartnerInspection } from '../types';
+import { showCopy } from '../lib/dialog';
 
 /* Vehicle owners who applied on the website ("List your vehicle"): review, inspect, agree the
    price, then approve (creates the owner, the vehicle and their login) or decline. */
@@ -176,7 +177,7 @@ function Detail({ app, onChange, onClose }: { app: PartnerApplication; onChange:
     else document.getElementById(`pa-${m.where === 'photos' ? 'docs' : m.where}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
   const copyPhone = async () => {
-    try { await navigator.clipboard.writeText(localPhone(app.phone)); toast.success('Number copied'); } catch { prompt('Copy:', localPhone(app.phone)); }
+    try { await navigator.clipboard.writeText(localPhone(app.phone)); toast.success('Number copied'); } catch { showCopy('Copy:', localPhone(app.phone)); }
   };
   const wa = `https://wa.me/${app.phone}?text=${encodeURIComponent(`Hi ${app.name.split(' ')[0]}, this is Ceylon Rent A Cars about your vehicle ${app.vehicleNumber} (${app.id}).`)}`;
   const v = app.verification;

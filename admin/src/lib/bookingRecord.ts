@@ -125,12 +125,25 @@ const netOf = (p: PaymentEntry) => (p.kind === 'Payment' || p.kind === 'Advance'
  * The ledger to show. Bookings made before the ledger existed only have totals, so the
  * money not explained by ledger entries is shown as one "recorded before the payment log" line.
  */
+const rsTxt = (n: number) => `Rs ${n.toLocaleString('en-US')}`;
+
+/** The part of the booking's typed Advance that no "Advance" log entry explains (shown inside the undated line) */
+export function legacyAdvance(b: Booking): number {
+  const logged = (b.payments ?? []).filter((p) => p.kind === 'Advance').reduce((s, p) => s + p.amount, 0);
+  const explained = (b.payments ?? []).reduce((s, p) => s + netOf(p), 0);
+  return Math.max(0, Math.min((b.advanceAmount ?? 0) - logged, bookingPaid(b) - explained));
+}
+
 export function ledgerOf(b: Booking): PaymentEntry[] {
   const list = [...(b.payments ?? [])];
   const explained = list.reduce((s, p) => s + netOf(p), 0);
   const legacy = bookingPaid(b) - explained;
   if (legacy > 0) {
-    list.unshift({ id: 'legacy', at: b.createdAt, kind: 'Payment', amount: legacy, method: b.paymentMethod ?? '—', by: '—', note: 'Recorded before the payment log' });
+    // say what the undated money is made of — the typed Advance is part of it, and would otherwise vanish into "Payment"
+    const adv = legacyAdvance(b);
+    const note = adv > 0 && adv < legacy ? `Recorded before the payment log · advance ${rsTxt(adv)} + paid ${rsTxt(legacy - adv)}`
+      : adv > 0 ? 'Recorded before the payment log · the advance' : 'Recorded before the payment log';
+    list.unshift({ id: 'legacy', at: b.createdAt, kind: adv >= legacy ? 'Advance' : 'Payment', amount: legacy, method: b.paymentMethod ?? '—', by: '—', note });
   }
   const depositLogged = list.filter((p) => p.kind === 'Deposit received').reduce((s, p) => s + p.amount, 0);
   if (b.depositType === 'cash' && (b.depositAmount ?? 0) > depositLogged) {
@@ -173,7 +186,14 @@ export const depositHeld = (b: Booking) =>
 
 /** Activity entries + the older "[Corrected …]" / "[Cancelled …]" note lines, newest first */
 export function historyOf(b: Booking): ActivityEntry[] {
-  const out: ActivityEntry[] = [...(b.activity ?? [])];
+  // Edit booking used to save each correction twice: an exact repeat (same person, type and change
+  // within a minute) is the same edit, so it is shown once
+  const out: ActivityEntry[] = [];
+  for (const a of b.activity ?? []) {
+    const t = Date.parse(a.at);
+    if (out.some((x) => x.type === a.type && x.by === a.by && x.text === a.text && Math.abs(Date.parse(x.at) - t) < 60_000)) continue;
+    out.push(a);
+  }
   out.push({ at: b.createdAt, by: b.insertedByAdmin ? 'Admin (owner entry)' : '—', type: 'Created', text: 'Booking created' });
   for (const line of (b.notes ?? '').split('\n')) {
     const m = line.match(/^\[(Corrected|Cancelled) (.+?) by (.+?): (.+)\]$/);

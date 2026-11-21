@@ -15,6 +15,7 @@ import {
   loadAgreementTemplate, pdfToPages, saveAgreementTemplate, uploadTemplateImage,
   type AgreementTemplate, type TplElement, type TplKind,
 } from '../lib/agreementTemplate';
+import { askConfirm } from '../lib/dialog';
 
 /* A scribble shown for signatures in the sample preview */
 const SAMPLE_SIG = `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60"><path d="M8 42c18-30 30-30 26-6s14-26 22-10 10 12 22-4 8 20 26 2 20-6 30 8 22-14 50-6" fill="none" stroke="#1d3c8f" stroke-width="3" stroke-linecap="round"/></svg>')}`;
@@ -286,7 +287,7 @@ export default function AgreementDesign() {
   const uploadAgreement = async (files: FileList | null) => {
     if (!files?.length) return;
     const list = Array.from(files);
-    if (tpl.pages.length && !confirm(`Replace the ${tpl.pages.length} page${tpl.pages.length === 1 ? '' : 's'} with the new upload? The fields you placed stay on the same page numbers.`)) return;
+    if (tpl.pages.length && !await askConfirm(`Replace the ${tpl.pages.length} page${tpl.pages.length === 1 ? '' : 's'} with the new upload? The fields you placed stay on the same page numbers.`)) return;
     try {
       const rendered: { blob: Blob; w: number; h: number }[] = [];
       for (const f of list) {

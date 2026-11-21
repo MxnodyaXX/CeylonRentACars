@@ -4,6 +4,7 @@ import Modal from '../../components/ui/Modal';
 import Select from '../../components/ui/Select';
 import { useStore } from '../../store/useStore';
 import { bestSpelling, nameKey, referrerOf } from '../../lib/channels';
+import { askConfirm } from '../../lib/dialog';
 
 /*
  * Commissions → "Fix names": every spelling typed as a referrer, with how many bookings use it.
@@ -36,8 +37,8 @@ export default function ReferralNamesFix({ onClose }: { onClose: () => void }) {
     ...owners.map((o) => ({ value: o.name, label: o.name, sub: 'Vehicle owner' })),
     ...spellings.filter((s) => !s.owner).map((s) => ({ value: s.name, label: s.name, sub: `${s.count} booking${s.count === 1 ? '' : 's'}` })),
   ];
-  const merge = (from: string[], to: string) => {
-    if (!confirm(`Change "${from.join('", "')}" to "${to}" on every booking and payout line?`)) return;
+  const merge = async (from: string[], to: string) => {
+    if (!await askConfirm(`Change "${from.join('", "')}" to "${to}" on every booking and payout line?`)) return;
     renameReferral(from, to);
   };
 

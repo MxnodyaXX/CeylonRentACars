@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { companyCommissions } from '../../lib/personal';
 import { useStore } from '../../store/useStore';
 import StatusBadge from '../../components/ui/StatusBadge';
 import Select from '../../components/ui/Select';
@@ -13,7 +14,9 @@ import ReferralNamesFix from './ReferralNamesFix';
 import { useAuthStore } from '../../store/useAuthStore';
 
 export default function AdminView() {
-  const { commissions, bookings, vehicles, owners } = useStore();
+  const { commissions: allCommissions, bookings, vehicles, owners } = useStore();
+  // personal bookings (not company business) have no commission or payout here
+  const commissions = useMemo(() => companyCommissions(allCommissions, bookings), [allCommissions, bookings]);
 
   // Net of discounts granted on the underlying bookings.
   const totalIncome      = commissions.reduce((s, c) => {

@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { HIDDEN_CONTACT, useCustomerPrivacy } from '../lib/ownerPrivacy';
+import { FIXED_LABEL, HIDDEN_AMOUNT, useOwnerMoney } from '../lib/ownerMoney';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useBreakdownStore } from '../store/useBreakdownStore';
 import { toast } from '../store/useToast';
@@ -50,6 +52,7 @@ import {
   endOfWeek, startOfMonth, endOfMonth,
   startOfQuarter, endOfQuarter, startOfYear, endOfYear,
 } from 'date-fns';
+import { askConfirm } from '../lib/dialog';
 
 type DatePreset = 'all' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
 const DATE_PRESETS: { key: DatePreset; label: string }[] = [
@@ -169,14 +172,19 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 export default function Bookings() {
   const { vehicles, bookings, drivers, owners, customers, addBooking, isVehicleAvailable, deleteBooking } = useStore();
   // A booking whose vehicle was deleted can't be started or completed — the admin can delete it instead
-  const removeOrphan = (b: Booking) => {
-    if (confirm(`Delete ${b.customerName}'s booking for good? Its vehicle no longer exists. This can't be undone.`)) deleteBooking(b.id);
+  const removeOrphan = async (b: Booking) => {
+    if (await askConfirm(`Delete ${b.customerName}'s booking for good? Its vehicle no longer exists. This can't be undone.`)) deleteBooking(b.id);
   };
   const { currentUser, isAdmin, can } = useAuthStore();
   // team members: only what their abilities cover (owners and admins as before)
   const staffLogin = currentUser?.role === 'staff';
-  const mayHandover = !staffLogin || can('canViewHandovers');
-  const mayBook = !staffLogin || can('canBook');
+  // an owner doesn't see what their fixed-amount cars' rentals earn
+  const om = useOwnerMoney();
+  // an owner sees the company's customers as first name + initials, no phone (lib/ownerPrivacy)
+  const cp = useCustomerPrivacy();
+  const mayPickup = !staffLogin || can('canHandoverPickup');
+  const mayReturn = !staffLogin || can('canHandoverReturn');
+  const mayCancel = !staffLogin || can('canBookCancel');
   const location = useLocation();
 
   const [tab,               setTab]               = useState<BookingStatus | 'All'>('All');
@@ -329,6 +337,8 @@ export default function Bookings() {
     if (vehicleFilter && b.vehicleId !== vehicleFilter) return false;
     if (yearFilter && !b.startDate?.startsWith(yearFilter)) return false;
     if (monthFilter && b.startDate?.slice(5, 7) !== monthFilter) return false;
+    // a price filter never matches a booking whose amount the owner can't see (it would give the amount away)
+    if ((priceMin || priceMax) && om.hides(b)) return false;
     const price = bookingBill(b);
     if (priceMin && price < Number(priceMin)) return false;
     if (priceMax && price > Number(priceMax)) return false;
@@ -576,7 +586,7 @@ export default function Bookings() {
       .filter((b) => b.status !== 'Cancelled')
       .map((b) => ({
         id:    b.id,
-        title: `${vehicles.find((v) => v.id === b.vehicleId)?.brand ?? ''} — ${b.customerName}`,
+        title: `${vehicles.find((v) => v.id === b.vehicleId)?.brand ?? ''} — ${cp.name(b)}`,
         start: new Date(b.startDate),
         end:   new Date(b.endDate),
         resource: b,
@@ -608,7 +618,7 @@ export default function Bookings() {
   });
 
   const onSelectSlot = useCallback((slot: SlotInfo) => {
-    if (!can('canBook') && !isAdmin()) return;
+    if (!can('canBookCreate') && !isAdmin()) return;
     const d = format(slot.start, 'yyyy-MM-dd');
     openAdd(d);
   }, [can, isAdmin]);
@@ -689,7 +699,7 @@ export default function Bookings() {
           >
             <SearchIcon size={15} /> Check Availability
           </button>
-          {(isAdmin() || can('canBook')) && (
+          {(isAdmin() || can('canBookCreate')) && (
             <button
               onClick={() => openAdd()}
               className="btn-primary flex items-center gap-2"
@@ -917,9 +927,9 @@ export default function Bookings() {
             vehicle,
             owner: owners.find((o) => o.id === vehicle?.ownerId),
             onOpen: () => { setSelected(b); setModal('view'); },
-            onStart: mayHandover ? () => setHandover({ booking: b, kind: 'pickup' }) : undefined,
-            onComplete: mayHandover ? () => setHandover({ booking: b, kind: 'return' }) : undefined,
-            onCancel: mayBook ? () => setCancelling(b) : undefined,
+            onStart: mayPickup ? () => setHandover({ booking: b, kind: 'pickup' }) : undefined,
+            onComplete: mayReturn ? () => setHandover({ booking: b, kind: 'return' }) : undefined,
+            onCancel: mayCancel ? () => setCancelling(b) : undefined,
             onRemove: isAdmin() ? () => removeOrphan(b) : undefined,
           };
         };
@@ -937,17 +947,18 @@ export default function Bookings() {
               onClick={() => { setSelected(b); setModal('view'); }}
             >
               <div className="flex items-start justify-between gap-1">
-                <p className="text-xs font-bold text-navy-800 truncate">{b.customerName}</p>
+                <p className="text-xs font-bold text-navy-800 truncate">{cp.name(b)}</p>
                 <MissingChip b={b} compact />
               </div>
               <p className="text-[10px] text-navy-400 truncate">{vehicle?.brand} {vehicle?.model} · {vehicle?.vehicleNumber}</p>
               <p className="text-[10px] text-navy-500 truncate mt-1">{short(b.startDate)} → {short(b.endDate)} · {durationLabel(b)}</p>
+              {om.hides(b) ? <p className="mt-1.5 text-[10px] font-semibold text-violet-700" title={om.why(b)}>{om.label(b)}</p> : (
               <div className="flex items-center justify-between mt-1.5">
                 <span className="text-xs font-bold text-navy-800">Rs {bookingBill(b).toLocaleString()}</span>
                 {due > 0
                   ? <span className="text-[10px] font-semibold text-red-500">Rs {due.toLocaleString()} due</span>
                   : <span className="text-[10px] font-semibold text-emerald-600">Paid</span>}
-              </div>
+              </div>)}
             </div>
           );
         };
@@ -995,7 +1006,8 @@ export default function Bookings() {
               </div>
               {groups.map((g) => {
                 const open = isOpen(g.key);
-                const live = g.list.filter((b) => b.status !== 'Cancelled');
+                const live = g.list.filter((b) => b.status !== 'Cancelled' && !om.hides(b));
+                const allFixed = g.list.length > 0 && g.list.every((b) => om.hides(b));
                 const total = live.reduce((sum, b) => sum + bookingBill(b), 0);
                 const due = live.reduce((sum, b) => sum + bookingDue(b), 0);
                 const ongoing = g.list.filter((b) => b.status === 'Ongoing').length;
@@ -1026,8 +1038,10 @@ export default function Bookings() {
                         </p>
                       </div>
                       <div className="text-right flex-shrink-0">
+                        {allFixed ? <p className="text-[11px] font-semibold text-violet-700">{om.amountsOff ? HIDDEN_AMOUNT : FIXED_LABEL}</p> : <>
                         <p className="text-sm font-bold text-navy-900">Rs {total.toLocaleString()}</p>
                         <p className={`text-[11px] font-semibold ${due > 0 ? 'text-red-500' : 'text-emerald-600'}`}>{due > 0 ? `Rs ${due.toLocaleString()} due` : 'All paid'}</p>
+                        </>}
                       </div>
                       <ChevronDown size={16} className={`text-navy-400 transition-transform duration-200 flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
                     </button>
@@ -1105,8 +1119,8 @@ export default function Bookings() {
         )}
 
         <div className="space-y-5">
-          {/* Customer mode toggle */}
-          <div className="flex gap-2 p-1 bg-navy-50 rounded-xl">
+          {/* Customer mode toggle — an owner doesn't pick from the company's customer list */}
+          {!cp.owner && <div className="flex gap-2 p-1 bg-navy-50 rounded-xl">
             <button
               type="button"
               onClick={() => { setCustomerMode('new'); setSelectedCustomer(''); setForm((f) => ({ ...f, customerName: '', customerPhone: '', customerEmail: '', customerNIC: '' })); }}
@@ -1129,7 +1143,7 @@ export default function Bookings() {
             >
               Existing Customer
             </button>
-          </div>
+          </div>}
 
           {/* Vehicle select */}
           <div>
@@ -1161,11 +1175,11 @@ export default function Bookings() {
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                       <div>
                         <p className="text-red-400 mb-0.5">Customer</p>
-                        <p className="font-semibold text-red-800">{vehicleStatus.currentHire.customerName}</p>
+                        <p className="font-semibold text-red-800">{cp.name(vehicleStatus.currentHire)}</p>
                       </div>
                       <div>
                         <p className="text-red-400 mb-0.5">Phone</p>
-                        <p className="font-semibold text-red-800">{vehicleStatus.currentHire.customerPhone || '—'}</p>
+                        <p className="font-semibold text-red-800">{cp.hides(vehicleStatus.currentHire) ? HIDDEN_CONTACT : vehicleStatus.currentHire.customerPhone || '—'}</p>
                       </div>
                       <div>
                         <p className="text-red-400 mb-0.5">Hire Period</p>
@@ -1184,7 +1198,7 @@ export default function Bookings() {
                     <div className="space-y-1">
                       {vehicleStatus.upcomingHires.map((b) => (
                         <div key={b.id} className="flex justify-between">
-                          <span className="text-amber-800 font-medium">{b.customerName}</span>
+                          <span className="text-amber-800 font-medium">{cp.name(b)}</span>
                           <span className="text-amber-700">{b.startDate} → {b.endDate}</span>
                         </div>
                       ))}
@@ -1332,7 +1346,7 @@ export default function Bookings() {
                   </div>
                   {conflict && (
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pl-1">
-                      <span className="text-red-400">Booked by</span><span className="font-semibold text-red-800">{conflict.customerName}</span>
+                      <span className="text-red-400">Booked by</span><span className="font-semibold text-red-800">{cp.name(conflict)}</span>
                       <span className="text-red-400">Booked period</span><span className="font-semibold text-red-800">{conflict.startDate}{conflict.startTime ? ` ${fmt12(conflict.startTime)}` : ''} → {conflict.endDate}{conflict.endTime ? ` ${fmt12(conflict.endTime)}` : ''}</span>
                       {nextFree && <><span className="text-red-400">Next free date</span><span className="font-bold text-emerald-700">{nextFree}</span></>}
                     </div>
@@ -1342,13 +1356,13 @@ export default function Bookings() {
                   )}
                   {why?.kind === 'breakdown' && (
                     <div className="text-xs pl-1 space-y-1.5">
-                      <p className="text-red-800">This car is recorded as <b>still out as a breakdown replacement</b> ({why.ref}) for {why.booking.customerName}'s hire, which runs to {at(why.untilMs)}.</p>
+                      <p className="text-red-800">This car is recorded as <b>still out as a breakdown replacement</b> ({why.ref}) for {cp.name(why.booking)}'s hire, which runs to {at(why.untilMs)}.</p>
                       <p className="text-red-700">If the car has already come back, open breakdown {why.ref} and record its return (swap back or "Trip ended"). The dates will then free up.</p>
                     </div>
                   )}
                   {why?.kind === 'booking' && (
                     <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pl-1">
-                      <span className="text-red-400">Booked by</span><span className="font-semibold text-red-800">{why.booking.customerName}{why.viaExchange ? ' (vehicle exchange)' : ''}</span>
+                      <span className="text-red-400">Booked by</span><span className="font-semibold text-red-800">{cp.name(why.booking)}{why.viaExchange ? ' (vehicle exchange)' : ''}</span>
                       <span className="text-red-400">Holds this car</span><span className="font-semibold text-red-800">{at(why.fromMs)} → {at(why.untilMs)}</span>
                     </div>
                   )}
@@ -1511,6 +1525,7 @@ export default function Bookings() {
 
             {/* the company's commission (no referral fees — all commission is the company's) */}
             <CompanyShareField className="sm:col-span-2" value={form} total={form.totalAmount} days={form.totalDays} rentalType={form.rentalType}
+              agreed={vehicles.find((v) => v.id === form.vehicleId)?.ownerShare ?? null}
                                onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
 
             <div>

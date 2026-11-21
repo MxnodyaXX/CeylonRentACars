@@ -62,7 +62,12 @@ export interface Vehicle {
   wedding?: WeddingDetails | null;  // its wedding hire terms (wedding cars)
   weddingStage?: import('../lib/weddingStage').WeddingStage | null;   // its place on that page's podium (null = automatic)
   ownerTerms?: OwnerTerms | null;   // a fixed amount to the owner instead of a share of each rental (vehicles.owner_terms)
+  /** the commission agreed with the owner for a share of each rental (vehicles.owner_share, security/29); null = the company default */
+  ownerShare?: OwnerShare | null;
 }
+
+/** How the company takes its commission on a car's rentals, as agreed with its owner */
+export interface OwnerShare { type: 'percent' | 'percent_min' | 'per_day' | 'fixed'; value: number; min?: number }
 
 /**
  * The car is with the company for a fixed amount: the owner is paid that amount whether the car is rented or not,
@@ -287,6 +292,11 @@ export interface Booking {
   agreement?: RentalAgreement;
   activity?: ActivityEntry[];       // what happened to this booking, oldest first
   internalNotes?: string;           // staff only — never shown to the customer
+  /** A personal booking (not company business): kept on record and blocks the car, but left out of the
+   *  company accounts, revenue, commissions, owner payouts and credit (security/28_personal_bookings.sql) */
+  personal?: boolean;
+  /** the owner who entered this booking themselves (their own customer — they see the full details) (security/30) */
+  enteredByOwner?: string;
 }
 
 export type PaymentKind = 'Payment' | 'Advance' | 'Refund' | 'Deposit received' | 'Deposit returned';

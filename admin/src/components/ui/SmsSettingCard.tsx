@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, MessageSquare, MessageSquareOff } from 'lucide-
 import { getSmsSetting, saveSmsSetting, SmsSetting } from '../../lib/appSettings';
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
+import { askConfirm } from '../../lib/dialog';
 
 const fmt = (d?: string) => (d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
 
@@ -24,7 +25,7 @@ export default function SmsSettingCard() {
     const question = enabled
       ? 'Turn SMS sending back on? Texts will go out again using the sender ID set on the server.'
       : 'Pause ALL SMS? No booking confirmations, payment receipts, reminders or alerts will be texted until you turn it back on.';
-    if (!confirm(question)) return;
+    if (!await askConfirm(question)) return;
     setSaving(true);
     try {
       const s = await saveSmsSetting(enabled, note, by);

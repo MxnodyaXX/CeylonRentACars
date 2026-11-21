@@ -9,6 +9,7 @@ import { companyShareOf, setVehicleLookup, shareBaseOf } from '../lib/companySha
 import { blocksAvailability, bookingStartMs, bookingEndMs, rangesOverlap } from '../lib/availability';
 import { legsOf, mainCommission, payoutRowFor, previewExchange } from '../lib/exchange';
 import { sendSms, smsTemplates, ADMIN_PHONE } from '../lib/sms';
+import { fixedTermsOn } from '../lib/ownerTerms';
 import { toast } from './useToast';
 
 // One clear message (not one per row) when the website columns are missing in Supabase
@@ -76,6 +77,11 @@ export function unavailableReason(vehicleId: string, startDate: string, endDate:
   return bd ? { kind: 'breakdown', ...bd } : null;
 }
 
+/** An owner recording a booking themselves: their own customer (they keep seeing the full details — lib/ownerPrivacy) */
+const enteredByMe = (): Partial<Booking> => {
+  const me = useAuthStore.getState().currentUser;
+  return me?.role === 'owner' && me.ownerId ? { enteredByOwner: me.ownerId } : {};
+};
 const keepMaintenance = (vehicleId: string, next: Vehicle['status']): Vehicle['status'] =>
   useStore.getState().vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance' ? 'Maintenance' : next;
 const underMaintenance = (vehicleId: string) => useStore.getState().vehicles.find((v) => v.id === vehicleId)?.status === 'Maintenance';
@@ -338,7 +344,7 @@ export const useStore = create<AppState>()(
 
         // money taken with the booking goes into the payment log as dated entries (advance, payment, deposit)
         const by0 = useAuthStore.getState().currentUser?.name ?? 'Staff';
-        const newBooking: Booking = { ...b, id, referralFee, createdAt: now(), payments: [...(b.payments ?? []), ...openingPayments(b, by0, now())] };
+        const newBooking: Booking = { ...b, id, referralFee, createdAt: now(), payments: [...(b.payments ?? []), ...openingPayments(b, by0, now())], ...enteredByMe() };
         const vehicleUpdates = {
           status: keepMaintenance(b.vehicleId, 'Reserved'),
           revenue: (vehicle?.revenue ?? 0) + b.totalAmount,
@@ -380,7 +386,9 @@ export const useStore = create<AppState>()(
         // 2. The vehicle owner — their car was booked (income incoming)
         const vehicleOwner = get().owners.find((o) => o.id === vehicle?.ownerId);
         if (vehicleOwner?.phone) {
-          sendSms(vehicleOwner.phone, smsTemplates.ownerVehicleBooked(vehicleOwner.name, vehicleLabel, b.startDate, b.endDate, b.totalAmount),
+          sendSms(vehicleOwner.phone, smsTemplates.ownerVehicleBooked(vehicleOwner.name, vehicleLabel, b.startDate, b.endDate,
+            // a fixed-amount car: the owner is paid the same whatever it earns — no amount in the message
+            fixedTermsOn(vehicle, b.startDate) ? null : b.totalAmount),
             { category: 'ownerVehicleBooked', role: 'owner', relatedId: id, optIn: vehicleOwner.smsOptIn, transactional: true });
         }
 
@@ -774,7 +782,7 @@ export const useStore = create<AppState>()(
         // a past booking: its money is logged at the pickup time (the form can pass its own dated entries)
         const at0 = bookingData.startDate ? new Date(`${bookingData.startDate}T${bookingData.startTime || '09:00'}:00`).toISOString() : now();
         const newBooking: Booking = { ...bookingData, id: bookingId, customerId, referralFee, createdAt: now(),
-          payments: [...(bookingData.payments ?? []), ...openingPayments(bookingData, useAuthStore.getState().currentUser?.name ?? 'Admin', at0, { note: 'Entered with the manual booking' })] };
+          payments: [...(bookingData.payments ?? []), ...openingPayments(bookingData, useAuthStore.getState().currentUser?.name ?? 'Admin', at0, { note: 'Entered with the manual booking' })], ...enteredByMe() };
 
         // ── 4. Commission record ──────────────────────────────────────────
         const commissionPaid = (data as { commissionAlreadyPaid?: boolean }).commissionAlreadyPaid ?? false;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { maskName, useCustomerPrivacy } from '../../lib/ownerPrivacy';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
@@ -42,6 +43,7 @@ const vLabelOf = (vehicles: Vehicle[]) => (vehicleId: string) => {
    Placed high on the dashboard because these are time-sensitive.
    ════════════════════════════════════════════════════════════════════════ */
 export function OperationalAlerts({ vehicles, bookings }: { vehicles: Vehicle[]; bookings: Booking[] }) {
+  const cp = useCustomerPrivacy();
   const navigate = useNavigate();
   const ready = useReveal();
   const { overdue, soon, insurance } = useMemo(() => ({
@@ -63,7 +65,7 @@ export function OperationalAlerts({ vehicles, bookings }: { vehicles: Vehicle[];
             {overdue.slice(0, 5).map(({ booking: b, daysLate }) => (
               <div key={b.id} className="flex items-center justify-between gap-3 bg-red-50/60 rounded-xl px-3 py-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-navy-800 truncate">{b.customerName}</p>
+                  <p className="text-sm font-semibold text-navy-800 truncate">{cp.name(b)}</p>
                   <p className="text-[11px] text-navy-400 truncate">{vLabel(b.vehicleId)}</p>
                 </div>
                 <span className="text-[11px] font-bold text-red-600 flex-shrink-0">{daysLate}d late</span>
@@ -81,10 +83,10 @@ export function OperationalAlerts({ vehicles, bookings }: { vehicles: Vehicle[];
         ) : (
           <div className="space-y-2">
             {soon.pickups.slice(0, 3).map((b) => (
-              <UpcomingRow key={`p${b.id}`} tone="emerald" tag="Pickup" name={b.customerName} sub={vLabel(b.vehicleId)} date={b.startDate} />
+              <UpcomingRow key={`p${b.id}`} tone="emerald" tag="Pickup" name={cp.name(b)} sub={vLabel(b.vehicleId)} date={b.startDate} />
             ))}
             {soon.returns.slice(0, 3).map((b) => (
-              <UpcomingRow key={`r${b.id}`} tone="blue" tag="Return" name={b.customerName} sub={vLabel(b.vehicleId)} date={b.endDate} />
+              <UpcomingRow key={`r${b.id}`} tone="blue" tag="Return" name={cp.name(b)} sub={vLabel(b.vehicleId)} date={b.endDate} />
             ))}
           </div>
         )}
@@ -245,6 +247,8 @@ export function CustomerInsights({ bookings, inquiries, showInquiries }: {
   bookings: Booking[]; inquiries: Inquiry[]; showInquiries: boolean;
 }) {
   const navigate = useNavigate();
+  // an owner sees the company's customers as first name + initials, and has no Customers page
+  const ownerLogin = useCustomerPrivacy().owner;
   const ready = useReveal();
   const { customers, avgs, funnel } = useMemo(() => ({
     customers: customerStats(bookings),
@@ -309,14 +313,14 @@ export function CustomerInsights({ bookings, inquiries, showInquiries }: {
         )}
 
         <Panel delay={showInquiries ? 80 : 0} title="Top Customers" icon={<Users size={15} className="text-navy-500" />}
-          onClick={() => navigate('/customers')}>
+          onClick={ownerLogin ? undefined : () => navigate('/customers')}>
           {customers.top.length === 0 ? <Empty text="No customers yet." /> : (
             <div className="space-y-2">
               {customers.top.map((c, i) => (
                 <div key={c.phone} className="flex items-center gap-3 bg-navy-50/60 rounded-xl px-3 py-2">
                   <span className="w-6 h-6 rounded-lg bg-navy-700 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-navy-800 truncate">{c.name}</p>
+                    <p className="text-sm font-semibold text-navy-800 truncate">{ownerLogin ? maskName(c.name) : c.name}</p>
                     <p className="text-[11px] text-navy-400">{c.bookings} booking{c.bookings !== 1 ? 's' : ''}</p>
                   </div>
                   <span className="text-sm font-bold text-emerald-600 flex-shrink-0">{rs(c.spend)}</span>

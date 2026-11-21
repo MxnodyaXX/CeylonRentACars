@@ -7,6 +7,8 @@ import VehicleImage from './VehicleImage';
 import { vehicleBodyColor } from './CarSVG';
 import { bookingStartMs, bookingEndMs } from '../../lib/availability';
 import { bookingBill, bookingDue, bookingPaid } from '../../lib/credit';
+import { useOwnerMoney } from '../../lib/ownerMoney';
+import { HIDDEN_CONTACT, useCustomerPrivacy } from '../../lib/ownerPrivacy';
 import { durationLabel } from '../../lib/rentalPeriod';
 import { missingInfo, shownStatus } from '../../lib/bookingRecord';
 import type { Booking, Owner, Vehicle } from '../../types';
@@ -121,7 +123,19 @@ function Timing({ b }: { b: Booking }) {
   );
 }
 
+/** In place of the amounts: an owner's fixed-amount car (they don't see what its rentals earn) */
+const FixedNote = ({ b, align = 'left' }: { b: Booking; align?: 'left' | 'right' }) => {
+  const om = useOwnerMoney();
+  return <p className={`text-[11px] font-semibold text-violet-700 ${align === 'right' ? 'text-right' : ''}`} title={om.why(b)}>{om.label(b)}</p>;
+};
+
 function Money({ b, align = 'left' }: { b: Booking; align?: 'left' | 'right' }) {
+  const om = useOwnerMoney();
+  if (om.hides(b)) return <FixedNote b={b} align={align} />;
+  return <MoneyFigures b={b} align={align} />;
+}
+
+function MoneyFigures({ b, align = 'left' }: { b: Booking; align?: 'left' | 'right' }) {
   const bill = bookingBill(b), paid = bookingPaid(b), due = bookingDue(b);
   const pct = bill > 0 ? Math.min(100, (paid / bill) * 100) : 100;
   const cancelled = b.status === 'Cancelled';
@@ -200,12 +214,15 @@ function VehicleThumb({ vehicle, size = 'md' }: { vehicle?: Vehicle; size?: 'md'
 }
 
 function Customer({ b }: { b: Booking }) {
+  // an owner sees the company's customers as first name + initials, without a phone
+  const cp = useCustomerPrivacy();
   return (
     <div className="flex items-center gap-2.5 min-w-0">
       <span className="w-8 h-8 rounded-full bg-navy-100 text-navy-600 text-[11px] font-bold flex items-center justify-center flex-shrink-0">{initials(b.customerName)}</span>
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-navy-800 truncate">{b.customerName}</p>
-        <p className="text-[11px] text-navy-400 truncate flex items-center gap-1"><Phone size={10} />{b.customerPhone}</p>
+        <p className="text-sm font-semibold text-navy-800 truncate">{cp.name(b)}</p>
+        {cp.hides(b) ? <p className="text-[11px] text-navy-400 truncate">{HIDDEN_CONTACT}</p>
+          : <p className="text-[11px] text-navy-400 truncate flex items-center gap-1"><Phone size={10} />{b.customerPhone}</p>}
       </div>
     </div>
   );
@@ -273,6 +290,8 @@ export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onCom
   const tone = TONE[t.tone];
   const due = bookingDue(b);
   const cancelled = b.status === 'Cancelled';
+  const hideMoney = useOwnerMoney().hides(b);
+  const cp = useCustomerPrivacy();
   return (
     <Frame b={b} onOpen={onOpen} className="p-3 flex flex-col gap-2.5">
       {/* vehicle · status */}
@@ -286,7 +305,7 @@ export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onCom
             {vehicle ? `${vehicle.brand} ${vehicle.model}` : 'Vehicle removed'}
             <span className="ml-1.5 font-mono text-[10px] font-medium text-navy-400">{vehicle?.vehicleNumber}</span>
           </p>
-          <p className="text-[11px] text-navy-500 truncate">{b.customerName}<span className="text-navy-300"> · {b.customerPhone}</span></p>
+          <p className="text-[11px] text-navy-500 truncate">{cp.name(b)}{!cp.hides(b) && <span className="text-navy-300"> · {b.customerPhone}</span>}</p>
         </div>
         <StatusPill status={shownStatus(b)} />
       </div>
@@ -305,12 +324,14 @@ export function BookingCard({ booking: b, vehicle, owner, onOpen, onStart, onCom
       {/* money · action */}
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
+          {hideMoney ? <FixedNote b={b} /> : <>
           <span className={`text-base font-bold ${cancelled ? 'text-navy-300 line-through' : 'text-navy-900'}`}>{rs(bookingBill(b))}</span>
           {!cancelled && (
             <span className={`ml-1.5 text-[11px] font-semibold ${due > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
               {due > 0 ? `${rs(due)} due` : 'Paid'}
             </span>
           )}
+          </>}
         </div>
         {!vehicle && onRemove ? <RemoveButton onRemove={onRemove} /> : <Action b={b} onStart={onStart} onComplete={onComplete} />}
       </div>

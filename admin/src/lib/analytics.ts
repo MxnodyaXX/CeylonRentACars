@@ -9,7 +9,8 @@ import { bookingNet, vehicleNetRevenue } from './revenue';
 
 const DAY = 86_400_000;
 const toTime = (d: string) => new Date(d).getTime();
-const isActive = (b: Booking) => b.status !== 'Cancelled';
+// personal bookings (not company business) are left out of the company figures
+const isActive = (b: Booking) => b.status !== 'Cancelled' && !b.personal;
 
 /* ── 1. Fleet utilization ──────────────────────────────────────────────────
    How busy each vehicle has been over a trailing window. Rented time is the

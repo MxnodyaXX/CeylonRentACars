@@ -731,6 +731,145 @@ vN = (await db.query("select * from vehicles where id = 'vN3'")).rows[0];
 ok(Number(vN.daily_rent) === 5500 && Number(vN.extra_km_rate) === 45, 'with "Edit vehicle prices" too, its price is set');
 await db.exec("delete from vehicles where id in ('vN2', 'vN3')");
 
+// 27 · "Return cars to service" for a chosen team member
+await db.exec(sql('security/27_ready_by_team.sql'));
+await db.exec(sql('security/27_ready_by_team.sql'));   // safe to re-run
+const vABefore = await vStatus('vA');
+ok((await as('admin', () => tryQ(holdInc('h9')))) === null, '27: a new breakdown hold for the test');
+const ready9 = (who) => as(who, () => tryQ(`select breakdown_mark_vehicle_ready('h9', 'Battery replaced', true, null, null, 'Staff')`));
+claims.readyOnly = staff({ canMarkVehicleReady: true });
+ok(/Only an admin/.test((await ready9('fleet')) ?? ''), '27: "Breakdowns" alone does not return a car to service');
+ok(/Only an admin/.test((await ready9('readyOnly')) ?? ''), '27: "Return cars to service" needs "Breakdowns" as well');
+ok(/Only an admin/.test((await ready9('A')) ?? ''), '27: owners still cannot');
+ok(await vStatus('vA') === 'Maintenance', '27: still under maintenance after the refused attempts');
+claims.readier = staff({ canManageBreakdowns: true, canMarkVehicleReady: true });
+ok((await ready9('readier')) === null, '27: a team member with both returns the car to service');
+ok((await db.query("select hold_cleared_at from breakdown_incidents where id = 'h9'")).rows[0].hold_cleared_at !== null && await vStatus('vA') !== 'Maintenance', '27: the hold is cleared and the car is back');
+await db.exec(`update vehicles set status = '${vABefore}' where id = 'vA'`);
+
+// 28 · personal bookings: only an admin marks or unmarks one
+await db.exec(sql('security/28_personal_bookings.sql'));
+await db.exec(sql('security/28_personal_bookings.sql'));   // safe to re-run
+const personalOf = async (id) => (await db.query(`select personal from bookings where id = '${id}'`)).rows[0].personal;
+ok(await personalOf('bA') === false, '28: bookings are company bookings by default');
+await as('ops', () => tryQ(`update bookings set personal = true where id = 'bA'`));
+ok(await personalOf('bA') === false, '28: a team member cannot mark a booking personal (kept as it was)');
+await as('A', () => tryQ(`update bookings set personal = true where id = 'bA'`));
+ok(await personalOf('bA') === false, '28: an owner cannot either');
+ok((await as('admin', () => tryQ(`update bookings set personal = true where id = 'bA'`))) === null && await personalOf('bA') === true, '28: an admin marks it personal');
+await as('ops', () => tryQ(`update bookings set personal = false, notes = 'checked' where id = 'bA'`));
+ok(await personalOf('bA') === true && (await db.query("select notes from bookings where id = 'bA'")).rows[0].notes === 'checked', '28: a team member\'s other changes still save, the mark stays');
+await as('admin', () => tryQ(`update bookings set personal = false where id = 'bA'`));
+ok(await personalOf('bA') === false, '28: an admin makes it a company booking again');
+
+// 29 · the commission agreed with each owner: admins and Finance only
+await db.exec(sql('security/29_owner_share_terms.sql'));
+await db.exec(sql('security/29_owner_share_terms.sql'));   // safe to re-run
+const shareOf = async () => (await db.query("select owner_share from vehicles where id = 'vA'")).rows[0].owner_share;
+await as('A', () => tryQ(`update vehicles set owner_share = '{"type":"percent","value":5}' where id = 'vA'`));
+ok(await shareOf() === null, '29: an owner cannot set their own commission (kept as it was)');
+await as('ops', () => tryQ(`update vehicles set owner_share = '{"type":"percent","value":5}' where id = 'vA'`));
+ok(await shareOf() === null, '29: a team member without Finance cannot either');
+ok((await as('fin', () => tryQ(`update vehicles set owner_share = '{"type":"percent_min","value":12,"min":900}' where id = 'vA'`))) === null
+   && (await shareOf())?.value === 12, '29: Finance sets the agreed commission');
+ok(/check/i.test((await as('admin', () => tryQ(`update vehicles set owner_share = '{"type":"percent","value":150}' where id = 'vA'`))) ?? ''), '29: more than 100% is refused');
+await as('admin', () => tryQ(`update vehicles set owner_share = null where id = 'vA'`));
+ok(await shareOf() === null, '29: an admin puts it back to the company default');
+// the fix in 16/29: Finance without "Edit vehicle details" can set a fixed amount too (it was silently put back)
+// 30 · bookings an owner entered themselves
+await db.exec(sql('security/30_owner_entered_bookings.sql'));
+await db.exec(sql('security/30_owner_entered_bookings.sql'));   // safe to re-run
+const enteredOf = async (id) => (await db.query(`select entered_by_owner from bookings where id = '${id}'`)).rows[0].entered_by_owner;
+await as('A', () => tryQ(`update bookings set entered_by_owner = 'oA' where id = 'bA'`));
+ok(await enteredOf('bA') === null, '30: an owner cannot mark an existing booking as their own entry');
+await as('ops', () => tryQ(`update bookings set entered_by_owner = 'oA' where id = 'bA'`));
+ok(await enteredOf('bA') === null, '30: nor can a team member');
+ok((await as('admin', () => tryQ(`update bookings set entered_by_owner = 'oA' where id = 'bA'`))) === null && await enteredOf('bA') === 'oA', '30: an admin can set it');
+await as('admin', () => tryQ(`update bookings set entered_by_owner = null where id = 'bA'`));
+
+// (owner_terms comes from 21; when this test database doesn't have it, the column is added bare to check the guard)
+await db.exec('alter table vehicles add column if not exists owner_terms jsonb');
+await as('fin', () => tryQ(`update vehicles set owner_terms = '{"type":"fixed","schedule":"monthly","amount":80000,"start":"2026-12-01"}' where id = 'vA'`));
+ok((await db.query("select owner_terms from vehicles where id = 'vA'")).rows[0].owner_terms?.amount === 80000, '29: Finance sets a fixed amount (How the owner is paid)');
+await as('admin', () => tryQ(`update vehicles set owner_terms = null where id = 'vA'`));
+
+// 31 · what an owner's login can read
+await db.exec(sql('security/31_owner_privacy.sql'));
+await db.exec(sql('security/31_owner_privacy.sql'));   // safe to re-run
+const rowsAs = async (who, q) => (await as(who, () => db.query(q))).rows;
+ok((await rowsAs('A', "select id from bookings where id = 'bA'")).length === 0, "31: an owner can't read the raw row of a company customer's booking on their car");
+ok((await rowsAs('A', "select id from bookings where id = 'bB'")).length === 1, '31: …but can read the bookings they referred (their own customers)');
+const viewA = (await rowsAs('A', 'select owner_bookings() as j')).map((r) => r.j);
+const bAview = viewA.find((j) => j.id === 'bA');
+ok(!!bAview && bAview.customer_name === 'Customer O. A.' && bAview.customer_phone === '' && bAview.customer_nic == null && bAview.customer_info == null,
+   '31: owner_bookings() gives it as first name + initials, without phone, NIC or details');
+const bATotal = Number((await db.query("select total_amount from bookings where id = 'bA'")).rows[0].total_amount);
+ok(Number(bAview?.total_amount) === bATotal && bATotal > 0, '31: …with its amounts (a car on a share of each rental)');
+ok(!viewA.some((j) => j.id === 'bB') && !viewA.some((j) => j.vehicle_id === 'vB' && j.id !== 'bB'), "31: …and nothing of other owners' cars");
+ok((await rowsAs('A', 'select id from customers')).length === 0, "31: an owner can't read the company's customers");
+ok((await rowsAs('B', "select id from bookings where id = 'bB'")).length === 0
+   && (await rowsAs('B', 'select owner_bookings() as j')).some((r) => r.j.id === 'bB' && r.j.customer_name === 'Customer O. B.'),
+   '31: a booking on your car referred by someone else is masked for you');
+
+const before = (await db.query("select status, customer_phone, activity from bookings where id = 'bA'")).rows[0];
+await db.exec(`update bookings set activity = '[{"text":"made by the company"}]'::jsonb where id = 'bA'`);
+ok((await as('A', () => tryQ(`select owner_update_booking('bA', '{"status":"Ongoing","customer_phone":"0700000000","activity":[{"text":"picked up"}]}'::jsonb)`))) === null,
+   '31: an owner saves a change through owner_update_booking()');
+const afterA = (await db.query("select status, customer_phone, activity from bookings where id = 'bA'")).rows[0];
+ok(afterA.status === 'Ongoing' && afterA.customer_phone === before.customer_phone, "31: …the status changes, the customer's phone they can't see is kept");
+ok(afterA.activity.length === 2 && afterA.activity[0].text === 'made by the company' && afterA.activity[1].text === 'picked up', "31: …and their history entry is added to the end, not replacing it");
+ok(/not found/i.test((await as('A', () => tryQ(`select owner_update_booking('bB', '{"status":"Cancelled"}'::jsonb)`))) ?? ''), "31: an owner can't change a booking on someone else's car");
+ok(!!(await as('ops', () => tryQ(`select owner_update_booking('bA', '{"status":"Completed"}'::jsonb)`))), '31: it is for owner logins only');
+await db.exec(`update bookings set status = '${before.status}', activity = null where id = 'bA'`);
+
+// a fixed-amount car: no amounts and no payout lines for its bookings
+await as('admin', () => tryQ(`update vehicles set owner_terms = '{"type":"fixed","schedule":"monthly","amount":80000,"start":"2020-01-01"}' where id = 'vA'`));
+const fixedView = (await rowsAs('A', 'select owner_bookings() as j')).map((r) => r.j).find((j) => j.id === 'bA');
+ok(Number(fixedView?.total_amount) === 0 && fixedView?.payments == null && fixedView?.charges == null, '31: on a fixed-amount car the booking comes without its amounts');
+ok((await rowsAs('A', "select id from commissions where booking_id = 'bA'")).length === 0, "31: …and its payout line can't be read");
+await as('A', () => tryQ(`select owner_update_booking('bA', '{"total_amount":1,"status":"Confirmed"}'::jsonb)`));
+ok(Number((await db.query("select total_amount from bookings where id = 'bA'")).rows[0].total_amount) === bATotal, "31: …nor its amounts changed by the owner");
+await as('admin', () => tryQ(`update vehicles set owner_terms = null where id = 'vA'`));
+ok((await as('A', () => tryQ(`insert into bookings (id, vehicle_id, customer_id, customer_name, customer_phone, start_date, end_date, total_days, total_amount, paid_amount, status, entered_by_owner, created_at)
+  values ('bOwn', 'vA', 'cX', 'Friend of Alice', '0719999999', '${soon(300)}', '${soon(301)}', 1, 5000, 0, 'Confirmed', 'oA', '${now}')`))) === null
+   && (await rowsAs('A', "select customer_phone from bookings where id = 'bOwn'"))[0]?.customer_phone === '0719999999',
+   "31: a booking the owner enters themselves stays theirs in full (their own customer)");
+await db.exec("delete from bookings where id = 'bOwn'");
+ok((await rowsAs('A', "select id from commissions where booking_id = 'bA'")).some((r) => r.id === 'kA'), '31: back on a share of each rental, the payout line is theirs to read again');
+
+// 32 · Settings → "Show rental amounts to owners"
+await db.exec(sql('security/32_owner_amounts_switch.sql'));
+await db.exec(sql('security/32_owner_amounts_switch.sql'));   // safe to re-run
+const ownView = async () => (await rowsAs('A', 'select owner_bookings() as j')).map((r) => r.j).find((j) => j.id === 'bA');
+ok(Number((await ownView())?.total_amount) === bATotal && (await rowsAs('A', "select id from commissions where id = 'kA'")).length === 1
+   && (await rowsAs('A', 'select owner_commissions() as j')).length === 0, '32: switched on (the default), owners see amounts and payout lines as before');
+ok(!!(await as('A', () => tryQ(`update app_settings set value = '{"show": false}' where key = 'owner_amounts'`)))
+   || (await db.query("select value from app_settings where key = 'owner_amounts'")).rows[0].value.show === true, "32: an owner can't switch it");
+const seenOn = (await rowsAs('A', 'select id from commissions')).map((r) => r.id).sort();
+await as('admin', () => db.query(`update app_settings set value = '{"show": false}' where key = 'owner_amounts'`));
+ok((await db.query("select value from app_settings where key = 'owner_amounts'")).rows[0].value.show === false, '32: an admin switches rental amounts off');
+ok((await rowsAs('A', 'select owner_bookings() as j')).length === 0 && (await rowsAs('A', 'select id from bookings')).length === 0, '32: switched off (payouts only), an owner gets no bookings');
+ok((await rowsAs('B', "select id from bookings where id = 'bB'")).length === 0, "32: …not even their own customers' bookings");
+ok((await rowsAs('A', 'select id from handovers')).length === 0 && (await rowsAs('A', 'select id from expenses')).length === 0, '32: …no handovers and no expenses');
+ok((await rowsAs('A', "select id from storage.objects where bucket_id = 'booking-files'")).length === 0, '32: …and no booking files');
+ok(!!(await as('A', () => tryQ(`select owner_update_booking('bA', '{"status":"Ongoing"}'::jsonb)`)))
+   && (await as('A', () => db.query("update handovers set location = 'x' where vehicle_id = 'vA' returning id"))).rows.length === 0, '32: …nor change a booking or handover');
+ok((await rowsAs('A', "select id from commissions where id = 'kA'")).length === 0, "32: …the payout lines can't be read raw");
+const payA = (await rowsAs('A', 'select owner_commissions() as j')).map((r) => r.j).find((j) => j.id === 'kA');
+const kARaw = (await db.query("select owner_payout, status from commissions where id = 'kA'")).rows[0];
+ok(!!payA && Number(payA.owner_payout) === Number(kARaw.owner_payout) && payA.status === kARaw.status
+   && Number(payA.total_income) === 0 && Number(payA.commission_amount) === 0, '32: …owner_commissions() gives the payout and its status, not the rental total or company commission');
+ok(JSON.stringify((await rowsAs('A', 'select owner_commissions() as j')).map((r) => r.j.id).sort()) === JSON.stringify(seenOn), "32: …exactly the payout lines they could read before — nothing of other owners'");
+ok((await as('ops', () => tryQ("update bookings set notes = notes where id = 'bA'"))) === null, '32: the team still changes bookings');
+ok((await as('admin', () => ids("select id from commissions where id = 'kA'"))).length === 1, '32: admins still see everything');
+await as('admin', () => db.query(`update app_settings set value = '{"show": true}' where key = 'owner_amounts'`));
+ok(Number((await ownView())?.total_amount) === bATotal && (await rowsAs('A', "select id from commissions where id = 'kA'")).length === 1
+   && (await rowsAs('A', 'select id from handovers')).length > 0, '32: switched back on, everything is shown again');
+await db.exec(sql('security/31_owner_privacy.sql'));
+await db.exec(sql('security/rollback/32_rollback_owner_amounts_switch.sql'));
+ok((await rowsAs('A', "select id from commissions where id = 'kA'")).length === 1, '32: rollback (after re-running 31) leaves 31 as it was');
+await db.exec(sql('security/32_owner_amounts_switch.sql'));
+
 await as('fin', () => db.query("update owners set pending_payout = 100, commission_rate = 1, bank_account = 'x', phone = '1' where id = 'oA'"));
 const oA = (await db.query("select * from owners where id = 'oA'")).rows[0];
 ok(Number(oA.pending_payout) === 100, 'Finance records an owner payout');

@@ -20,6 +20,7 @@ declare
   -- run a query as a role with given JWT claims and return the single integer it selects
   procedure_dummy int;
 begin
+
   ---------------------------------------------------------------- structure
   for t in select c.relname, c.relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace
            where n.nspname = 'public' and c.relkind = 'r' order by 1 loop
@@ -114,10 +115,18 @@ begin
     execute 'set local role authenticated';
     -- explained: on one of my cars, on a booking I can see, or my own payout line
     -- (a payout stays the owner's even after the car is deleted or the booking moves to another car)
-    select count(*) into bad from public.commissions c
-      where not exists (select 1 from public.vehicles v where v.id = c.vehicle_id)
-        and not exists (select 1 from public.bookings b where b.id = c.booking_id)
-        and c.owner_id is distinct from rec.owner_id;
+    if to_regprocedure('private.sees_booking(text)') is not null then
+      -- a booking they may know about (31 gives some of them only through owner_bookings(), not as a raw row)
+      execute 'select count(*) from public.commissions c
+        where not exists (select 1 from public.vehicles v where v.id = c.vehicle_id)
+          and not private.sees_booking(c.booking_id)
+          and c.owner_id is distinct from $1' into bad using rec.owner_id;
+    else
+      select count(*) into bad from public.commissions c
+        where not exists (select 1 from public.vehicles v where v.id = c.vehicle_id)
+          and not exists (select 1 from public.bookings b where b.id = c.booking_id)
+          and c.owner_id is distinct from rec.owner_id;
+    end if;
     select count(*) into seen from public.customers;
     execute 'reset role';
     insert into security_check (area, check_name, result, detail)

@@ -10,6 +10,7 @@ import Modal from './Modal';
 import { bookingNo } from '../../lib/bookingRecord';
 import { shareBaseOf, shareWorking } from '../../lib/companyShare';
 import { KIND_LABEL, balanceDetail, heldDetail, profitRows, type Books, type LedgerEntry, type PeriodFigures, type ProfitRow } from '../../lib/ledger';
+import { askConfirm } from '../../lib/dialog';
 
 /*
  * Company accounts → click any figure: how that number was worked out, down to the bookings, accounts and
@@ -188,8 +189,8 @@ function RentalCard({ r, highlight }: { r: ProfitRow; highlight: [string, number
 function UnsettledDeposits({ rows }: { rows: { b: ProfitRow['b']; amount: number; car: string }[] }) {
   const open = useContext(OpenBooking);
   const by = useAuthStore((x) => x.currentUser?.name) ?? 'Admin';
-  const returned = (r: { b: ProfitRow['b']; amount: number }) => {
-    if (!confirm(`Was ${r.b.customerName}'s deposit of ${rs(r.amount)} given back at the end of the trip?
+  const returned = async (r: { b: ProfitRow['b']; amount: number }) => {
+    if (!await askConfirm(`Was ${r.b.customerName}'s deposit of ${rs(r.amount)} given back at the end of the trip?
 
 It is recorded as returned (cash, today's entry). If part of it was kept, open the booking and settle it there instead.`)) return;
     useStore.getState().settleDeposit(r.b.id, { returned: r.amount, deduction: 0, method: 'Cash', notes: 'Recorded later — returned at the end of the trip' }, by);

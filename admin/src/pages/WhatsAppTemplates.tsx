@@ -6,6 +6,7 @@ import { toast } from '../store/useToast';
 import { AUTO_VARS, WaTemplate, createTemplate, deleteTemplate, loadTemplates, varsIn, whatsappDemo } from '../lib/whatsappInbox';
 import { STARTER_GROUPS, STARTER_SAMPLES, Starter } from '../lib/waStarters';
 import { Rich } from '../components/ui/WhatsAppChat';
+import { askConfirm } from '../lib/dialog';
 
 const STARTERS = STARTER_GROUPS.flatMap((g) => g.items);
 const SAMPLES = STARTER_SAMPLES;
@@ -102,7 +103,7 @@ export default function WhatsAppTemplates() {
 
   const submitGroup = async (g: (typeof STARTER_GROUPS)[number]) => {
     const todo = g.items.filter((s) => !added(s));
-    if (!todo.length || !confirm(`Submit ${todo.length} template${todo.length === 1 ? '' : 's'} from "${g.title}" to Meta for approval?`)) return;
+    if (!todo.length || !await askConfirm(`Submit ${todo.length} template${todo.length === 1 ? '' : 's'} from "${g.title}" to Meta for approval?`)) return;
     setBulk({ group: g.title, done: 0, total: todo.length });
     const failed: string[] = [];
     for (const [k, s] of todo.entries()) {
@@ -119,7 +120,7 @@ export default function WhatsAppTemplates() {
   };
 
   const remove = async (t: WaTemplate) => {
-    if (!confirm(`Delete the template "${t.label}"? The name can't be reused for 30 days.`)) return;
+    if (!await askConfirm(`Delete the template "${t.label}"? The name can't be reused for 30 days.`)) return;
     try { await deleteTemplate(t.name); toast.success('Template deleted', t.label); refresh(); }
     catch (e) { toast.error('Could not delete', (e as Error).message); }
   };

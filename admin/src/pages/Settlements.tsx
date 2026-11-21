@@ -16,6 +16,7 @@ import {
   STATUS_INFO, dueMonth, leftOutOf, linesFor, payoutDate, periodLabel, shiftPeriod, totalsOf, useSettlements,
 } from '../lib/settlements';
 import type { Owner, OwnerSettlement, SettlementLine } from '../types';
+import { askConfirm, askText } from '../lib/dialog';
 
 /*
  * Finance → Owner Settlements. Once a month the company pays each owner for the rentals completed
@@ -137,7 +138,7 @@ export default function Settlements() {
   const { isAdmin, currentUser, can } = useAuthStore();
   const { list, loaded, payoutDay, from, refresh, prepare, withdraw, review, setPayoutDay } = useSettlements();
   const admin = isAdmin();
-  const mayPrepare = admin || (currentUser?.role === 'staff' && can('canViewFinance'));
+  const mayPrepare = admin || (currentUser?.role === 'staff' && can('canFinancePayouts'));
   const [period, setPeriod] = useState(dueMonth());
   const [open, setOpen] = useState<string | null>(null);
   const [paying, setPaying] = useState<string | null>(null);
@@ -177,8 +178,8 @@ export default function Settlements() {
   const [viewing, setViewing] = useState<string | null>(null);
   const navigate = useNavigate();
   // an owed-back line the owner already bore (paid it themselves / it was already taken off) — set to 0, kept for the record
-  const clearOwed = (l: SettlementLine, ownerName: string) => {
-    if (!confirm(`Remove this from ${ownerName}'s payout?
+  const clearOwed = async (l: SettlementLine, ownerName: string) => {
+    if (!await askConfirm(`Remove this from ${ownerName}'s payout?
 
 ${l.label}
 ${money(l.amount)}
@@ -258,7 +259,7 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
       {admin && pending.length > 1 && (
         <div className="flex justify-end mb-3">
           <button type="button" disabled={!!busy}
-                  onClick={() => { if (confirm(`Approve all ${pending.length} owner payouts waiting (${rs(pending.reduce((s, r) => s + r.t.net, 0))})?`)) run('all', async () => { for (const r of pending) await review(r.s!.id, true); }, 'All approved'); }}
+                  onClick={async () => { if (await askConfirm(`Approve all ${pending.length} owner payouts waiting (${rs(pending.reduce((s, r) => s + r.t.net, 0))})?`)) run('all', async () => { for (const r of pending) await review(r.s!.id, true); }, 'All approved'); }}
                   className="btn-primary inline-flex items-center gap-1.5"><CheckCircle2 size={15} /> Approve all {pending.length}</button>
         </div>
       )}
@@ -327,13 +328,13 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
                               className="btn-primary !py-1.5 text-sm inline-flex items-center gap-1.5"><Send size={14} /> {s ? 'Prepare again' : 'Send for approval'}</button>
                     )}
                     {s?.status === 'pending_approval' && mayPrepare && !admin && (
-                      <button type="button" disabled={busy === key} onClick={() => { if (confirm('Take this back to change it?')) run(key, () => withdraw(s.id), 'Taken back'); }}
+                      <button type="button" disabled={busy === key} onClick={async () => { if (await askConfirm('Take this back to change it?')) run(key, () => withdraw(s.id), 'Taken back'); }}
                               className="btn-secondary !py-1.5 text-sm inline-flex items-center gap-1.5"><Undo2 size={14} /> Take back</button>
                     )}
                     {s?.status === 'pending_approval' && admin && (
                       <>
                         <button type="button" disabled={busy === key}
-                                onClick={() => { const why = prompt('Why is it sent back? Finance sees this note.'); if (why?.trim()) run(key, () => review(s.id, false, why.trim()), 'Sent back to Finance'); }}
+                                onClick={async () => { const why = await askText('Why is it sent back? Finance sees this note.'); if (why?.trim()) run(key, () => review(s.id, false, why.trim()), 'Sent back to Finance'); }}
                                 className="btn-secondary !py-1.5 text-sm">Send back</button>
                         <button type="button" disabled={busy === key} onClick={() => run(key, () => review(s.id, true), `${owner.name}'s payout approved`)}
                                 className="btn-primary !py-1.5 text-sm inline-flex items-center gap-1.5"><CheckCircle2 size={14} /> Approve {rs(s.net)}</button>
@@ -380,7 +381,7 @@ Use this when the owner already bore it. The line stays on record at Rs 0.`)) re
                   )}
                   {x.reason === 'paid-by-hand' && mayPrepare && (
                     <button type="button" className="btn-secondary !py-1.5 text-xs"
-                            onClick={() => { if (confirm(`Was ${o?.name ?? 'the owner'} NOT actually paid ${rs(x.amount)} for this? It will be included in the payout.`)) { x.payoutIds.forEach(reopenPayout); toast.success('Included', 'It now shows under the owner above.'); } }}>
+                            onClick={async () => { if (await askConfirm(`Was ${o?.name ?? 'the owner'} NOT actually paid ${rs(x.amount)} for this? It will be included in the payout.`)) { x.payoutIds.forEach(reopenPayout); toast.success('Included', 'It now shows under the owner above.'); } }}>
                       Not paid yet — include
                     </button>
                   )}

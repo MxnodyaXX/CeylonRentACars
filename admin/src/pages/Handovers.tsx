@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useCustomerPrivacy } from '../lib/ownerPrivacy';
+import { useOwnerMoney } from '../lib/ownerMoney';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BookingCard } from '../components/ui/BookingCard';
 import BookingDetailsModal from '../components/ui/BookingDetailsModal';
@@ -67,10 +69,12 @@ const emptyHandover = (type: 'delivery' | 'return', bookingId: string, vehicleId
 });
 
 export default function Handovers() {
+  const cp = useCustomerPrivacy();
   const { bookings, vehicles, owners, commissions, handovers, addHandover, updateBooking, updateCommission, saveDraft, discardDraft, drafts } = useStore();
   const { currentUser, isAdmin, can } = useAuthStore();
   // the booking's own handover flow (saved on the booking) and its details, opened from the tiles
-  const mayHandover = currentUser?.role !== 'staff' || can('canViewHandovers');
+  const mayPickup = currentUser?.role !== 'staff' || can('canHandoverPickup');
+  const mayReturn = currentUser?.role !== 'staff' || can('canHandoverReturn');
   const [viewing, setViewing] = useState<string | null>(null);
   const [flow, setFlow] = useState<{ booking: Booking; kind: 'pickup' | 'return' } | null>(null);
   const navigate = useNavigate();
@@ -113,6 +117,8 @@ export default function Handovers() {
 
   // Owner sees only their vehicle bookings
   const isOwnerRole   = !isAdmin() && currentUser?.role === 'owner';
+  // an owner's fixed-amount car: no rental amounts (they're paid the fixed amount whatever it earns)
+  const om = useOwnerMoney();
   const myVehicleIds  = isOwnerRole
     ? vehicles.filter((v) => v.ownerId === currentUser?.ownerId).map((v) => v.id)
     : null;
@@ -177,7 +183,7 @@ export default function Handovers() {
       saveDraft({
         type: 'return',
         label: veh ? `Return: ${veh.brand} ${veh.model}` : 'Incomplete Return',
-        sublabel: bk ? `${bk.customerName} · ${bk.startDate} → ${bk.endDate}` : '',
+        sublabel: bk ? `${cp.name(bk)} · ${bk.startDate} → ${bk.endDate}` : '',
         bookingId: form.bookingId || undefined,
         vehicleId: form.vehicleId || undefined,
         formData: { ...form },
@@ -259,8 +265,8 @@ export default function Handovers() {
                     return (
                       <BookingCard key={b.id} booking={b} vehicle={vehicle} owner={owners.find((o) => o.id === vehicle?.ownerId)}
                         onOpen={() => setViewing(b.id)}
-                        onStart={mayHandover ? () => setFlow({ booking: b, kind: 'pickup' }) : undefined}
-                        onComplete={mayHandover ? () => setFlow({ booking: b, kind: 'return' }) : undefined} />
+                        onStart={mayPickup ? () => setFlow({ booking: b, kind: 'pickup' }) : undefined}
+                        onComplete={mayReturn ? () => setFlow({ booking: b, kind: 'return' }) : undefined} />
                     );
                   })}
                 </div>
@@ -297,7 +303,7 @@ export default function Handovers() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-navy-800 truncate">
-                        {booking?.customerName ?? '—'}
+                        {booking ? cp.name(booking) : '—'}
                       </p>
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize flex-shrink-0 ${
                         h.type === 'delivery' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
@@ -325,8 +331,8 @@ export default function Handovers() {
                   <div className="mt-3 flex items-center gap-2 bg-amber-50 rounded-xl px-3 py-2">
                     <AlertTriangle size={12} className="text-amber-500 flex-shrink-0" />
                     <span className="text-xs text-amber-700">
-                      +{h.extraKm} extra km · Rs {h.extraKmCharge?.toLocaleString()} charge ·
-                      Final: <span className="font-bold">Rs {h.finalAmount?.toLocaleString()}</span>
+                      +{h.extraKm} extra km{!om.hides(bookings.find((x) => x.id === h.bookingId)) && <> · Rs {h.extraKmCharge?.toLocaleString()} charge ·
+                      Final: <span className="font-bold">Rs {h.finalAmount?.toLocaleString()}</span></>}
                     </span>
                   </div>
                 )}
@@ -347,7 +353,7 @@ export default function Handovers() {
               <div className="bg-navy-50/80 rounded-xl p-4 flex items-center gap-3">
                 <Truck size={18} className="text-navy-500 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold text-navy-800">{booking?.customerName}</p>
+                  <p className="text-sm font-semibold text-navy-800">{booking ? cp.name(booking) : ''}</p>
                   <p className="text-xs text-navy-500">
                     {vehicle?.brand} {vehicle?.model} · {vehicle?.vehicleNumber} · {booking?.startDate} → {booking?.endDate}
                   </p>
@@ -413,7 +419,7 @@ export default function Handovers() {
               <div className="bg-navy-50/80 rounded-xl p-4 flex items-center gap-3">
                 <RotateCcw size={18} className="text-navy-500 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold text-navy-800">{booking?.customerName}</p>
+                  <p className="text-sm font-semibold text-navy-800">{booking ? cp.name(booking) : ''}</p>
                   <p className="text-xs text-navy-500">
                     {vehicle?.brand} {vehicle?.model} · {vehicle?.vehicleNumber} · {booking?.startDate} → {booking?.endDate}
                   </p>
@@ -480,6 +486,7 @@ export default function Handovers() {
                       <span>Total km driven</span>
                       <span>{totalKmDriven.toLocaleString()} km</span>
                     </div>
+                    {om.hides(booking) ? <p className="border-t border-navy-100 pt-2 font-semibold text-violet-700" title={om.why(booking)}>{om.label(booking)}</p> : <>
                     <div className="flex justify-between text-navy-600 border-t border-navy-100 pt-2">
                       <span>Base ({booking?.totalDays ?? 0}d × Rs {vehicle?.dailyRent.toLocaleString()}/day)</span>
                       <span className="font-semibold">Rs {baseAmount.toLocaleString()}</span>
@@ -503,6 +510,7 @@ export default function Handovers() {
                       <span>Final Amount</span>
                       <span>Rs {form.finalAmount?.toLocaleString()}</span>
                     </div>
+                    </>}
                   </div>
                 );
               })()}
@@ -533,6 +541,9 @@ export default function Handovers() {
           const commission = commissions.find((c) => c.bookingId === paymentBookingId);
           const owner      = owners.find((o) => o.id === commission?.ownerId);
           if (!booking || !vehicle || !commission) return null;
+          if (om.hides(booking)) return (
+            <p className="text-sm text-violet-800 bg-violet-50 rounded-xl px-4 py-3"><b>{om.label(booking)}.</b> {om.why(booking)} — rental payments are handled by Ceylon Rent A Cars.</p>
+          );
 
           const finalAmount   = returnH?.finalAmount ?? booking.totalAmount;
           const referralFee   = resolveReferralFee(booking.referralFeeType, booking.referralFeeValue, finalAmount);
@@ -600,7 +611,7 @@ export default function Handovers() {
               <div className="bg-navy-50/80 rounded-xl p-4 flex items-center gap-3">
                 <CreditCard size={18} className="text-navy-500 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-semibold text-navy-800">{booking.customerName}</p>
+                  <p className="text-sm font-semibold text-navy-800">{cp.name(booking)}</p>
                   <p className="text-xs text-navy-500">
                     {vehicle.brand} {vehicle.model} · {durationLabel(booking)} · {booking.startDate} → {booking.endDate}
                   </p>
@@ -890,7 +901,7 @@ export default function Handovers() {
                 </div>
                 <div>
                   <p className="text-base font-bold text-navy-800 capitalize">{viewItem.type} Record</p>
-                  <p className="text-xs text-navy-400">{booking?.customerName} · {vehicle?.brand} {vehicle?.model}</p>
+                  <p className="text-xs text-navy-400">{booking ? cp.name(booking) : ''} · {vehicle?.brand} {vehicle?.model}</p>
                 </div>
               </div>
 

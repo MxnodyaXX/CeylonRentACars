@@ -26,6 +26,7 @@ import {
 import type { InquiryQuote } from '../types';
 import StartInquiryModal from '../components/ui/StartInquiryModal';
 import { LOST_REASONS as CONSULT_LOST_REASONS, advance, bookingFromAgreement, currentChoice, stageInfo, stageOf as pipelineStage } from '../lib/consultation';
+import { askConfirm, showCopy } from '../lib/dialog';
 
 export const LOST_REASONS = CONSULT_LOST_REASONS;
 
@@ -56,6 +57,7 @@ export default function InquiryPage() {
   const navigate = useNavigate();
   const { inquiries, vehicles, bookings, patchInquiry, updateInquiry, isVehicleAvailable } = useStore();
   const staff = useAuthStore((s) => s.currentUser?.name) ?? 'Ceylon Rent A Cars';
+  const mayCreate = useAuthStore((s) => s.currentUser?.role !== 'staff' || s.can('canBookCreate'));
   const inq = inquiries.find((i) => i.id === id);
 
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
@@ -134,10 +136,10 @@ export default function InquiryPage() {
   };
   /** Opening the customer's phone or WhatsApp means someone has picked the inquiry up */
   const markStarted = () => { if (pending && current === 'NEW') patchInquiry(inq.id, { stage: 'CONTACTING' }); };
-  const setStep = (to: 1 | 2) => {
+  const setStep = async (to: 1 | 2) => {
     if (to === 1 && step >= 2) {
       const converted = inq.status === 'Converted';
-      if (!confirm(converted
+      if (!await askConfirm(converted
         ? 'Move this inquiry back to Started? It will be open again (Pending). A booking already created from it is NOT deleted — cancel it in Bookings if needed.'
         : 'Move this inquiry back to Started?')) return;
       updateInquiry(inq.id, { status: 'Pending', stage: 'CONTACTING' });
@@ -186,10 +188,10 @@ export default function InquiryPage() {
     setChannel('WhatsApp'); window.open(`https://wa.me/${intlDigits(inq.customerPhone)}?text=${encodeURIComponent(text)}`, '_blank');
   };
   const copy = async (text: string, what: string) => {
-    try { await navigator.clipboard.writeText(text); toast.success(`${what} copied`, ''); } catch { prompt(`Copy ${what.toLowerCase()}:`, text); }
+    try { await navigator.clipboard.writeText(text); toast.success(`${what} copied`, ''); } catch { showCopy(`Copy ${what.toLowerCase()}:`, text); }
   };
 
-  const convert = () => {
+  const convert = async () => {
     // after go-live every booking goes through the e-Agreement: accepted agreement → verified advance → booking
     if (policy && gateOn(policy)) {
       toast.info('Use the e-Agreement panel', 'The booking is created there once the customer accepts and Finance verifies the advance.');
@@ -203,7 +205,7 @@ export default function InquiryPage() {
       navigate('/bookings', { state: { fromInquiry: { ...bookingFromAgreement(inq, agreed, email), inquiryId: inq.id } } });
       return;
     }
-    if (!ready && current !== 'CONFIRMED' && !confirm(`Only ${done} of ${CHECKLIST.length} checks are done. Convert to a booking anyway?`)) return;
+    if (!ready && current !== 'CONFIRMED' && !await askConfirm(`Only ${done} of ${CHECKLIST.length} checks are done. Convert to a booking anyway?`)) return;
     const st = timeIn(req.fields.Pickup), et = timeIn(req.fields.Return);
     const last = followUps.find((f) => f.response && f.outcome !== 'Quote sent');
     const cons = inq.consultation;
@@ -604,7 +606,7 @@ export default function InquiryPage() {
                 );
               })}
             </ul>
-            {ready && pending && (
+            {ready && pending && mayCreate && (
               <button onClick={convert} className="mt-3 w-full flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700">
                 All checks done — Convert to booking <ArrowRight size={15} />
               </button>

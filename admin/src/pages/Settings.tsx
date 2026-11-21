@@ -11,6 +11,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import Header from '../components/layout/Header';
 import ManualBookingModal from '../components/ui/ManualBookingModal';
 import SmsSettingCard from '../components/ui/SmsSettingCard';
+import OwnerAmountsCard from '../components/ui/OwnerAmountsCard';
 import LegacyLoginsCard from '../components/ui/LegacyLoginsCard';
 import ChangePasswordForm from '../components/ui/ChangePasswordForm';
 import { passwordProblem } from '../lib/staffAuth';
@@ -370,7 +371,7 @@ export default function Settings() {
       <section className="mb-10">
         <p className="text-xs font-semibold text-navy-400 uppercase tracking-wider mb-3">Data Management</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(useAuthStore.getState().currentUser?.role !== 'staff' || useAuthStore.getState().can('canBook')) && <button
+          {(useAuthStore.getState().currentUser?.role !== 'staff' || useAuthStore.getState().can('canBookCreate')) && <button
             onClick={() => setManualOpen(true)}
             className="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-card border border-gray-100 hover:border-navy-200 hover:shadow-md text-left transition-all"
           >
@@ -444,6 +445,7 @@ export default function Settings() {
           <p className="text-xs font-semibold text-navy-400 uppercase tracking-wider mb-3">Messaging & security</p>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <SmsSettingCard />
+            <OwnerAmountsCard />
             <LegacyLoginsCard />
           </div>
         </section>

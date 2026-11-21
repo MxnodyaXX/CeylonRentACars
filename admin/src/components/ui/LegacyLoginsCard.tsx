@@ -3,6 +3,7 @@ import { Copy, KeyRound, Loader2 } from 'lucide-react';
 import { LegacyPlan, MovedLogin, migrateLegacy, migratePreview } from '../../lib/staffAuth';
 import { useAuthStore } from '../../store/useAuthStore';
 import { toast } from '../../store/useToast';
+import { askConfirm } from '../../lib/dialog';
 
 /**
  * One-time move of the old logins (public.users, plain-text passwords) to Supabase Auth.
@@ -31,7 +32,7 @@ export default function LegacyLoginsCard() {
   const toMove = plan?.filter((p) => p.status === 'move') ?? [];
 
   const move = async () => {
-    if (!confirm(`Create secure logins for ${toMove.length} owner(s)? Each gets a new temporary password — you'll see them once, to pass on.`)) return;
+    if (!await askConfirm(`Create secure logins for ${toMove.length} owner(s)? Each gets a new temporary password — you'll see them once, to pass on.`)) return;
     setBusy(true);
     try {
       const r = await migrateLegacy();

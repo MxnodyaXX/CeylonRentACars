@@ -1,4 +1,7 @@
 import PayoutReminder from '../components/ui/PayoutReminder';
+import { useCustomerPrivacy } from '../lib/ownerPrivacy';
+import { FIXED_LABEL, HIDDEN_AMOUNT, useOwnerMoney } from '../lib/ownerMoney';
+import { companyBookings } from '../lib/personal';
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -86,6 +89,7 @@ function CloudShape({ x, y, scale = 1, delay = '0s', duration = '28s' }: {
 }
 
 export default function DashboardClassic() {
+  const cp = useCustomerPrivacy();
   const isMobile = useIsMobile();
   const { vehicles, bookings, inquiries, expenses, owners, notifications } = useStore();
   const { currentUser, isAdmin } = useAuthStore();
@@ -102,14 +106,19 @@ export default function DashboardClassic() {
   const scopedVehicles = myVehicleIdSet ? vehicles.filter((v) => myVehicleIdSet.has(v.id)) : vehicles;
   const scopedBookings = myVehicleIdSet ? bookings.filter((b) => myVehicleIdSet.has(b.vehicleId)) : bookings;
   const scopedExpenses = myVehicleIdSet ? expenses.filter((e) => myVehicleIdSet.has(e.vehicleId)) : expenses;
+  // money figures are company business only — personal bookings are left out (they still show in the lists);
+  // an owner never sees what their FIXED-amount cars earned (they're paid the fixed amount whatever the rentals bring)
+  const om = useOwnerMoney();
+  const moneyBookings = companyBookings(scopedBookings).filter((b) => !om.hides(b));
 
   /* derived from scoped data — revenue is NET of discounts everywhere; the
      gross (before-discount) figure is surfaced separately in the KPI sub-line. */
-  const netRev         = (v: Vehicle) => vehicleNetRevenue(v, scopedBookings);
+  const netRev         = (v: Vehicle) => vehicleNetRevenue(v, moneyBookings);
   const byRevenue      = [...scopedVehicles].sort((a, b) => netRev(b) - netRev(a));
-  const grossRevenue   = scopedVehicles.reduce((s, v) => s + v.revenue, 0);
-  const totalDiscounts = totalDiscount(scopedBookings);
-  const totalRevenue   = grossRevenue - totalDiscounts;
+  // from the final bills of the bookings (the stored per-car rollup only ever added the rent)
+  const totalDiscounts = totalDiscount(moneyBookings);
+  const totalRevenue   = scopedVehicles.reduce((s, v) => s + netRev(v), 0);
+  const grossRevenue   = totalRevenue + totalDiscounts;
   const totalExpenses  = scopedExpenses.reduce((s, e) => s + e.amount, 0);
   const activeBookings = scopedBookings.filter((b) => b.status === 'Confirmed' || b.status === 'Ongoing');
   const unread         = notifications.filter((n) => !n.read).length;
@@ -128,16 +137,16 @@ export default function DashboardClassic() {
      Outstanding = money actually owed: vehicle is out (Ongoing) or rental finished (Completed)
      and still unpaid. Confirmed bookings haven't started, so their balance is expected future
      income, not outstanding. */
-  const receivableBookings = scopedBookings.filter((b) => b.status === 'Ongoing' || b.status === 'Completed');
+  const receivableBookings = moneyBookings.filter((b) => b.status === 'Ongoing' || b.status === 'Completed');
   /* Exclude bookings already tracked as formal credit — those appear in the Total Credit card.
      The two cards are additive: Outstanding + Credit.total = all money owed, no double-counting. */
   // the balance due on the full bill (extra km, charges, deductions, advance) less the part on credit and any bad debt
   const unpaidOf = (b: Booking) => Math.max(0, bookingDue(b) - bookingCredit(b) - (b.badDebt ?? 0));
   const outstandingBalance = receivableBookings.reduce((s, b) => s + unpaidOf(b), 0);
   /* Credit to be received — balances recorded as customer credit dues. */
-  const credit = creditTotals(scopedBookings);
+  const credit = creditTotals(moneyBookings);
   const today = new Date();
-  const thisMonthRevenue = scopedBookings
+  const thisMonthRevenue = moneyBookings
     .filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })
     .reduce((s, b) => s + b.totalAmount, 0);
   const thisMonthExpenses = scopedExpenses
@@ -150,7 +159,7 @@ export default function DashboardClassic() {
     .map((b) => ({ ...b, balance: unpaidOf(b) }))
     .filter((b) => b.balance > 0)
     .sort((a, b) => b.balance - a.balance);
-  const monthRevenueRows = scopedBookings
+  const monthRevenueRows = moneyBookings
     .filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth(); })
     .sort((a, b) => b.totalAmount - a.totalAmount);
   const monthExpenseRows = scopedExpenses
@@ -170,10 +179,10 @@ export default function DashboardClassic() {
       return { year: d.getFullYear(), month: d.getMonth(), label: format(d, 'MMM') };
     });
     return months.map(({ year, month, label }) => {
-      const rev = scopedBookings
+      const rev = moneyBookings
         .filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === year && d.getMonth() === month; })
         .reduce((s, b) => s + b.totalAmount, 0);
-      const cnt = scopedBookings.filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === year && d.getMonth() === month; }).length;
+      const cnt = moneyBookings.filter((b) => { if (b.status === 'Cancelled') return false; const d = new Date(b.startDate); return d.getFullYear() === year && d.getMonth() === month; }).length;
       const exp = scopedExpenses
         .filter((e) => { const d = new Date(e.date); return d.getFullYear() === year && d.getMonth() === month; })
         .reduce((s, e) => s + e.amount, 0);
@@ -293,7 +302,7 @@ export default function DashboardClassic() {
       </div>
 
       {/* ── Money Insights (growth · deposits · bad debt) ────────── */}
-      <MoneyInsights bookings={scopedBookings} />
+      <MoneyInsights bookings={moneyBookings} />
 
       {/* ── Leaderboard ─────────────────────────────────────────── */}
       <div className="card anim-fade-up" style={{ animationDelay: '180ms' }}>
@@ -394,7 +403,7 @@ export default function DashboardClassic() {
                     {v.brand} {v.model}
                   </p>
                   <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, fontWeight: 600, marginTop: 1 }}>
-                    Rs {netRev(v).toLocaleString()}
+                    {om.hidesCar(v) ? FIXED_LABEL : om.hidesCarMoney(v) ? HIDDEN_AMOUNT : `Rs ${netRev(v).toLocaleString()}`}
                   </p>
                 </div>
 
@@ -443,7 +452,7 @@ export default function DashboardClassic() {
       </div>
 
       {/* ── Vehicle Performance (utilization · profit per vehicle) ── */}
-      <VehiclePerformance vehicles={scopedVehicles} bookings={scopedBookings} expenses={scopedExpenses} />
+      <VehiclePerformance vehicles={scopedVehicles} bookings={moneyBookings} expenses={scopedExpenses} />
 
       {/* ── Charts Card ─────────────────────────────────────────── */}
       <div className="card anim-fade-up" style={{ animationDelay: '320ms' }}>
@@ -504,7 +513,7 @@ export default function DashboardClassic() {
       </div>
 
       {/* ── Distribution (lead sources · expenses · payment mix) ──── */}
-      <DistributionCharts bookings={scopedBookings} expenses={scopedExpenses} />
+      <DistributionCharts bookings={moneyBookings} expenses={scopedExpenses} />
 
       {/* ── Fleet Section ────────────────────────────────────────── */}
       <div className="card overflow-hidden p-0 anim-fade-up" style={{ animationDelay: '420ms' }}>
@@ -536,7 +545,7 @@ export default function DashboardClassic() {
       </div>
 
       {/* ── Customer Insights (averages · conversion · top customers) ── */}
-      <CustomerInsights bookings={scopedBookings} inquiries={inquiries} showInquiries={!isOwnerRole} />
+      <CustomerInsights bookings={isOwnerRole ? moneyBookings : scopedBookings} inquiries={inquiries} showInquiries={!isOwnerRole} />
 
       {/* ── Outstanding Balances breakdown ── */}
       <Modal open={infoModal === 'outstanding'} onClose={() => setInfoModal(null)} title="Outstanding Balances" width="max-w-lg">
@@ -552,7 +561,7 @@ export default function DashboardClassic() {
             {outstandingRows.map((b) => (
               <div key={b.id} className="flex items-center gap-3 bg-navy-50/60 rounded-xl px-3 py-2.5">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-navy-800 truncate">{b.customerName}</p>
+                  <p className="text-sm font-semibold text-navy-800 truncate">{cp.name(b)}</p>
                   <p className="text-[11px] text-navy-400 truncate">{vehicleLabel(b.vehicleId)}</p>
                   <p className="text-[11px] text-navy-400">Total Rs {b.totalAmount.toLocaleString()} · Paid Rs {b.paidAmount.toLocaleString()}</p>
                 </div>
@@ -600,7 +609,7 @@ export default function DashboardClassic() {
             <div className="space-y-1.5 mb-4">
               {monthRevenueRows.map((b) => (
                 <div key={b.id} className="flex items-center justify-between gap-3 text-xs px-3 py-2 bg-navy-50/60 rounded-lg">
-                  <span className="text-navy-700 truncate">{b.customerName} <span className="text-navy-400">· {vehicleLabel(b.vehicleId)}</span></span>
+                  <span className="text-navy-700 truncate">{cp.name(b)} <span className="text-navy-400">· {vehicleLabel(b.vehicleId)}</span></span>
                   <span className="font-semibold text-emerald-700 flex-shrink-0">Rs {b.totalAmount.toLocaleString()}</span>
                 </div>
               ))}
@@ -638,6 +647,7 @@ function FleetColumn({ title, vehicles, bookings, expenseMap, accent, onViewAll 
   title:string; vehicles:Vehicle[]; bookings:Booking[];
   expenseMap:Record<string,string>; accent:'emerald'|'blue'|'red'; onViewAll:()=>void;
 }) {
+  const cp = useCustomerPrivacy();
   const titleColor = { emerald:'text-emerald-600', blue:'text-blue-600', red:'text-red-600' }[accent];
   return (
     <div className="p-5">
@@ -659,7 +669,7 @@ function FleetColumn({ title, vehicles, bookings, expenseMap, accent, onViewAll 
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-navy-800 truncate">{v.brand} {v.model}</p>
                 <p className="text-xs text-navy-400 truncate">{v.vehicleNumber}</p>
-                {booking  && <p className="text-xs text-navy-500 truncate">{booking.customerName} · {booking.startDate}…</p>}
+                {booking  && <p className="text-xs text-navy-500 truncate">{cp.name(booking)} · {booking.startDate}…</p>}
                 {!booking && expNote && <p className="text-xs text-navy-400 truncate">{expNote}</p>}
               </div>
               <StatusBadge status={v.status} />

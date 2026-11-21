@@ -4,6 +4,7 @@ import Header from '../components/layout/Header';
 import { useStore } from '../store/useStore';
 import { supabase, supabaseEnabled } from '../lib/supabase';
 import { toast } from '../store/useToast';
+import { askConfirm, showCopy } from '../lib/dialog';
 
 const WEBSITE_URL = ((import.meta.env.VITE_WEBSITE_URL as string | undefined) ?? 'http://localhost:5173').replace(/\/$/, '');
 
@@ -112,7 +113,7 @@ export default function Feedback() {
   };
 
   const remove = async (it: Item) => {
-    if (!confirm(`Delete ${it.name}'s ${it.kind} review?`)) return;
+    if (!await askConfirm(`Delete ${it.name}'s ${it.kind} review?`)) return;
     const { error } = await supabase.from(table(it.kind)).delete().eq('id', it.id);
     if (error) { toast.error('Could not delete', error.message); return; }
     setItems((l) => l.filter((x) => !(x.id === it.id && x.kind === it.kind)));
@@ -131,7 +132,7 @@ export default function Feedback() {
 
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); toast.success('Link copied', 'Paste it in an SMS, email or chat.'); }
-    catch { prompt('Copy this link:', text); }
+    catch { showCopy('Copy this link:', text); }
   };
 
   const list = tab === 'pending' ? pending : published;

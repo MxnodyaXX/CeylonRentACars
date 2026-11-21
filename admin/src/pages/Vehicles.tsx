@@ -1,4 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
+import { useCustomerPrivacy } from '../lib/ownerPrivacy';
+import { FIXED_LABEL, HIDDEN_AMOUNT, useOwnerMoney } from '../lib/ownerMoney';
+import { companyBookings, companyCommissions } from '../lib/personal';
 import { useStore } from '../store/useStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { supabaseEnabled } from '../lib/supabase';
@@ -17,12 +20,13 @@ import Select from '../components/ui/Select';
 import DateInput from '../components/ui/DateInput';
 import OwnerTermsField from '../components/ui/OwnerTermsField';
 import FixedTargetModal from '../components/ui/FixedTargetModal';
-import { readOwnerTerms, termsSummary } from '../lib/ownerTerms';
+import { readOwnerShare, readOwnerTerms, shareSummary, termsSummary } from '../lib/ownerTerms';
 import { Plus, Car, Pencil, Trash2, Shield, CalendarDays, Wrench, TrendingUp, Camera, Upload, X, ChevronLeft, ChevronRight, AlertTriangle, UserRound, Heart, Banknote } from 'lucide-react';
 import { Vehicle, VehicleStatus, WeddingDetails } from '../types';
 import { isInsuranceComplete, clearInsuranceReminder } from '../lib/insuranceReminder';
 import { vehicleMoney } from '../lib/revenue';
 import { VEHICLE_CATEGORIES, categoryLabel, guessCategory } from '../lib/vehicleCategory';
+import { askConfirm } from '../lib/dialog';
 
 const STATUS_OPTIONS: VehicleStatus[] = ['Available', 'Reserved', 'Ongoing', 'Maintenance'];
 const FUEL_TYPES    = ['Petrol', 'Diesel', 'Hybrid', 'Electric', 'CNG'];
@@ -56,6 +60,7 @@ const empty = (): Omit<Vehicle, 'id' | 'createdAt' | 'revenue' | 'rentCount'> =>
 });
 
 export default function Vehicles() {
+  const cp = useCustomerPrivacy();
   const [viewTab, setViewTab] = useState<'details' | 'breakdowns'>('details');
   const breakdowns = useBreakdownStore();
   useEffect(() => { if (!breakdowns.ready) breakdowns.load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -97,6 +102,10 @@ export default function Vehicles() {
   const recropRef        = useRef<{ slot: ImageSlot; key: string } | null>(null);
 
   const isOwnerRole = !isAdmin() && currentUser?.role === 'owner';
+  // an owner's fixed-amount car: its fixed terms instead of what it earns (and no daily price)
+  const om = useOwnerMoney();
+  // an owner looking at another owner's car: no earnings or payment terms
+  const otherOwnersCar = isOwnerRole && !!selected && selected.ownerId !== currentUser?.ownerId;
   // team members work on every car (what they may change is set by their abilities); owners on their own
   const teamLogin   = currentUser?.role === 'staff';
   const canActOn    = (v: Vehicle) => isAdmin() || teamLogin || v.ownerId === currentUser?.ownerId;
@@ -302,9 +311,12 @@ export default function Vehicles() {
     }
     const termsNext = mayOwnerTerms ? readOwnerTerms(form.ownerTerms) : (selected?.ownerTerms ?? null);
     const termsChanged = modal === 'edit' && JSON.stringify(termsNext) !== JSON.stringify(selected?.ownerTerms ?? null);
+    // the commission agreed with the owner (a share of each rental) — none on a fixed-amount car
+    const shareNext = mayOwnerTerms ? (termsNext ? null : readOwnerShare(form.ownerShare)) : (selected?.ownerShare ?? null);
+    const shareChanged = modal === 'edit' && JSON.stringify(shareNext) !== JSON.stringify(selected?.ownerShare ?? null);
     // a team member who may change only the prices (and, Finance, how the owner is paid): send just those
     if (modal === 'edit' && selected && detailsLocked) {
-      if (termsLocked && !termsChanged) { setModal(null); return; }
+      if (termsLocked && !termsChanged && !shareChanged) { setModal(null); return; }
       const u: Partial<Vehicle> = {};
       if (form.dailyRent !== selected.dailyRent) u.dailyRent = form.dailyRent;
       if ((form.includedKmPerDay ?? null) !== (selected.includedKmPerDay ?? null)) u.includedKmPerDay = form.includedKmPerDay;
@@ -315,6 +327,7 @@ export default function Vehicles() {
         if (JSON.stringify(next) !== JSON.stringify(selected.wedding ?? {})) u.wedding = next;
       }
       if (termsChanged) u.ownerTerms = termsNext;
+      if (shareChanged) u.ownerShare = shareNext;
       if (Object.keys(u).length) updateVehicle(selected.id, u);
       setModal(null);
       return;
@@ -337,7 +350,7 @@ export default function Vehicles() {
     try {
       let vehicleId: string;
       if (modal === 'add') {
-        vehicleId = addVehicle({ ...form, ownerTerms: termsNext });
+        vehicleId = addVehicle({ ...form, ownerTerms: termsNext, ownerShare: shareNext });
       } else {
         vehicleId = selected!.id;
       }
@@ -427,6 +440,8 @@ export default function Vehicles() {
         delete details.weddingStage;   // set on the Website page, not here
         // how the owner is paid: only when it changed (keeps edits working before 21_owner_fixed_terms.sql adds it)
         if (termsChanged) details.ownerTerms = termsNext; else delete details.ownerTerms;
+        // the agreed commission: only when it changed (keeps edits working before 29_owner_share_terms.sql adds it)
+        if (shareChanged) details.ownerShare = shareNext; else delete details.ownerShare;
         updateVehicle(vehicleId, { ...details, ...imageUpdates });
       } else if (Object.keys(imageUpdates).length > 0) {
         updateVehicle(vehicleId, imageUpdates);
@@ -443,10 +458,10 @@ export default function Vehicles() {
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const active = bookings.some((b) => b.vehicleId === id && (b.status === 'Confirmed' || b.status === 'Ongoing'));
     // with an active booking the store refuses and explains why — no point asking first
-    if (active || confirm('Delete this vehicle?')) deleteVehicle(id);
+    if (active || await askConfirm('Delete this vehicle?')) deleteVehicle(id);
   };
 
   const set    = (field: string, value: unknown) => setForm((f) => ({ ...f, [field]: value }));
@@ -466,7 +481,8 @@ export default function Vehicles() {
 
   const renderCard = (v: Vehicle, clickable = true) => {
     const owner         = owners.find((o) => o.id === v.ownerId);
-    const activeBooking = bookings.find((b) => b.vehicleId === v.id && (b.status === 'Confirmed' || b.status === 'Ongoing'));
+    // payouts-only owners (Settings switch) see no bookings
+    const activeBooking = om.amountsOff ? undefined : bookings.find((b) => b.vehicleId === v.id && (b.status === 'Confirmed' || b.status === 'Ongoing'));
     const mainExp       = expenses.find((e) => e.vehicleId === v.id);
     const mine          = canActOn(v);
     const cardImg       = v.imageUrl || v.wedding?.cutout;   // a wedding-only car may have only its wedding cut-out
@@ -590,8 +606,8 @@ export default function Vehicles() {
             <p className="font-medium text-navy-700">{owner?.name ?? '—'}</p>
           </div>
           <div>
-            <p className="text-navy-400">Daily Rent</p>
-            <p className="font-medium text-navy-700">Rs {v.dailyRent.toLocaleString()}</p>
+            <p className="text-navy-400">{om.hidesCar(v) ? 'You are paid' : 'Daily Rent'}</p>
+            <p className="font-medium text-navy-700">{om.hidesCar(v) ? `Rs ${v.ownerTerms!.amount.toLocaleString()}${v.ownerTerms!.schedule === 'monthly' ? ' a month' : ' for the term'}` : om.hidesCarMoney(v) ? HIDDEN_AMOUNT : `Rs ${v.dailyRent.toLocaleString()}`}</p>
           </div>
           <div>
             <p className="text-navy-400">Fuel</p>
@@ -621,7 +637,7 @@ export default function Vehicles() {
           <div className="flex items-center gap-2 bg-blue-50 rounded-xl px-3 py-2 mb-3">
             <CalendarDays size={13} className="text-blue-600 flex-shrink-0" />
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-blue-700 truncate">{activeBooking.customerName}</p>
+              <p className="text-xs font-semibold text-blue-700 truncate">{cp.name(activeBooking)}</p>
               <p className="text-[10px] text-blue-500">{activeBooking.startDate} → {activeBooking.endDate}</p>
             </div>
           </div>
@@ -630,7 +646,7 @@ export default function Vehicles() {
           <div className="flex items-center gap-2 bg-emerald-50 rounded-xl px-3 py-2 mb-3">
             <TrendingUp size={13} className="text-emerald-600 flex-shrink-0" />
             <div className="min-w-0">
-              <p className="text-xs font-semibold text-emerald-700 truncate">{activeBooking.customerName}</p>
+              <p className="text-xs font-semibold text-emerald-700 truncate">{cp.name(activeBooking)}</p>
               <p className="text-[10px] text-emerald-500">Ongoing since {activeBooking.startDate}</p>
             </div>
           </div>
@@ -656,7 +672,11 @@ export default function Vehicles() {
         {/* Footer: revenue + actions */}
         <div className="flex items-center justify-between border-t border-navy-50 pt-3">
           <div className="min-w-0">
-            {(() => { const m = vehicleMoney(v.id, bookings, commissions); return (<>
+            {/* an owner sees earnings only for their own cars — never another owner's */}
+            {isOwnerRole && !mine ? null : om.hidesCarMoney(v) && !om.hidesCar(v) ? null : om.hidesCar(v) ? (<>
+              <p className="text-xs text-navy-400 whitespace-nowrap">{FIXED_LABEL}</p>
+              <p className="text-sm font-bold text-violet-800 whitespace-nowrap">{termsSummary(v.ownerTerms!)}</p>
+            </>) : (() => { const m = vehicleMoney(v.id, companyBookings(bookings), companyCommissions(commissions, bookings)); return (<>
               <p className="text-xs text-navy-400 whitespace-nowrap" title="Final bills (rent + extra charges − discount) of completed and on-rent trips">Earned · {m.trips} trip{m.trips === 1 ? '' : 's'}{m.onRent ? ` (${m.onRent} on rent)` : ''}</p>
               <p className="text-sm font-bold text-navy-700 whitespace-nowrap">Rs {m.earned.toLocaleString()}</p>
               {(m.upcoming > 0 || m.company > 0) && (
@@ -928,7 +948,8 @@ export default function Vehicles() {
           {(mayOwnerTerms || form.ownerTerms) && (
             <Section locked={!mayOwnerTerms} icon={<Banknote size={16} />} title="How the owner is paid"
                      hint={mayOwnerTerms ? 'A share of each rental, or a fixed amount whether the car is rented or not.' : 'Set by the Managing Director or Finance.'}>
-              <OwnerTermsField value={form.ownerTerms} disabled={!mayOwnerTerms} onChange={(t) => set('ownerTerms', t)} />
+              <OwnerTermsField value={form.ownerTerms} disabled={!mayOwnerTerms} onChange={(t) => set('ownerTerms', t)}
+                               share={form.ownerShare ?? null} onShareChange={(sh) => set('ownerShare', sh)} />
             </Section>
           )}
 
@@ -1175,8 +1196,8 @@ export default function Vehicles() {
                 {[
                   ['Vehicle type',  categoryLabel(selected.webCategory) ?? 'Not set'],
                   ['Owner',         owner?.name ?? '—'],
-                  ['Owner paid',    selected.ownerTerms ? `Fixed · ${termsSummary(selected.ownerTerms)}` : 'Share of each rental'],
-                  ['Daily Rent',    `Rs ${selected.dailyRent.toLocaleString()}`],
+                  ...(otherOwnersCar ? [] : [['Owner paid', selected.ownerTerms ? `Fixed · ${termsSummary(selected.ownerTerms)}` : `Share of each rental · company ${selected.ownerShare ? shareSummary(selected.ownerShare) : 'default rate'}`]] as [string, string][]),
+                  ...(om.hidesCarMoney(selected) ? [] : [['Daily Rent', `Rs ${selected.dailyRent.toLocaleString()}`]] as [string, string][]),
                   ['Included km',   `${selected.includedKmPerDay ?? 100} km/day`],
                   ['Extra km rate', `Rs ${selected.extraKmRate ?? 50}/km`],
                   ['Hill country',  selected.hillSuitable == null ? 'Not set' : selected.hillSuitable ? 'Suitable' : 'Not suitable'],
@@ -1185,11 +1206,11 @@ export default function Vehicles() {
                   ['Transmission',  selected.transmission ?? '—'],
                   ['Seats',         selected.seats ?? '—'],
                   ['Mileage',       selected.mileage ? `${selected.mileage.toLocaleString()} km` : '—'],
-                  ...(() => { const m = vehicleMoney(selected.id, bookings, commissions); return [
+                  ...(om.hidesCarMoney(selected) || otherOwnersCar ? [] as [string, string][] : (() => { const m = vehicleMoney(selected.id, companyBookings(bookings), companyCommissions(commissions, bookings)); return [
                     ['Earned', `Rs ${m.earned.toLocaleString()} · ${m.trips} trip${m.trips === 1 ? '' : 's'} (completed + on rent)`],
                     ['Upcoming', m.upcomingCount ? `Rs ${m.upcoming.toLocaleString()} · ${m.upcomingCount} confirmed` : 'None'],
                     ['Company commission', `Rs ${m.company.toLocaleString()} on the earned trips`],
-                  ] as [string, string][]; })(),
+                  ] as [string, string][]; })()),
                 ].map(([label, val]) => (
                   <div key={String(label)} className="bg-navy-50/60 rounded-xl p-3">
                     <p className="text-xs text-navy-400">{label}</p>

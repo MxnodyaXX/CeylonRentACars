@@ -1,24 +1,37 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Building2 } from 'lucide-react';
 import Select from './Select';
 import { SHARE_TYPES, companyShareOf, shareWorking, useCompanyShare, type ShareType } from '../../lib/companyShare';
-import type { Booking } from '../../types';
+import type { Booking, OwnerShare } from '../../types';
+import { shareSummary } from '../../lib/ownerTerms';
 
 type ShareFields = Pick<Booking, 'companyShareType' | 'companyShareValue' | 'companyShareMin'>;
 const rs = (n: number) => `Rs ${Math.round(n).toLocaleString('en-LK')}`;
 
 /** On every booking form: how the company's commission is taken, with what the owner gets */
-export default function CompanyShareField({ value, onChange, total, days, rentalType, className = '', autoDefault = true }: {
+export default function CompanyShareField({ value, onChange, total, days, rentalType, className = '', autoDefault = true, agreed }: {
   value: ShareFields; onChange: (v: ShareFields) => void; total: number; days: number; rentalType?: Booking['rentalType']; className?: string;
   /** new bookings start with the company default; existing ones keep what they have */
   autoDefault?: boolean;
+  /** the commission agreed with the chosen car's owner (Vehicles → How the owner is paid) — used instead of the company default */
+  agreed?: OwnerShare | null;
 }) {
-  const { method, loaded, load } = useCompanyShare();
+  const { method: companyMethod, loaded, load } = useCompanyShare();
   useEffect(() => { if (!loaded) load(); }, [loaded, load]);
-  // a new booking starts with the company default
+  const method = agreed ?? companyMethod;
+  const startWith = (): ShareFields => ({ companyShareType: method.type, companyShareValue: method.value, companyShareMin: method.type === 'percent_min' ? method.min : undefined });
+  // what was filled in automatically — replaced when another car is chosen, unless someone changed it by hand
+  const auto = useRef<string | null>(null);
+  const key = (v: ShareFields) => `${v.companyShareType}|${v.companyShareValue ?? ''}|${v.companyShareMin ?? ''}`;
+  // a new booking starts with the owner's agreed commission (or the company default)
   useEffect(() => {
-    if (autoDefault && loaded && !value.companyShareType) onChange({ companyShareType: method.type, companyShareValue: method.value, companyShareMin: method.min });
-  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!autoDefault || !loaded) return;
+    if (!value.companyShareType || (auto.current !== null && auto.current === key(value))) {
+      const next = startWith();
+      auto.current = key(next);
+      if (key(next) !== key(value)) onChange(next);
+    }
+  }, [loaded, agreed?.type, agreed?.value, agreed?.min]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const type = value.companyShareType ?? method.type;
   const b = { ...value, companyShareType: type, rentalType, totalDays: days };
@@ -30,7 +43,8 @@ export default function CompanyShareField({ value, onChange, total, days, rental
 
   return (
     <div className={`rounded-xl border border-navy-100 p-3 space-y-2 ${className}`}>
-      <p className="label !mb-0 flex items-center gap-1.5"><Building2 size={14} /> Company commission</p>
+      <p className="label !mb-0 flex items-center gap-1.5"><Building2 size={14} /> Company commission
+        {agreed && <span className="normal-case tracking-normal font-normal text-[11px] text-navy-400">· agreed with the owner: {shareSummary(agreed)}</span>}</p>
       <div className="grid gap-2 sm:grid-cols-[1fr_8rem_9rem]">
         <Select value={none ? 'none' : type} onChange={(v) => {
           if (v === 'none') { set({ companyShareType: 'fixed', companyShareValue: 0, companyShareMin: undefined }); return; }

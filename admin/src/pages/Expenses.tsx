@@ -9,6 +9,7 @@ import { Plus, Trash2, Receipt } from 'lucide-react';
 import { Expense, ExpenseCategory } from '../types';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { fixedTermsOn, termsSummary } from '../lib/ownerTerms';
+import { askConfirm } from '../lib/dialog';
 
 const CATEGORIES: ExpenseCategory[] = ['Service', 'Repair', 'Fine', 'Damage', 'Tire', 'Insurance', 'Fuel', 'Other'];
 const CAT_COLORS: Record<ExpenseCategory, string> = {
@@ -179,7 +180,7 @@ export default function Expenses() {
                   <td className="py-3 text-right text-sm font-bold text-navy-800">Rs {e.amount.toLocaleString()}</td>
                   <td className="py-3 text-right">
                     {currentUser?.role !== 'staff' && !e.settlementId && <button
-                      onClick={() => { if (confirm('Delete this expense?')) deleteExpense(e.id); }}
+                      onClick={async () => { if (await askConfirm('Delete this expense?')) deleteExpense(e.id); }}
                       className="w-7 h-7 rounded-lg hover:bg-red-50 flex items-center justify-center text-navy-300 hover:text-red-500 transition-colors ml-auto"
                     >
                       <Trash2 size={13} />

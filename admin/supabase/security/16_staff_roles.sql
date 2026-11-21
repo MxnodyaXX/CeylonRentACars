@@ -226,7 +226,9 @@ begin
     end if;
     if not private.staff_may('canEditVehicle') then
       new := private.only_cols(new, old, array['status', 'mileage', 'revenue', 'rent_count']
-        || case when private.staff_may('canEditPrices') then array['daily_rent', 'extra_km_rate', 'included_km_per_day', 'wedding_details'] else '{}'::text[] end);
+        || case when private.staff_may('canEditPrices') then array['daily_rent', 'extra_km_rate', 'included_km_per_day', 'wedding_details'] else '{}'::text[] end
+        -- how the owner is paid (21) and the commission agreed with them (29): Finance's, checked again by their own guards
+        || case when private.staff_may('canViewFinance') then array['owner_terms', 'owner_share'] else '{}'::text[] end);
       -- (wedding_details: file 20's guard_wedding_cols has already kept everything in it but the prices)
     end if;
 

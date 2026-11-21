@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, Gauge, History, Receipt, Save } from 'lucide-react';
+import { AlertCircle, Gauge, History, Receipt, Save, ShieldCheck, Wallet } from 'lucide-react';
 import Modal from './Modal';
 import Select from './Select';
 import CompanyShareField from './CompanyShareField';
+import { SHARE_TYPES } from '../../lib/companyShare';
 import { CHANNELS, channelOf } from '../../lib/channels';
 import DateInput from './DateInput';
 import TimePicker from './TimePicker';
@@ -13,7 +14,7 @@ import type { Booking, ExtraCharge } from '../../types';
 import { useBreakdownStore, tripKmFor } from '../../store/useBreakdownStore';
 import UsagePhases from '../breakdowns/UsagePhases';
 import ManualMileageFields, { extraKmCharges, mileageDraftOf, mileageOf } from './ManualMileageFields';
-import { chargeLine } from '../../lib/bookingRecord';
+import { chargeLine, depositHeld, ledgerOf, legacyAdvance } from '../../lib/bookingRecord';
 import { kmWithMeter } from '../../lib/tripKm';
 import { toast } from '../../store/useToast';
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
@@ -90,7 +91,7 @@ const FIELDS: { key: keyof Form; label: string; fmt?: (v: unknown, f: Form, vehi
   { key: 'referral', label: 'Referral' },
   { key: 'channel', label: 'How they found us' },
   { key: 'referralFee', label: 'Referral fee', fmt: (v) => rs(v as number) },
-  { key: 'companyShareType', label: 'Commission method', fmt: (v) => String(v ?? 'none') },
+  { key: 'companyShareType', label: 'Commission method', fmt: (v) => (v ? SHARE_TYPES.find((s) => s.value === v)?.label ?? String(v) : 'none') },
   { key: 'companyShareValue', label: 'Commission', fmt: (v) => String(v ?? '—') },
   { key: 'companyShareMin', label: 'Commission minimum', fmt: (v) => (v ? rs(v as number) : '—') },
   { key: 'pickupLocation', label: 'Pickup' },
@@ -107,6 +108,12 @@ function Field({ label, children, hint }: { label: string; children: React.React
   );
 }
 
+/** a numbered step in the money statement */
+function Step({ n, tone }: { n: number; tone?: 'amber' }) {
+  return <span className={`w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center ${tone === 'amber' ? 'bg-amber-200 text-amber-900' : 'bg-navy-800 text-white'}`}>{n}</span>;
+}
+const fmtDay = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
 const numIn = (v: string) => Math.max(0, Number(v) || 0);
 
 /** Admin-only: correct a booking that was entered wrongly (amounts, dates, status, customer…) */
@@ -118,6 +125,27 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
   const original = useMemo(() => formOf(booking), [booking]);
   const [f, setF] = useState<Form>(original);
   const [manualTotal, setManualTotal] = useState(false);   // once the total is typed, stop recalculating it
+  // money already in the payment log → Paid / Advance follow the log and aren't typed here
+  // the payment log as the booking screen shows it (money saved before the log appears as an undated line)
+  const ledger = useMemo(() => ledgerOf(booking), [booking]);
+  const depositMoves = ledger.filter((p) => p.kind === 'Deposit received' || p.kind === 'Deposit returned');
+  // everything the customer handed over: bill payments and the deposit, in date order
+  // the undated line is shown as its parts — the typed Advance on its own line, then the rest as a payment
+  const received = ledger.filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund' || p.kind === 'Deposit received')
+    .flatMap((p) => {
+      const adv = p.id === 'legacy' ? legacyAdvance(booking) : 0;
+      return adv > 0 && adv < p.amount
+        ? [{ ...p, id: 'legacy-adv', kind: 'Advance' as const, amount: adv }, { ...p, id: 'legacy', kind: 'Payment' as const, amount: p.amount - adv }]
+        : [p];
+    });
+  const depositIn = received.filter((p) => p.kind === 'Deposit received').reduce((t, p) => t + p.amount, 0);
+  // new money only: a bill payment taken from the deposit was already counted when the deposit came in
+  const receivedTotal = received.reduce((t, p) => t + (p.kind === 'Refund' ? -p.amount : p.method === 'Security deposit' ? 0 : p.amount), 0);
+  // the same split as the Payments tab: part of the deduction may have paid the bill
+  const depUsed = (booking.payments ?? []).filter((p) => p.kind === 'Payment' && p.method === 'Security deposit').reduce((t, p) => t + p.amount, 0);
+  const depKept = (booking.depositDeduction ?? 0) - depUsed;
+  const depHeld = depositHeld(booking);
+  const paidFromLog =(booking.payments ?? []).some((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
 
@@ -270,7 +298,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     // a payout line already paid is not changed — the difference is settled with the owner
     if (owedPaid.length) toast.warning('Paid payout not changed', 'A replacement owner was already paid — settle the difference with them in Commissions.');
 
-    editBooking(booking.id, diff, { by: staff, changes, reason: reason.trim() || undefined });
+    // (the booking itself was saved once, above — a second editBooking wrote every change twice into History)
     onSaved?.(useStore.getState().bookings.find((b) => b.id === booking.id) ?? booking);
     onClose();
   };
@@ -354,38 +382,136 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
           <Field label="Discount (Rs)">
             <input className="input" type="number" min="0" value={f.discount || ''} onChange={(e) => set('discount', numIn(e.target.value))} placeholder="0" />
           </Field>
-          <Field label="Advance (Rs)">
-            <input className="input" type="number" min="0" value={f.advanceAmount || ''} onChange={(e) => set('advanceAmount', numIn(e.target.value))} placeholder="0" />
-          </Field>
-          <Field label="Paid (Rs)">
-            <input className="input" type="number" min="0" value={f.paidAmount || ''} onChange={(e) => set('paidAmount', numIn(e.target.value))} placeholder="0" />
-          </Field>
+          {/* once money is in the payment log, Paid / Advance are its totals (listed below) and aren't typed:
+              a typed figure would put the log out of step and show up as a "date not recorded" line */}
+          {!paidFromLog && (
+            <>
+              <Field label="Advance (Rs)">
+                <input className="input" type="number" min="0" value={f.advanceAmount || ''} onChange={(e) => set('advanceAmount', numIn(e.target.value))} placeholder="0" />
+              </Field>
+              <Field label="Paid (Rs)">
+                <input className="input" type="number" min="0" value={f.paidAmount || ''} onChange={(e) => set('paidAmount', numIn(e.target.value))} placeholder="0" />
+              </Field>
+            </>
+          )}
           <Field label="Credit due (Rs)">
             <input className="input" type="number" min="0" value={f.creditAmount || ''} onChange={(e) => set('creditAmount', numIn(e.target.value))} placeholder="0" />
           </Field>
-          {/* everything on the bill, line by line */}
-          <div className="col-span-2 sm:col-span-4 rounded-xl border border-navy-100 px-3 py-2 text-xs space-y-1">
-            <p className="font-semibold text-navy-600 flex items-center gap-1.5"><Receipt size={13} /> On the bill</p>
-            <p className="flex justify-between"><span className="text-navy-500">Rental</span><span className="tabular-nums">{rs(f.totalAmount)}</span></p>
-            {(newKm > 0 || oldKm > 0) && (
-              <p className="flex justify-between gap-3"><span className="text-navy-500">Extra km{newKm !== oldKm ? <span className="text-amber-700"> (was {rs(oldKm)})</span> : null}</span><span className="tabular-nums">{rs(newKm)}</span></p>
-            )}
-            {listed.map((c) => { const l = chargeLine(c); return (
-              <p key={c.id} className="flex justify-between gap-3"><span className="text-navy-500 min-w-0">{c.amount < 0 ? 'Deduction — ' : ''}{l.label}{l.detail ? <span className="text-navy-400"> · {l.detail}</span> : null}</span>
-                <span className={`tabular-nums whitespace-nowrap ${c.amount < 0 ? 'text-emerald-700' : ''}`}>{c.amount < 0 ? '− ' : ''}{rs(Math.abs(c.amount))}</span></p>
-            ); })}
-            {f.extraCharges !== 0 && <p className="flex justify-between"><span className="text-navy-500">Other charges (not itemised)</span><span className="tabular-nums">{rs(f.extraCharges)}</span></p>}
-            {f.discount > 0 && <p className="flex justify-between"><span className="text-navy-500">Discount</span><span className="tabular-nums text-emerald-700">− {rs(f.discount)}</span></p>}
-            <p className="flex justify-between font-bold text-navy-900 border-t border-navy-100 pt-1"><span>Bill</span><span className="tabular-nums">{rs(bill)}</span></p>
-            {listed.length > 0 && <p className="text-[11px] text-navy-400">Fines, damage and deductions are added or removed on the booking's Payments tab.</p>}
-          </div>
-          <div className="col-span-2 sm:col-span-4 grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-xl bg-navy-700 text-white p-2"><p className="text-[11px] opacity-70">Bill</p><p className="font-bold">{rs(bill)}</p></div>
-            <div className="rounded-xl bg-emerald-50 p-2"><p className="text-[11px] text-emerald-600">Paid + advance</p><p className="font-bold text-emerald-700">{rs(f.paidAmount + f.advanceAmount)}</p></div>
-            <div className={`rounded-xl p-2 ${balance > 0 ? 'bg-red-50' : 'bg-navy-50'}`}>
-              <p className={`text-[11px] ${balance > 0 ? 'text-red-500' : 'text-navy-400'}`}>{balance < 0 ? 'Overpaid' : 'Balance'}</p>
-              <p className={`font-bold ${balance > 0 ? 'text-red-700' : 'text-navy-700'}`}>{rs(Math.abs(balance))}</p>
+
+          {/* ── The money on this booking, as a statement ── */}
+          <div className="col-span-2 sm:col-span-4 rounded-2xl border border-navy-100 overflow-hidden text-xs">
+            <div className="grid sm:grid-cols-2 sm:divide-x divide-navy-100">
+              {/* 1 · what the customer owes */}
+              <div className="p-3 space-y-1">
+                <p className="flex items-center gap-1.5 font-semibold text-navy-700 text-[13px] mb-1.5"><Step n={1} /> <Receipt size={13} /> What the customer owes</p>
+                <p className="flex justify-between gap-3"><span className="text-navy-500">Rental</span><span className="tabular-nums">{rs(f.totalAmount)}</span></p>
+                {(newKm > 0 || oldKm > 0) && (
+                  <p className="flex justify-between gap-3"><span className="text-navy-500">Extra km{newKm !== oldKm ? <span className="text-amber-700"> (was {rs(oldKm)})</span> : null}</span><span className="tabular-nums">{rs(newKm)}</span></p>
+                )}
+                {listed.map((c) => { const l = chargeLine(c); return (
+                  <p key={c.id} className="flex justify-between gap-3"><span className="text-navy-500 min-w-0">{c.amount < 0 ? 'Deduction — ' : ''}{l.label}{l.detail ? <span className="text-navy-400"> · {l.detail}</span> : null}</span>
+                    <span className={`tabular-nums whitespace-nowrap ${c.amount < 0 ? 'text-emerald-700' : ''}`}>{c.amount < 0 ? '− ' : ''}{rs(Math.abs(c.amount))}</span></p>
+                ); })}
+                {f.extraCharges !== 0 && <p className="flex justify-between gap-3"><span className="text-navy-500">Other charges (not itemised)</span><span className="tabular-nums">{rs(f.extraCharges)}</span></p>}
+                {f.discount > 0 && <p className="flex justify-between gap-3"><span className="text-navy-500">Discount</span><span className="tabular-nums text-emerald-700">− {rs(f.discount)}</span></p>}
+                <p className="flex justify-between gap-3 font-bold text-navy-900 border-t border-navy-100 pt-1.5 mt-1 text-[13px]"><span>Bill</span><span className="tabular-nums">{rs(bill)}</span></p>
+                {listed.length > 0 && <p className="text-[11px] text-navy-400">Fines, damage and deductions are added or removed on the Payments tab.</p>}
+              </div>
+
+              {/* 2 · what they paid, payment by payment */}
+              <div className="p-3 border-t sm:border-t-0 border-navy-100">
+                <p className="flex items-center gap-1.5 font-semibold text-navy-700 text-[13px] mb-1.5"><Step n={2} /> <Wallet size={13} /> What they paid</p>
+                {received.length === 0 ? (
+                  <p className="text-navy-400">{paidFromLog ? 'Nothing yet.' : f.paidAmount + f.advanceAmount > 0 ? 'Typed above as Paid / Advance (no payment log yet).' : 'Nothing paid yet.'}</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {received.map((p) => {
+                      const out = p.kind === 'Refund';
+                      const isDeposit = p.kind === 'Deposit received';
+                      const fromDeposit = p.method === 'Security deposit';
+                      const undated = p.id.startsWith('legacy');
+                      const how = fromDeposit ? 'taken from the deposit' : p.method && p.method !== '—' ? `by ${p.method.toLowerCase()}` : '';
+                      return (
+                        <li key={p.id} className="flex justify-between gap-3">
+                          <span className="min-w-0">
+                            <span className="font-medium text-navy-800">{out ? 'Refund to customer' : isDeposit ? 'Deposit' : p.kind === 'Advance' ? 'Advance' : 'Payment'}</span>
+                            <span className="text-navy-500"> {how}</span>
+                            <span className={`ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ${isDeposit || fromDeposit ? 'bg-amber-100 text-amber-800' : 'bg-navy-50 text-navy-600'}`}>
+                              {out ? 'back from the bill' : isDeposit ? 'for the deposit' : 'for the bill'}
+                            </span>
+                            <span className="block text-[11px] text-navy-400">
+                              {undated ? <span className="text-amber-700">date not recorded</span> : fmtDay(p.at)}
+                              {p.by && p.by !== '—' ? ` · ${p.by}` : ''}{p.receiptNo ? ` · receipt ${p.receiptNo}` : ''}{p.note && !undated ? ` · ${p.note}` : ''}
+                            </span>
+                          </span>
+                          <span className={`tabular-nums whitespace-nowrap font-semibold ${out ? 'text-red-600' : fromDeposit ? 'text-navy-400' : 'text-emerald-700'}`}>{out ? '− ' : fromDeposit ? '' : '+ '}{rs(p.amount)}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+                {/* the full amount received, then what it went to */}
+                <div className="border-t border-navy-100 pt-1.5 mt-1.5 space-y-0.5">
+                  {received.length > 0 && (
+                    <p className="flex justify-between gap-3 font-bold text-navy-900 text-[13px]"><span>Received in total</span><span className="tabular-nums">{rs(receivedTotal)}</span></p>
+                  )}
+                  <p className="flex justify-between gap-3 text-navy-700"><span>Paid for the bill{depUsed > 0 ? ` (incl. ${rs(depUsed)} from the deposit)` : ''}</span><span className="tabular-nums font-semibold text-emerald-700">{rs(f.paidAmount + f.advanceAmount)}</span></p>
+                  {depositIn > 0 && <p className="flex justify-between gap-3 text-navy-700"><span>Paid for the deposit</span><span className="tabular-nums font-semibold text-amber-800">{rs(depositIn)}</span></p>}
+                </div>
+                {paidFromLog && <p className="text-[11px] text-navy-400 mt-1">To add a payment or fix one, use <b>Record</b> or <b>Correct</b> on the Payments tab.</p>}
+              </div>
             </div>
+
+            {/* 3 · where that leaves the bill */}
+            <div className={`px-3 py-2.5 border-t flex flex-wrap items-center justify-between gap-2 ${balance > 0 ? 'bg-red-50 border-red-100' : balance < 0 ? 'bg-amber-50 border-amber-100' : 'bg-emerald-50 border-emerald-100'}`}>
+              <p className="flex items-center gap-1.5 text-navy-600"><Step n={3} /> <span className="tabular-nums">Bill {rs(bill)} − paid {rs(f.paidAmount + f.advanceAmount)}</span></p>
+              <p className={`font-bold text-[13px] ${balance > 0 ? 'text-red-700' : balance < 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                {balance > 0 ? `Still to pay ${rs(balance)}` : balance < 0 ? `Overpaid by ${rs(-balance)}` : 'Paid in full ✓'}
+              </p>
+            </div>
+
+            {/* 4 · the security deposit — the customer's money, kept apart from the bill */}
+            {booking.depositType && (
+              <div className="px-3 py-2.5 border-t border-amber-200 bg-amber-50/60">
+                <p className="flex items-center gap-1.5 font-semibold text-amber-900 text-[13px]"><Step n={4} tone="amber" /> <ShieldCheck size={13} /> Security deposit</p>
+                <p className="text-[11px] text-amber-700 ml-[22px]">The customer's money, held apart from the bill</p>
+                {booking.depositType === 'cash' ? (
+                  <>
+                    <ul className="space-y-1 mt-1.5">
+                      {depositMoves.map((p) => (
+                        <li key={p.id} className="flex justify-between gap-3">
+                          <span className="min-w-0">
+                            {p.kind === 'Deposit received' ? (
+                              <span className="text-navy-800">
+                                <span className="font-medium">Kept from the payment</span>{' '}
+                                {p.id.startsWith('legacy') ? <span className="text-amber-700">(date not recorded)</span> : <>on {fmtDay(p.at)}</>}
+                                {p.method && p.method !== '—' ? <span className="text-navy-500"> · {p.method.toLowerCase()}</span> : null}
+                              </span>
+                            ) : (
+                              <span className="text-navy-800">
+                                <span className="font-medium">Given back</span>{' '}
+                                {p.id.startsWith('legacy') ? <span className="text-amber-700">(date not recorded)</span> : <>on {fmtDay(p.at)}</>}
+                                {p.method && p.method !== '—' ? <span className="text-navy-500"> · {p.method.toLowerCase()}</span> : null}
+                              </span>
+                            )}
+                            {p.by && p.by !== '—' && <span className="block text-[11px] text-navy-400">by {p.by}</span>}
+                          </span>
+                          <span className="tabular-nums whitespace-nowrap font-semibold text-navy-800">{p.kind === 'Deposit received' ? '' : '− '}{rs(p.amount)}</span>
+                        </li>
+                      ))}
+                      {depUsed > 0 && <li className="flex justify-between gap-3"><span className="font-medium text-navy-800">Used to pay the bill</span><span className="tabular-nums font-semibold text-navy-800">− {rs(depUsed)}</span></li>}
+                      {depKept > 0 && <li className="flex justify-between gap-3"><span className="font-medium text-navy-800">Kept by the company</span><span className="tabular-nums font-semibold text-navy-800">− {rs(depKept)}</span></li>}
+                    </ul>
+                    <p className="flex justify-between gap-3 font-bold text-amber-900 border-t border-amber-200 pt-1.5 mt-1.5 text-[13px]">
+                      <span>{depHeld > 0 ? 'Still with us — to give back' : 'Settled'}</span><span className="tabular-nums">{rs(depHeld)}</span>
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-navy-700">{booking.depositType === 'vehicle' ? 'Vehicle' : 'Item'} held: {booking.depositAssetDescription?.split('|').map((s) => s.trim()).filter(Boolean).join(' · ') || 'not described'}</p>
+                )}
+                <p className="text-[11px] text-amber-700/80 mt-1">Taken, given back or kept on the Payments tab.</p>
+              </div>
+            )}
           </div>
         </section>
 

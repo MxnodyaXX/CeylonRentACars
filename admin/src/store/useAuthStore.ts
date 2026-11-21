@@ -1,13 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { AuthState, AppUser, OwnerPermissions } from '../types/auth';
+import { AuthState, AppUser, OwnerPermissions, StaffPart } from '../types/auth';
 import { supabase, supabaseEnabled } from '../lib/supabase';
 import {
   changeOwnPassword, cleanUsername, createStaff, createTeamStaff, currentSession, listStaff, resetStaffPassword, signIn, signOut, tempPassword,
   updateStaff, userFromAuth,
 } from '../lib/staffAuth';
 import { toast } from './useToast';
-import { presetFor } from '../lib/staffRoles';
+import { parentOf, partOn, presetFor } from '../lib/staffRoles';
 
 /*
  * Who is signed in to the admin.
@@ -251,7 +251,15 @@ export const useAuthStore = create<AuthState>()(
         if (!currentUser) return false;
         if (currentUser.role === 'admin') return true;
         // a team member: exactly the abilities on their login (signed by the server)
-        if (currentUser.role === 'staff') return !!currentUser.permissions?.[perm];
+        // a part of an ability (e.g. "Give refunds"): the ability, unless that part was switched off
+        const parent = parentOf(perm);
+        if (currentUser.role === 'staff') {
+          if (parent) return partOn(currentUser.permissions ?? {}, perm as StaffPart);
+          return !!currentUser.permissions?.[perm];
+        }
+        if (parent) return get().can(parent);
+        // the company's customers: never an owner's (Customers, Inquiries and Messages pages — lib/ownerPrivacy)
+        if (perm === 'canViewCustomers' || perm === 'canViewInquiries') return false;
         if (!(perm in DEFAULT_PERMS)) return false;   // team-only abilities never apply to owners
         const perms = get().getOwnerPermissions(currentUser.ownerId ?? '');
         if (perms.disabled) return false;

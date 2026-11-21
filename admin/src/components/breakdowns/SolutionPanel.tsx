@@ -14,6 +14,7 @@ import SwapPanel from './SwapPanel';
 import { ExpenseEditor } from './MoneyPanels';
 import { Chips, ErrorLine, Field, Grid, KV, Pill, Section, fromLocalInput, num, rs, toLocalInput, when } from './bdui';
 import { toast } from '../../store/useToast';
+import { askConfirm, askText } from '../../lib/dialog';
 
 const EXPENSE_CATS: Record<SolutionKind, ExpenseCategory[]> = {
   onsite_repair: ['callout', 'labour', 'parts', 'transport', 'tax', 'discount', 'other'],
@@ -98,7 +99,7 @@ export default function SolutionPanel({ s, incident, by }: { s: BdSolution; inci
             }}><XCircle size={14} /> Repair didn't work</button>
           )}
           {!closed && <button type="button" className="btn-primary !py-1.5 text-sm inline-flex items-center gap-1" onClick={() => status('completed', s.kind === 'onsite_repair' ? { repairResult: v.repairResult, result: v.repairResult ? REPAIR_RESULT_LABEL[v.repairResult] : undefined } : {})}><CheckCircle2 size={14} /> Mark completed</button>}
-          {!closed && <button type="button" className="text-xs font-semibold text-navy-400 hover:text-red-600" onClick={() => { const r = prompt('Why is this solution cancelled? (Its records are kept.)'); if (r) status('cancelled', { result: r }); }}>Cancel solution</button>}
+          {!closed && <button type="button" className="text-xs font-semibold text-navy-400 hover:text-red-600" onClick={async () => { const r = await askText('Why is this solution cancelled? (Its records are kept.)'); if (r) status('cancelled', { result: r }); }}>Cancel solution</button>}
         </div>
         {s.status === 'failed' && <p className="text-xs text-amber-700 flex items-center gap-1"><AlertTriangle size={13} /> This attempt failed — its records and costs are kept. Add another solution above (e.g. towing or replacement).</p>}
         {/* only while this breakdown still holds the car under maintenance */}
@@ -262,10 +263,10 @@ function PriceChange({ s, by, act, adj, setAdj, hint }: { s: BdSolution; inciden
           {hint && <p className="text-xs text-navy-400">{hint}</p>}
           <div className="flex flex-wrap items-end gap-2">
             <Field label="Agreed change (Rs) — + more, − credit"><input className="input !w-48" type="number" value={adj} onChange={(e) => setAdj(e.target.value)} /></Field>
-            <button type="button" className="btn-secondary !py-2 text-sm" onClick={() => {
+            <button type="button" className="btn-secondary !py-2 text-sm" onClick={async () => {
               const n = Number(adj);
               if (!n) { act(() => 'Enter the agreed amount.'); return; }
-              if (!confirm(n > 0 ? `The customer has agreed to pay ${rs(n)} more? It will be added to their booking bill.` : `Give the customer a credit of ${rs(-n)}?`)) return;
+              if (!await askConfirm(n > 0 ? `The customer has agreed to pay ${rs(n)} more? It will be added to their booking bill.` : `Give the customer a credit of ${rs(-n)}?`)) return;
               act(() => store.applyPriceDifference(s.id, n, by));
             }}>Customer agreed — apply</button>
           </div>
@@ -334,9 +335,9 @@ function Partner({ s, draft, incident, by, act }: { s: BdSolution; draft: Draft;
           {s.ownerShareAdjustment ? <p className="text-sm">Reduced by {rs(s.ownerShareAdjustment)}.</p> : (
             <div className="flex flex-wrap items-end gap-2">
               <Field label="Reduce original owner's payout by (Rs)"><input className="input !w-48" type="number" min="0" placeholder={suggestedOwner ? String(suggestedOwner) : ''} value={ownerAdj} onChange={(e) => setOwnerAdj(e.target.value)} /></Field>
-              <button type="button" className="btn-secondary !py-2 text-sm" onClick={() => {
+              <button type="button" className="btn-secondary !py-2 text-sm" onClick={async () => {
                 const n = Number(ownerAdj || suggestedOwner);
-                if (!confirm(`Reduce the original owner's payout by ${rs(n)}?`)) return;
+                if (!await askConfirm(`Reduce the original owner's payout by ${rs(n)}?`)) return;
                 act(() => store.applyOwnerShareAdjustment(s.id, n, by));
               }}>Apply</button>
             </div>
@@ -385,13 +386,13 @@ function TowingGarage({ s, draft, incident, by, act }: { s: BdSolution; draft: D
           <Field label="Repair quotation (Rs)"><input className="input !w-40" {...number('quoteAmount')} /></Field>
           {s.quoteApprovedAt
             ? <span className="text-sm text-emerald-700 pb-2">Approved by {s.quoteApprovedBy}, {when(s.quoteApprovedAt)}</span>
-            : <button type="button" className="btn-secondary !py-2 text-sm" onClick={() => { if (confirm(`Approve the garage quotation of ${rs(draft.v.quoteAmount)}?`)) act(() => { if (draft.dirty) store.updateSolution(s.id, draft.d, by); return store.approveQuote(s.id, by); }); }}>Approve quotation</button>}
+            : <button type="button" className="btn-secondary !py-2 text-sm" onClick={async () => { if (await askConfirm(`Approve the garage quotation of ${rs(draft.v.quoteAmount)}?`)) act(() => { if (draft.dirty) store.updateSolution(s.id, draft.d, by); return store.approveQuote(s.id, by); }); }}>Approve quotation</button>}
         </div>
         <div className="flex flex-wrap items-center gap-3 border-t border-navy-50 pt-3">
           {s.roadworthyAt ? <span className="text-sm text-emerald-700">Garage confirmed roadworthy — {s.roadworthyBy}, {when(s.roadworthyAt)}</span> : (
-            <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={() => { if (confirm('The garage confirms the vehicle is repaired and roadworthy?')) act(() => store.confirmRoadworthy(s.id, by)); }}>Garage confirms roadworthy</button>
+            <button type="button" className="btn-secondary !py-1.5 text-sm" onClick={async () => { if (await askConfirm('The garage confirms the vehicle is repaired and roadworthy?')) act(() => store.confirmRoadworthy(s.id, by)); }}>Garage confirms roadworthy</button>
           )}
-          <span className="text-[11px] text-navy-400">{vehicle?.vehicleNumber ?? 'The vehicle'} stays under maintenance until an admin uses <b>Mark vehicle as ready</b> (Overview).</span>
+          <span className="text-[11px] text-navy-400">{vehicle?.vehicleNumber ?? 'The vehicle'} stays under maintenance until someone allowed to uses <b>Mark vehicle as ready</b> (Overview).</span>
         </div>
         <p className="text-[11px] text-navy-400">While the car is at the garage you can add a replacement, partner vehicle or alternative transport as another solution.</p>
       </Section>
@@ -450,18 +451,20 @@ function CustomerRepair({ s, draft, incident, by, act }: { s: BdSolution; draft:
   const shop = v.garageName?.trim() || 'the shop';
   const tooMuch = mode === 'customer_bill' && amount > due + 0.5;
 
-  const record = () => act(() => {
-    if (!(amount > 0)) return 'Enter what the shop charged.';
-    if (!v.partsReplaced?.trim() && !v.workDone?.trim()) return 'Say what was replaced or repaired (e.g. Battery 12V 45Ah).';
+  const record = async () => {
+    if (!(amount > 0)) { act(() => 'Enter what the shop charged.'); return; }
+    if (!v.partsReplaced?.trim() && !v.workDone?.trim()) { act(() => 'Say what was replaced or repaired (e.g. Battery 12V 45Ah).'); return; }
     const msg = mode === 'customer_bill'
       ? `${b?.customerName ?? 'The customer'} paid ${shop} ${rs(amount)}.\n\nTake ${rs(amount)} off their final bill? Their balance goes from ${rs(due)} to ${rs(due - amount)}.`
       : mode === 'company_paid' ? `Record that the company paid ${shop} ${rs(amount)} by ${method}?` : `Add ${rs(amount)} as a cost still to pay to ${shop}?`;
-    if (!confirm(msg)) return null;
+    if (!(await askConfirm(msg))) return;
+    act(() => {
     if (draft.dirty) { store.updateSolution(s.id, draft.d, by); draft.reset(); }
     const e = store.settleShopRepair(s.id, { mode, amount, description: what, method: mode === 'company_later' ? undefined : method, reference: ref, key, by });
     if (!e) setKey(newKey());
     return e;
-  });
+    });
+  };
 
   return (
     <>
@@ -573,9 +576,9 @@ function Termination({ s, draft, incident, by, act }: { s: BdSolution; draft: Dr
           {s.refundStatus === 'pending_approval' && (
             <div className="flex flex-wrap items-end gap-2 border-t border-navy-50 pt-3">
               <Field label="Approve refund of (Rs)"><input className="input !w-40" type="number" min="0" placeholder={String(Math.round(s.refundProposed))} value={approve} onChange={(e) => setApprove(e.target.value)} /></Field>
-              <button type="button" className="btn-primary !py-2 text-sm" onClick={() => {
+              <button type="button" className="btn-primary !py-2 text-sm" onClick={async () => {
                 const n = approve === '' ? s.refundProposed! : Number(approve);
-                if (!confirm(`Approve a refund of ${rs(n)}? (Only an authorised admin should do this.)`)) return;
+                if (!await askConfirm(`Approve a refund of ${rs(n)}? (Only an authorised admin should do this.)`)) return;
                 act(() => store.approveRefund(s.id, n, by));
               }}>Approve refund</button>
             </div>
@@ -584,8 +587,8 @@ function Termination({ s, draft, incident, by, act }: { s: BdSolution; draft: Dr
 
           <div className="border-t border-navy-50 pt-3 space-y-2">
             {s.bookingAmendedAt ? <p className="text-sm text-emerald-700">Booking shortened to the used period on {when(s.bookingAmendedAt)} (original price {rs(s.originalTotal)} kept in its history).</p> : (
-              <button type="button" className="btn-secondary !py-1.5 text-sm" disabled={!s.refundApprovedAt && s.refundStatus !== 'not_required'} onClick={() => {
-                if (!confirm(`Shorten booking to ${s.usedDays} day(s) (${rs(usedValue)})? Owner payouts follow the shorter booking.`)) return;
+              <button type="button" className="btn-secondary !py-1.5 text-sm" disabled={!s.refundApprovedAt && s.refundStatus !== 'not_required'} onClick={async () => {
+                if (!await askConfirm(`Shorten booking to ${s.usedDays} day(s) (${rs(usedValue)})? Owner payouts follow the shorter booking.`)) return;
                 act(() => store.amendBookingForTermination(s.id, by));
               }}>Shorten booking to the used period</button>
             )}
@@ -595,8 +598,8 @@ function Termination({ s, draft, incident, by, act }: { s: BdSolution; draft: Dr
             <div className="flex flex-wrap items-end gap-2 border-t border-navy-50 pt-3">
               <Field label="Paid by"><select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>{['Bank transfer', 'Cash', 'Card reversal', 'Online'].map((m) => <option key={m}>{m}</option>)}</select></Field>
               <Field label="Transaction reference"><input className="input" value={ref} onChange={(e) => setRef(e.target.value)} /></Field>
-              <button type="button" className="btn-primary !py-2 text-sm" disabled={!s.bookingAmendedAt} onClick={() => {
-                if (!confirm(`Record that ${rs(s.refundApproved)} was refunded to ${b?.customerName ?? 'the customer'}?`)) return;
+              <button type="button" className="btn-primary !py-2 text-sm" disabled={!s.bookingAmendedAt} onClick={async () => {
+                if (!await askConfirm(`Record that ${rs(s.refundApproved)} was refunded to ${b?.customerName ?? 'the customer'}?`)) return;
                 act(() => store.payRefund(s.id, { method, reference: ref, key }, by));
               }}>Record refund paid</button>
             </div>

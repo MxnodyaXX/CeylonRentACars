@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { companyBooks } from '../lib/personal';
 import { Link } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import {
@@ -19,6 +20,7 @@ import {
 import type { CompanyAccount } from '../types';
 import FigureExplain, { type FigureKey } from '../components/ui/FigureExplain';
 import AccountStatement from '../components/accounts/AccountStatement';
+import { askConfirm, askText } from '../lib/dialog';
 
 /*
  * Finance → Company accounts: the company's books on one page.
@@ -81,7 +83,7 @@ export default function CompanyAccounts() {
   const [compare, setCompare] = useState(true);
   useEffect(() => { fin.refresh(); settle.refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const books: Books = useMemo(() => ({
+  const books: Books = useMemo(() => companyBooks({
     bookings: st.bookings, commissions: st.commissions, expenses: st.expenses, vehicles: st.vehicles, owners: st.owners,
     settlements: settle.list, accounts: fin.accounts, companyExpenses: fin.expenses, transfers: fin.transfers, settings: fin.settings, from: settle.from,
   }), [st.bookings, st.commissions, st.expenses, st.vehicles, st.owners, settle.list, settle.from, fin.accounts, fin.expenses, fin.transfers, fin.settings]);
@@ -474,10 +476,10 @@ function ExpensesTab({ admin }: { admin: boolean }) {
                 </span>
                 <b className="text-navy-900">{rs(e.amount)}</b>
                 {s === 'pending' && admin && (<>
-                  <button type="button" className="btn-secondary !py-1 text-xs" onClick={() => { const why = prompt('Why is it rejected?'); if (why?.trim()) run(() => fin.reviewExpense(e.id, false, why.trim()), 'Rejected'); }}>Reject</button>
+                  <button type="button" className="btn-secondary !py-1 text-xs" onClick={async () => { const why = await askText('Why is it rejected?'); if (why?.trim()) run(() => fin.reviewExpense(e.id, false, why.trim()), 'Rejected'); }}>Reject</button>
                   <button type="button" className="btn-primary !py-1 text-xs" onClick={() => run(() => fin.reviewExpense(e.id, true), 'Approved')}>Approve</button>
                 </>)}
-                {(s === 'pending' || s === 'rejected') && <button type="button" className="text-xs text-navy-400 hover:text-red-600" onClick={() => { if (confirm('Delete this expense?')) run(() => fin.deleteExpense(e.id), 'Deleted'); }}>Delete</button>}
+                {(s === 'pending' || s === 'rejected') && <button type="button" className="text-xs text-navy-400 hover:text-red-600" onClick={async () => { if (await askConfirm('Delete this expense?')) run(() => fin.deleteExpense(e.id), 'Deleted'); }}>Delete</button>}
                 {s === 'approved' && paying !== e.id && <button type="button" className="btn-primary !py-1 text-xs" onClick={() => { setPaying(e.id); setPayAcc(e.accountId ?? ''); }}>Mark paid</button>}
                 {s === 'approved' && paying === e.id && (
                   <span className="flex items-center gap-1.5">
@@ -619,8 +621,8 @@ function MonthsTab({ books, ledger, admin, bal, held }: { books: Books; ledger: 
   const close = async (p: string) => {
     const f = figs(p);
     const pending = books.companyExpenses.filter((e) => e.status === 'pending' && e.date.startsWith(p)).length;
-    if (pending && !confirm(`${pending} company expense${pending === 1 ? ' is' : 's are'} still waiting for approval in ${periodLabel(p)}. Close anyway?`)) return;
-    if (!confirm(`Close ${periodLabel(p)}? Its figures are kept, and its company expenses and transfers are locked.`)) return;
+    if (pending && !await askConfirm(`${pending} company expense${pending === 1 ? ' is' : 's are'} still waiting for approval in ${periodLabel(p)}. Close anyway?`)) return;
+    if (!await askConfirm(`Close ${periodLabel(p)}? Its figures are kept, and its company expenses and transfers are locked.`)) return;
     try {
       await fin.closeMonth(p, { collected: f.collected, rentalProfit: f.rentalProfit, running: f.running, runningPrivate: f.runningPrivate, badDebt: f.badDebt, profit: f.profit, cash: bal.total, owed: held.owed, deposits: held.deposits });
       toast.success(`${periodLabel(p)} closed`);
@@ -645,7 +647,7 @@ function MonthsTab({ books, ledger, admin, bal, held }: { books: Books; ledger: 
                   : <>Open · profit so far {rs(live.profit)} · {live.bookings} rental{live.bookings === 1 ? '' : 's'} completed</>}
               </span>
               {admin && !c && !current && <button type="button" className="btn-primary !py-1 text-xs inline-flex items-center gap-1" onClick={() => close(p)}><CheckCircle2 size={13} /> Close month</button>}
-              {admin && c && <button type="button" className="btn-secondary !py-1 text-xs" onClick={() => { if (confirm(`Reopen ${periodLabel(p)}?`)) fin.reopenMonth(p).then(() => toast.success('Reopened')).catch((e) => toast.error('Not reopened', (e as Error).message)); }}>Reopen</button>}
+              {admin && c && <button type="button" className="btn-secondary !py-1 text-xs" onClick={async () => { if (await askConfirm(`Reopen ${periodLabel(p)}?`)) fin.reopenMonth(p).then(() => toast.success('Reopened')).catch((e) => toast.error('Not reopened', (e as Error).message)); }}>Reopen</button>}
               {current && !c && <span className="text-xs text-navy-400">Closes after the month ends</span>}
             </div>
           );

@@ -6,10 +6,13 @@ import { toast } from '../../store/useToast';
 import { rs } from '../../lib/bookingRecord';
 import { STATUS_INFO, payoutDate, periodLabel, useSettlements } from '../../lib/settlements';
 import { printSettlement } from '../../lib/printSettlement';
+import { useAmountsOff } from '../../lib/ownerMoney';
+import { askText } from '../../lib/dialog';
 
 /** The owner's monthly payout statements: what was paid, every line behind it, and "Confirm received" */
 export default function OwnerStatements() {
   const ownerId = useAuthStore((s) => s.currentUser?.ownerId);
+  const amountsOff = useAmountsOff();
   const owner = useStore((s) => s.owners.find((o) => o.id === ownerId));
   const { list, loaded, payoutDay, refresh, confirm } = useSettlements();
   const [busy, setBusy] = useState<string | null>(null);
@@ -20,7 +23,8 @@ export default function OwnerStatements() {
   const next = payoutDate(new Date().toISOString().slice(0, 7), payoutDay);
 
   const received = async (id: string) => {
-    const note = prompt('Anything to add? (optional — e.g. "Received in full")') ?? undefined;
+    const note = await askText('Confirm you received this payout\nAnything to add? (optional — e.g. "Received in full")', { optional: true, confirmLabel: 'Confirm received', placeholder: 'Optional note' });
+    if (note === null) return;   // cancelled
     setBusy(id);
     try { await confirm(id, note?.trim() || undefined); toast.success('Thank you', 'The company sees that you received it.'); }
     catch (e) { toast.error('Not saved', (e as Error).message); }
@@ -46,7 +50,7 @@ export default function OwnerStatements() {
               </p>
             </div>
             <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_INFO[s.status].cls}`}>{s.status === 'paid' ? 'Paid — please confirm' : STATUS_INFO[s.status].label}</span>
-            <button type="button" onClick={() => { if (!printSettlement(s, owner)) toast.error('Statement not opened', 'Allow pop-ups for this site.'); }}
+            <button type="button" onClick={() => { if (!printSettlement(s, owner, amountsOff)) toast.error('Statement not opened', 'Allow pop-ups for this site.'); }}
                     className="btn-secondary !py-1.5 text-xs inline-flex items-center gap-1"><FileText size={13} /> Statement</button>
             {s.status === 'paid' && (
               <button type="button" disabled={busy === s.id} onClick={() => received(s.id)}

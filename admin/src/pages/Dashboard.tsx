@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { companyBooks } from '../lib/personal';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { useAmountsOff } from '../lib/ownerMoney';
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   AlertTriangle, ArrowDownLeft, ArrowUpRight, CalendarDays, Car, CheckCircle2, ChevronRight, Clock, Info, KeyRound, Megaphone, Undo2, Wrench,
@@ -40,6 +42,9 @@ const hm = () => { const n = new Date(); return `${String(n.getHours()).padStart
 export default function Dashboard() {
   const { currentUser, isAdmin, can } = useAuthStore();
   const owner = !isAdmin() && currentUser?.role === 'owner';
+  // payouts only (Settings → Show bookings and rental amounts to owners): their home is their payouts
+  const payoutsOnly = useAmountsOff();
+  if (owner && payoutsOnly) return <Navigate to="/commissions" replace />;
   if (owner) return <DashboardClassic />;
   return <CompanyDashboard admin={isAdmin()} staff={currentUser?.role === 'staff'} can={can} name={currentUser?.name} />;
 }
@@ -63,7 +68,7 @@ function CompanyDashboard({ admin, staff, can, name }: { admin: boolean; staff: 
   const monthName = n.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
   const periodText = `1 – ${new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()} ${n.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}`;
 
-  const books: Books = useMemo(() => ({
+  const books: Books = useMemo(() => companyBooks({
     bookings: st.bookings, commissions: st.commissions, expenses: st.expenses, vehicles: st.vehicles, owners: st.owners,
     settlements: settle.list, accounts: fin.accounts, companyExpenses: fin.expenses, transfers: fin.transfers, settings: fin.settings, from: settle.from,
   }), [st.bookings, st.commissions, st.expenses, st.vehicles, st.owners, settle.list, settle.from, fin.accounts, fin.expenses, fin.transfers, fin.settings]);

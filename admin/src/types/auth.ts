@@ -8,8 +8,19 @@ export type StaffAbility =
   | 'canViewExpenses' | 'canAddExpenses' | 'canEditVehicle' | 'canViewCustomers' | 'canViewInquiries'
   | 'canViewDrivers' | 'canManageBreakdowns' | 'canViewOwners' | 'canViewFeedback' | 'canViewReferrals' | 'canViewIncomplete'
   | 'canEditPrices' | 'canAddVehicle'
+  // return a car under a breakdown hold to service (security/27_ready_by_team.sql)
+  | 'canMarkVehicleReady'
   // booking e-Agreement (security/23_eagreement_functions.sql)
   | 'canSendAgreements' | 'canRequestAdvance' | 'canVerifyPayments';
+
+/** One part of an ability that can be switched off on its own (Permissions → Team → open the ability).
+ *  Not set = follows the ability. Checked in the app; the database checks the ability itself. */
+export type StaffPart =
+  | 'canBookCreate' | 'canBookEdit' | 'canBookCancel'
+  | 'canPayRecord' | 'canPayRefund' | 'canPayDeposit' | 'canPayCharges'
+  | 'canHandoverPickup' | 'canHandoverReturn'
+  | 'canFinanceCommissions' | 'canFinancePayouts' | 'canFinanceAccounts' | 'canFinanceCredit';
+export type StaffPerms = Partial<Record<StaffAbility | StaffPart, boolean>>;
 
 export interface AppUser {
   id: string;
@@ -24,7 +35,7 @@ export interface AppUser {
   nic?: string;
   email?: string;
   /** Owner permissions as saved on the login (server-side app_metadata) */
-  permissions?: Partial<OwnerPermissions> & Partial<Record<StaffAbility, boolean>>;
+  permissions?: Partial<OwnerPermissions> & StaffPerms;
   /** Login switched off by the admin */
   disabled?: boolean;
   lastSignIn?: string;
@@ -81,9 +92,9 @@ export interface AuthState {
   isStaff: () => boolean;
   /** admin or team: works with the whole company's data (owners only see their own) */
   seesAll: () => boolean;
-  can: (perm: keyof Omit<OwnerPermissions, 'disabled'> | StaffAbility) => boolean;
+  can: (perm: keyof Omit<OwnerPermissions, 'disabled'> | StaffAbility | StaffPart) => boolean;
   /** Team logins (admin): create — returns the username and a temporary password shown once */
-  createTeamLogin: (p: { username: string; name: string; job: StaffJob; permissions: Partial<Record<StaffAbility, boolean>> }) => Promise<{ username: string; password: string } | string>;
+  createTeamLogin: (p: { username: string; name: string; job: StaffJob; permissions: StaffPerms }) => Promise<{ username: string; password: string } | string>;
   /** Team logins (admin): change job / abilities / name / disabled */
-  updateTeamLogin: (id: string, p: { name?: string; job?: StaffJob; permissions?: Partial<Record<StaffAbility, boolean>>; disabled?: boolean }) => Promise<string | null>;
+  updateTeamLogin: (id: string, p: { name?: string; job?: StaffJob; permissions?: StaffPerms; disabled?: boolean }) => Promise<string | null>;
 }

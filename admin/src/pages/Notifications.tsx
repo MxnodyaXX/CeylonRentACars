@@ -40,7 +40,7 @@ export default function Notifications() {
 
   // Owners only see global alerts + alerts addressed to them; admin sees everything.
   const visible = notifications.filter((n) =>
-    isAdmin() || !n.ownerId || n.ownerId === currentUser?.ownerId,
+    isAdmin() || (!n.ownerId && currentUser?.role !== 'owner') || (!!n.ownerId && n.ownerId === currentUser?.ownerId),
   );
   const unread = visible.filter((n) => !n.read);
   const read = visible.filter((n) => n.read);

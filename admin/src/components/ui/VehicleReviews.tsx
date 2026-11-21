@@ -4,6 +4,7 @@ import { supabase, supabaseEnabled } from '../../lib/supabase';
 import { useStore } from '../../store/useStore';
 import { toast } from '../../store/useToast';
 import { VehicleReview } from '../../types';
+import { askConfirm } from '../../lib/dialog';
 
 /* Map a vehicle_reviews row (snake_case) to the app type */
 const fromDb = (r: Record<string, unknown>): VehicleReview => ({
@@ -91,7 +92,7 @@ export default function VehicleReviews({ vehicleId, canEdit }: { vehicleId: stri
   };
 
   const remove = async (r: VehicleReview) => {
-    if (!confirm(`Delete ${r.customerName}'s review?`)) return;
+    if (!await askConfirm(`Delete ${r.customerName}'s review?`)) return;
     const { error } = await supabase.from('vehicle_reviews').delete().eq('id', r.id);
     if (error) { toast.error('Could not delete review', error.message); return; }
     setReviews((list) => list.filter((x) => x.id !== r.id));

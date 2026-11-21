@@ -16,6 +16,8 @@ const map: Record<string, string> = {
   Paid:        'bg-emerald-50 text-emerald-700',
   Received:    'bg-emerald-50 text-emerald-700',
   Credit:      'bg-purple-50 text-purple-700',
+  Personal:    'bg-violet-100 text-violet-800',
+  Fixed:       'bg-violet-50 text-violet-700',
   'On Duty':   'bg-blue-50 text-blue-700',
   Off:         'bg-slate-100 text-slate-500',
 };
@@ -35,6 +37,8 @@ const dot: Record<string, string> = {
   Paid:        'bg-emerald-500',
   Received:    'bg-emerald-500',
   Credit:      'bg-purple-500',
+  Personal:    'bg-violet-500',
+  Fixed:       'bg-violet-400',
   'On Duty':   'bg-blue-500',
   Off:         'bg-slate-400',
 };

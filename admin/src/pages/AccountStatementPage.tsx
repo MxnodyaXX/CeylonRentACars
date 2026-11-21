@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import { companyBooks } from '../lib/personal';
 import { useNavigate } from 'react-router-dom';
 import AccountStatement from '../components/accounts/AccountStatement';
 import { useStore } from '../store/useStore';
@@ -14,7 +15,7 @@ export default function AccountStatementPage() {
   const navigate = useNavigate();
   useEffect(() => { fin.refresh(); settle.refresh(); document.title = 'Account statement — Ceylon Rent A Cars'; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const books: Books = useMemo(() => ({
+  const books: Books = useMemo(() => companyBooks({
     bookings: st.bookings, commissions: st.commissions, expenses: st.expenses, vehicles: st.vehicles, owners: st.owners,
     settlements: settle.list, accounts: fin.accounts, companyExpenses: fin.expenses, transfers: fin.transfers, settings: fin.settings, from: settle.from,
   }), [st.bookings, st.commissions, st.expenses, st.vehicles, st.owners, settle.list, settle.from, fin.accounts, fin.expenses, fin.transfers, fin.settings]);

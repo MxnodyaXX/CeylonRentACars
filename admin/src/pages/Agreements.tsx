@@ -10,6 +10,7 @@ import {
   AGREEMENT_STATUS, eag, eagEnabled, eagError, lk, loadPolicy,
   type Dashboard, type ExceptionRow, type Policy, type Template,
 } from '../lib/eagreement';
+import { askText } from '../lib/dialog';
 
 type Tab = 'overview' | 'exceptions' | 'policy' | 'wording';
 const card = 'card !p-4 md:!p-5';
@@ -103,7 +104,7 @@ function ExceptionsTab() {
   const { vehicles } = useStore();
   const isAdmin = useAuthStore((s) => s.currentUser?.role === 'admin');
   const me = useAuthStore((s) => s.currentUser?.name);
-  const canBook = useAuthStore((s) => s.can('canBook'));
+  const canBook = useAuthStore((s) => s.can('canBookCreate'));
   const [rows, setRows] = useState<ExceptionRow[]>([]);
   const [busy, setBusy] = useState('');
   const [asking, setAsking] = useState(false);
@@ -164,7 +165,7 @@ function ExceptionsTab() {
                   {x.status === 'PENDING' && isAdmin && x.requested_by !== me && (
                     <>
                       <button type="button" disabled={busy === x.id} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-emerald-600 text-white" onClick={() => act(x.id, () => eag.decideException(x.id, true, ''), 'Approved')}><CheckCircle2 size={12} className="inline" /> Approve</button>
-                      <button type="button" disabled={busy === x.id} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-red-600 text-white" onClick={() => { const n = prompt('Why is it rejected?') ?? ''; act(x.id, () => eag.decideException(x.id, false, n), 'Rejected'); }}><XCircle size={12} className="inline" /> Reject</button>
+                      <button type="button" disabled={busy === x.id} className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-red-600 text-white" onClick={async () => { const n = await askText('Why is it rejected?') ?? ''; act(x.id, () => eag.decideException(x.id, false, n), 'Rejected'); }}><XCircle size={12} className="inline" /> Reject</button>
                     </>
                   )}
                   {x.status === 'APPROVED' && x.kind === 'GATE_EXEMPT_BOOKING' && canBook && (

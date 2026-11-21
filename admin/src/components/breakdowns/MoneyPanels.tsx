@@ -6,6 +6,7 @@ import { expensePaid, expenseStatus, ledgerFor, sharesProblem, resolveShares } f
 import { uploadBookingFile, fileUrl } from '../../lib/bookingRecord';
 import { toast } from '../../store/useToast';
 import { Chips, ErrorLine, Field, Grid, KV, Pill, Section, rs, when } from './bdui';
+import { askConfirm, askText } from '../../lib/dialog';
 
 const METHODS = ['Cash', 'Bank transfer', 'Card', 'Online', 'Cheque'];
 const PARTIES: [Party, string][] = [['company', 'Company'], ['owner', 'Owner'], ['customer', 'Customer'], ['insurance', 'Insurance']];
@@ -138,7 +139,7 @@ export function ExpenseList({ expenses, incidentId, bookingId, by, compact }: { 
                 <td className="text-right">{e.voidedAt ? <span className="text-[11px]">removed</span> : e.amount <= 0 ? '—' : <Pill k={st === 'paid' ? 'completed' : st === 'partly_paid' ? 'in_progress' : 'planned'}>{st === 'paid' ? 'Paid' : st === 'partly_paid' ? `${rs(paid)} paid` : 'Unpaid'}</Pill>}</td>
                 <td className="text-right whitespace-nowrap">
                   {!e.voidedAt && e.amount > 0 && st !== 'paid' && <button type="button" title="Record payment" onClick={() => setPayFor(payFor === e.id ? null : e.id)} className="p-1 text-navy-400 hover:text-emerald-700"><Banknote size={15} /></button>}
-                  {!e.voidedAt && <button type="button" title="Remove (kept in history)" onClick={() => { const r = prompt('Why is this expense removed?'); if (r) { const x = d.voidExpense(e.id, r, by); if (x) toast.error('Not removed', x); } }} className="p-1 text-navy-400 hover:text-red-600"><Ban size={14} /></button>}
+                  {!e.voidedAt && <button type="button" title="Remove (kept in history)" onClick={async () => { const r = await askText('Why is this expense removed?'); if (r) { const x = d.voidExpense(e.id, r, by); if (x) toast.error('Not removed', x); } }} className="p-1 text-navy-400 hover:text-red-600"><Ban size={14} /></button>}
                 </td>
               </tr>,
               payFor === e.id && (
@@ -179,11 +180,11 @@ export function PaymentForm({ incidentId, bookingId, by, expense, defaultAmount,
     setErr('');
     const amt = Number(amount);
     if (kind === 'customer_charge') {
-      if (!confirm(`Add ${rs(l.outstanding.customer)} (the customer's share) to the booking bill? Only do this once the customer has been told and agreed.`)) return;
+      if (!await askConfirm(`Add ${rs(l.outstanding.customer)} (the customer's share) to the booking bill? Only do this once the customer has been told and agreed.`)) return;
       const e = d.chargeCustomerShare(incidentId, by, key); if (e) setErr(e); else onDone?.(); return;
     }
     if (kind === 'owner_offset') {
-      if (!confirm(`Deduct ${rs(amt)} from the owner's payout for this booking?`)) return;
+      if (!await askConfirm(`Deduct ${rs(amt)} from the owner's payout for this booking?`)) return;
       const e = d.offsetOwnerShare(incidentId, amt, by, key); if (e) setErr(e); else onDone?.(); return;
     }
     setBusy(true);
@@ -243,7 +244,7 @@ export function PaymentList({ incidentId, by }: { incidentId: string; by: string
           </div>
           {p.receiptPath && <button type="button" onClick={() => openFile(p.receiptPath!)} className="text-xs font-semibold text-navy-600 inline-flex items-center gap-1"><Receipt size={12} /> Receipt</button>}
           {p.status === 'posted' && p.kind !== 'refund' && (
-            <button type="button" onClick={() => { const r = prompt('Why is this payment reversed? (It stays in the history.)'); if (r) { const e = d.reversePayment(p.id, r, by); if (e) toast.error('Not reversed', e); } }}
+            <button type="button" onClick={async () => { const r = await askText('Why is this payment reversed? (It stays in the history.)'); if (r) { const e = d.reversePayment(p.id, r, by); if (e) toast.error('Not reversed', e); } }}
                     className="text-xs font-semibold text-red-600 inline-flex items-center gap-1"><Undo2 size={12} /> Reverse</button>
           )}
         </li>
@@ -327,8 +328,8 @@ export function SettlementActions({ incidentId, by }: { incidentId: string; by: 
       {l.outstanding.customer > 0.5 && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <span>Customer owes <b>{rs(l.outstanding.customer)}</b></span>
-          <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={() => {
-            if (!confirm(`Add ${rs(l.outstanding.customer)} to the customer's booking bill? Only after the customer has been told and agreed.`)) return;
+          <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={async () => {
+            if (!await askConfirm(`Add ${rs(l.outstanding.customer)} to the customer's booking bill? Only after the customer has been told and agreed.`)) return;
             const e = d.chargeCustomerShare(incidentId, by, key); if (e) toast.error('Not added', e);
           }}>Approve & add to booking bill</button>
         </div>
@@ -338,9 +339,9 @@ export function SettlementActions({ incidentId, by }: { incidentId: string; by: 
           <span>Owner owes <b>{rs(l.outstanding.owner)}</b></span>
           <span className="flex items-center gap-2">
             <input className="input !w-28 !py-1.5" type="number" min="0" placeholder={String(Math.round(l.outstanding.owner))} value={ownerAmt} onChange={(e) => setOwnerAmt(e.target.value)} />
-            <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={() => {
+            <button type="button" className="btn-secondary !py-1.5 text-xs" onClick={async () => {
               const amt = Number(ownerAmt || l.outstanding.owner);
-              if (!confirm(`Deduct ${rs(amt)} from the owner's payout for this booking?`)) return;
+              if (!await askConfirm(`Deduct ${rs(amt)} from the owner's payout for this booking?`)) return;
               const e = d.offsetOwnerShare(incidentId, amt, by, newKey()); if (e) toast.error('Not deducted', e); else setOwnerAmt('');
             }}>Deduct from payout</button>
           </span>

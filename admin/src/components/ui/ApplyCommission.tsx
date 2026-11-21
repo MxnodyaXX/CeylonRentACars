@@ -8,6 +8,7 @@ import { bookingNo } from '../../lib/bookingRecord';
 import { mainCommission } from '../../lib/exchange';
 import { companyShareOf, shareBaseOf, shareWorking, useCompanyShare } from '../../lib/companyShare';
 import { completedOn, useSettlements } from '../../lib/settlements';
+import { askConfirm } from '../../lib/dialog';
 
 const rs = (n: number) => `Rs ${Math.round(n).toLocaleString('en-LK')}`;
 
@@ -57,8 +58,8 @@ export default function ApplyCommission() {
   const chosen = rows.filter((r) => !skip[r.b.id]);
   const total = chosen.reduce((s, r) => s + r.company, 0);
 
-  const apply = () => {
-    if (!confirm(`Add the company commission to ${chosen.length} booking${chosen.length === 1 ? '' : 's'} (${rs(total)} in total)? Each owner's payout goes down by their booking's commission.`)) return;
+  const apply = async () => {
+    if (!await askConfirm(`Add the company commission to ${chosen.length} booking${chosen.length === 1 ? '' : 's'} (${rs(total)} in total)? Each owner's payout goes down by their booking's commission.`)) return;
     setBusy(true);
     chosen.forEach((r) => {
       editBooking(r.b.id, { ...share, ...(r.feeRemoved ? { referralFee: 0 } : {}) }, {
@@ -139,7 +140,7 @@ export default function ApplyCommission() {
                       )}
                       {reason === 'paid-by-hand' && (
                         <button type="button" className="btn-secondary !py-1 text-xs"
-                                onClick={() => { if (confirm(`Has the owner NOT been paid ${rs(c!.ownerPayout)} for ${b.customerName}'s booking yet? It moves into the list above.`)) reopenPayout(c!.id); }}>
+                                onClick={async () => { if (await askConfirm(`Has the owner NOT been paid ${rs(c!.ownerPayout)} for ${b.customerName}'s booking yet? It moves into the list above.`)) reopenPayout(c!.id); }}>
                           Not paid yet — include
                         </button>
                       )}

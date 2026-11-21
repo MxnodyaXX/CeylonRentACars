@@ -724,6 +724,7 @@ export default function AdminBookingModal({ open, onClose }: Props) {
             )}
 
             <CompanyShareField value={form} total={form.totalAmount} days={form.totalDays} rentalType={form.rentalType}
+              agreed={vehicles.find((v) => v.id === form.vehicleId)?.ownerShare ?? null}
                                onChange={(v) => setForm((f) => ({ ...f, ...v }))} />
 
             {/* Locations + payment + driver */}

@@ -43,7 +43,7 @@ export function linesFor(ownerId: string, period: string, d: MonthData, from = D
   d.commissions.forEach((c) => {
     if (c.ownerId !== ownerId || c.status === 'Paid' || c.settlementId || !c.ownerPayout) return;
     const b = d.bookings.find((x) => x.id === c.bookingId);
-    if (!b || b.status !== 'Completed') return;
+    if (!b || b.status !== 'Completed' || b.personal) return;   // personal bookings are not paid out
     const on = completedOn(b);
     if (!on || on > end || on < from) return;
     const v = d.vehicles.find((x) => x.id === c.vehicleId);
@@ -60,7 +60,7 @@ export function linesFor(ownerId: string, period: string, d: MonthData, from = D
   if (owner && INCLUDE_REFERRAL_FEES) {
     d.bookings.forEach((b) => {
       const who = referrerOf(b.referral);
-      if (!who || nameKey(who) !== nameKey(owner.name) || b.status !== 'Completed' || b.referralPaid || !(b.referralFee ?? 0)) return;
+      if (!who || nameKey(who) !== nameKey(owner.name) || b.status !== 'Completed' || b.personal || b.referralPaid || !(b.referralFee ?? 0)) return;
       const on = completedOn(b);
       if (!on || on > end || on < from) return;
       const v = d.vehicles.find((x) => x.id === b.vehicleId);
@@ -103,6 +103,7 @@ export function leftOutOf(period: string, d: MonthData, from = DEFAULT_FROM): Le
   const today = new Date().toISOString().slice(0, 10);
   const out: LeftOut[] = [];
   d.bookings.forEach((b) => {
+    if (b.personal) return;   // personal bookings are left out on purpose
     const owner = d.vehicles.find((v) => v.id === b.vehicleId)?.ownerId;
     if (b.status === 'Completed') {
       const on = completedOn(b);
