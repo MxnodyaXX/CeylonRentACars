@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, Gauge, History, Receipt, Save, ShieldCheck, Wallet } from 'lucide-react';
+import { AlertCircle, Gauge, History, Lock, Plus, Receipt, RotateCcw, Save, ShieldCheck, Trash2, Wallet } from 'lucide-react';
 import Modal from './Modal';
 import Select from './Select';
 import CompanyShareField from './CompanyShareField';
@@ -14,7 +14,8 @@ import type { Booking, ExtraCharge } from '../../types';
 import { useBreakdownStore, tripKmFor } from '../../store/useBreakdownStore';
 import UsagePhases from '../breakdowns/UsagePhases';
 import ManualMileageFields, { extraKmCharges, mileageDraftOf, mileageOf } from './ManualMileageFields';
-import { chargeLine, depositHeld, ledgerOf, legacyAdvance } from '../../lib/bookingRecord';
+import { OFF_BILL_PREFIX, OFF_BILL_REASONS, chargeLine, offBillLabel } from '../../lib/bookingRecord';
+import { PAY_KINDS, PAY_METHODS, applyDraft, blankRow, draftOf, totalsOf, type DraftRow } from '../../lib/paymentDraft';
 import { kmWithMeter } from '../../lib/tripKm';
 import { toast } from '../../store/useToast';
 import RentalPeriodFields, { PeriodValue } from './RentalPeriodFields';
@@ -49,8 +50,6 @@ const formOf = (b: Booking) => ({
   discount: b.discount ?? 0,
   // the part of the extra charges not tied to a listed charge (extra km, fines, deductions are listed separately)
   extraCharges: (b.extraCharges ?? 0) - (b.charges ?? []).filter((c) => c.status === 'Charged').reduce((t, c) => t + c.amount, 0),
-  advanceAmount: b.advanceAmount ?? 0,
-  paidAmount: b.paidAmount ?? 0,
   creditAmount: b.creditAmount ?? 0,
   status: b.status,
   referral: b.referral ?? 'Direct',
@@ -84,8 +83,6 @@ const FIELDS: { key: keyof Form; label: string; fmt?: (v: unknown, f: Form, vehi
   { key: 'totalAmount', label: 'Total', fmt: (v) => rs(v as number) },
   { key: 'discount', label: 'Discount', fmt: (v) => rs(v as number) },
   { key: 'extraCharges', label: 'Other extra charges (not itemised)', fmt: (v) => rs(v as number) },
-  { key: 'advanceAmount', label: 'Advance', fmt: (v) => rs(v as number) },
-  { key: 'paidAmount', label: 'Paid', fmt: (v) => rs(v as number) },
   { key: 'creditAmount', label: 'Credit due', fmt: (v) => rs(v as number) },
   { key: 'status', label: 'Status' },
   { key: 'referral', label: 'Referral' },
@@ -125,27 +122,22 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
   const original = useMemo(() => formOf(booking), [booking]);
   const [f, setF] = useState<Form>(original);
   const [manualTotal, setManualTotal] = useState(false);   // once the total is typed, stop recalculating it
-  // money already in the payment log → Paid / Advance follow the log and aren't typed here
-  // the payment log as the booking screen shows it (money saved before the log appears as an undated line)
-  const ledger = useMemo(() => ledgerOf(booking), [booking]);
-  const depositMoves = ledger.filter((p) => p.kind === 'Deposit received' || p.kind === 'Deposit returned');
-  // everything the customer handed over: bill payments and the deposit, in date order
-  // the undated line is shown as its parts — the typed Advance on its own line, then the rest as a payment
-  const received = ledger.filter((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund' || p.kind === 'Deposit received')
-    .flatMap((p) => {
-      const adv = p.id === 'legacy' ? legacyAdvance(booking) : 0;
-      return adv > 0 && adv < p.amount
-        ? [{ ...p, id: 'legacy-adv', kind: 'Advance' as const, amount: adv }, { ...p, id: 'legacy', kind: 'Payment' as const, amount: p.amount - adv }]
-        : [p];
-    });
-  const depositIn = received.filter((p) => p.kind === 'Deposit received').reduce((t, p) => t + p.amount, 0);
+  // the payment log, line by line, as it will be saved (money saved before the log shows as undated lines)
+  const rows0 = useMemo(() => draftOf(booking), [booking]);
+  const [rows, setRows] = useState<DraftRow[]>(rows0);
+  const setRow = (key: string, patch: Partial<DraftRow>) => setRows((rs0) => rs0.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const payLive = rows.filter((r) => !r.removed);
+  const totals = totalsOf(rows);
+  const pay = applyDraft(booking, rows, staff);
+  const depositIn = totals.depositAmount;
   // new money only: a bill payment taken from the deposit was already counted when the deposit came in
-  const receivedTotal = received.reduce((t, p) => t + (p.kind === 'Refund' ? -p.amount : p.method === 'Security deposit' ? 0 : p.amount), 0);
+  const receivedTotal = payLive.filter((r) => r.kind !== 'Deposit returned')
+    .reduce((t, r) => t + (r.kind === 'Refund' ? -r.amount : r.orig?.method === 'Security deposit' ? 0 : r.amount), 0);
   // the same split as the Payments tab: part of the deduction may have paid the bill
   const depUsed = (booking.payments ?? []).filter((p) => p.kind === 'Payment' && p.method === 'Security deposit').reduce((t, p) => t + p.amount, 0);
   const depKept = (booking.depositDeduction ?? 0) - depUsed;
-  const depHeld = depositHeld(booking);
-  const paidFromLog =(booking.payments ?? []).some((p) => p.kind === 'Payment' || p.kind === 'Advance' || p.kind === 'Refund');
+  const depHeld = booking.depositType === 'cash' || (!booking.depositType && depositIn > 0)
+    ? Math.max(0, totals.depositAmount - totals.depositReturned - (booking.depositDeduction ?? 0)) : 0;
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
 
@@ -189,7 +181,10 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
   // every other listed charge / deduction stays as it is (managed on the Payments tab)
   const listed = (booking.charges ?? []).filter((c) => c.status === 'Charged' && !kmCharges.includes(c));
   const listedTotal = listed.reduce((t, c) => t + c.amount, 0);
-  const extraTotal = listedTotal + newKm + f.extraCharges;
+  // an unpaid balance explained and taken off the bill (first day charged less, a discount, rounded off…)
+  const [offBill, setOffBill] = useState<{ reason: string; amount: number; note: string } | null>(null);
+  const offAmount = offBill && offBill.amount > 0 ? Math.round(offBill.amount) : 0;
+  const extraTotal = listedTotal + newKm + f.extraCharges - offAmount;
 
   const r = (n?: number, m?: Parameters<typeof kmWithMeter>[1]) => kmWithMeter(n, m);
   const mileageChanges: string[] = [];
@@ -205,7 +200,8 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     .map(({ key, label, fmt }) => {
       const show = (x: unknown) => (fmt ? fmt(x, f, vehicleName) : (x === '' || x == null ? '—' : String(x)));
       return `${label}: ${show(original[key])} → ${show(f[key])}`;
-    }), ...mileageChanges];
+    }), ...mileageChanges, ...(pay?.changes ?? []),
+    ...(offAmount ? [`Taken off the bill: ${rs(offAmount)} — ${offBillLabel(offBill!)}`] : [])];
 
   const statusProblem = statusDateProblem(f.status, f);
   const suggested = f.startDate && f.endDate && f.startDate <= f.endDate ? statusForDates(f) : undefined;
@@ -215,7 +211,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
   const clash = live && datesOrVehicleChanged && !!f.vehicleId && !!f.startDate && !!f.endDate
     && !isVehicleAvailable(f.vehicleId, f.startDate, f.endDate, booking.id, f.startTime, f.endTime);
   const bill = Math.max(0, f.totalAmount + extraTotal - f.discount);
-  const balance = bill - f.paidAmount - f.advanceAmount;
+  const balance = bill - totals.paid;
 
   const save = () => {
     setError('');
@@ -229,6 +225,10 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     if (statusProblem) return setError(statusProblem);
     if (clash) return setError('This vehicle already has another live booking on these dates.');
     if (readingsChanged && mileage.problems.length) return setError(`Mileage: ${mileage.problems[0]}`);
+    if (pay?.error) return setError(pay.error);
+    if (offBill && !offAmount) return setError('Enter the amount to take off the bill (or press Cancel).');
+    if (offBill?.reason === 'Other reason' && !offBill.note.trim()) return setError('Write what the amount taken off the bill is for.');
+    if (pay && !reason.trim()) return setError('Say why the payments are changed — write it in the reason box below.');
 
     const updates: Partial<Booking> = {
       vehicleId: f.vehicleId,
@@ -238,7 +238,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
       waiveExtraDay: f.waiveExtraDay, totalDays: f.totalDays, totalAmount: f.totalAmount,
       ...(f.rentalType === 'Daily' && f.partDayAmount !== (booking.partDayAmount ?? 0) ? { partDayAmount: f.partDayAmount } : {}),
       rentalType: f.rentalType, rentalUnits: f.rentalType === 'Daily' ? undefined : f.rentalUnits, unitRate: f.rentalType === 'Daily' ? undefined : f.unitRate,
-      discount: f.discount, extraCharges: extraTotal, advanceAmount: f.advanceAmount, paidAmount: f.paidAmount,
+      discount: f.discount, extraCharges: extraTotal,
       creditAmount: f.creditAmount, ...(f.creditAmount === 0 && booking.creditAmount ? { creditSettled: true } : {}),
       status: f.status, referral: f.referral, referralFee: f.referralFee, channel: f.channel || undefined,
       companyShareType: f.companyShareType, companyShareValue: f.companyShareValue, companyShareMin: f.companyShareMin,
@@ -251,13 +251,22 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
     if (changedKeys.has('startTime') || changedKeys.has('startDate')) changedKeys.add('pickupAt');
     if (changedKeys.has('endTime') || changedKeys.has('endDate')) changedKeys.add('returnAt');
     if (changedKeys.has('creditAmount')) changedKeys.add('creditSettled');
-    if (kmChanged) changedKeys.add('extraCharges');
+    if (kmChanged || offAmount) changedKeys.add('extraCharges');
     const diff = Object.fromEntries(Object.entries(updates).filter(([k]) => changedKeys.has(k))) as Partial<Booking>;
+    // the payment log and the totals that come from it (Paid, Advance, Deposit, Deposit given back)
+    if (pay?.updates) Object.assign(diff, pay.updates);
     // the extra km charge: the old one is marked waived (kept for the record) and the corrected one added
     if (kmChanged) {
       const now = new Date().toISOString();
       const fresh: ExtraCharge[] = newKm > 0 ? [{ id: Math.random().toString(36).slice(2, 10), kind: 'Other', amount: newKm, date: f.endDate, note: mileage.chargeNote, status: 'Charged', by: staff, at: now }] : [];
       diff.charges = [...(booking.charges ?? []).map((c) => (kmCharges.includes(c) ? { ...c, status: 'Waived' as const } : c)), ...fresh];
+    }
+    // the explained balance: a named line off the bill, so the invoice and History say why it wasn't paid
+    if (offAmount) {
+      diff.charges = [...(diff.charges ?? booking.charges ?? []), {
+        id: Math.random().toString(36).slice(2, 10), kind: 'Deduction', amount: -offAmount, date: f.endDate,
+        note: `${OFF_BILL_PREFIX}${offBillLabel(offBill!)}`, status: 'Charged', by: staff, at: new Date().toISOString(),
+      }];
     }
     // the readings: the saved handover records keep their checklist, photos and signature — only the km change
     const owedPaid: string[] = [];
@@ -382,121 +391,143 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
           <Field label="Discount (Rs)">
             <input className="input" type="number" min="0" value={f.discount || ''} onChange={(e) => set('discount', numIn(e.target.value))} placeholder="0" />
           </Field>
-          {/* once money is in the payment log, Paid / Advance are its totals (listed below) and aren't typed:
-              a typed figure would put the log out of step and show up as a "date not recorded" line */}
-          {!paidFromLog && (
-            <>
-              <Field label="Advance (Rs)">
-                <input className="input" type="number" min="0" value={f.advanceAmount || ''} onChange={(e) => set('advanceAmount', numIn(e.target.value))} placeholder="0" />
-              </Field>
-              <Field label="Paid (Rs)">
-                <input className="input" type="number" min="0" value={f.paidAmount || ''} onChange={(e) => set('paidAmount', numIn(e.target.value))} placeholder="0" />
-              </Field>
-            </>
-          )}
           <Field label="Credit due (Rs)">
             <input className="input" type="number" min="0" value={f.creditAmount || ''} onChange={(e) => set('creditAmount', numIn(e.target.value))} placeholder="0" />
           </Field>
 
           {/* ── The money on this booking, as a statement ── */}
           <div className="col-span-2 sm:col-span-4 rounded-2xl border border-navy-100 overflow-hidden text-xs">
-            <div className="grid sm:grid-cols-2 sm:divide-x divide-navy-100">
-              {/* 1 · what the customer owes */}
-              <div className="p-3 space-y-1">
-                <p className="flex items-center gap-1.5 font-semibold text-navy-700 text-[13px] mb-1.5"><Step n={1} /> <Receipt size={13} /> What the customer owes</p>
-                <p className="flex justify-between gap-3"><span className="text-navy-500">Rental</span><span className="tabular-nums">{rs(f.totalAmount)}</span></p>
-                {(newKm > 0 || oldKm > 0) && (
-                  <p className="flex justify-between gap-3"><span className="text-navy-500">Extra km{newKm !== oldKm ? <span className="text-amber-700"> (was {rs(oldKm)})</span> : null}</span><span className="tabular-nums">{rs(newKm)}</span></p>
-                )}
-                {listed.map((c) => { const l = chargeLine(c); return (
-                  <p key={c.id} className="flex justify-between gap-3"><span className="text-navy-500 min-w-0">{c.amount < 0 ? 'Deduction — ' : ''}{l.label}{l.detail ? <span className="text-navy-400"> · {l.detail}</span> : null}</span>
-                    <span className={`tabular-nums whitespace-nowrap ${c.amount < 0 ? 'text-emerald-700' : ''}`}>{c.amount < 0 ? '− ' : ''}{rs(Math.abs(c.amount))}</span></p>
-                ); })}
-                {f.extraCharges !== 0 && <p className="flex justify-between gap-3"><span className="text-navy-500">Other charges (not itemised)</span><span className="tabular-nums">{rs(f.extraCharges)}</span></p>}
-                {f.discount > 0 && <p className="flex justify-between gap-3"><span className="text-navy-500">Discount</span><span className="tabular-nums text-emerald-700">− {rs(f.discount)}</span></p>}
-                <p className="flex justify-between gap-3 font-bold text-navy-900 border-t border-navy-100 pt-1.5 mt-1 text-[13px]"><span>Bill</span><span className="tabular-nums">{rs(bill)}</span></p>
-                {listed.length > 0 && <p className="text-[11px] text-navy-400">Fines, damage and deductions are added or removed on the Payments tab.</p>}
-              </div>
+            {/* 1 · what the customer owes */}
+            <div className="p-3 space-y-1">
+              <p className="flex items-center gap-1.5 font-semibold text-navy-700 text-[13px] mb-1.5"><Step n={1} /> <Receipt size={13} /> What the customer owes</p>
+              <p className="flex justify-between gap-3"><span className="text-navy-500">Rental</span><span className="tabular-nums">{rs(f.totalAmount)}</span></p>
+              {(newKm > 0 || oldKm > 0) && (
+                <p className="flex justify-between gap-3"><span className="text-navy-500">Extra km{newKm !== oldKm ? <span className="text-amber-700"> (was {rs(oldKm)})</span> : null}</span><span className="tabular-nums">{rs(newKm)}</span></p>
+              )}
+              {listed.map((c) => { const l = chargeLine(c); return (
+                <p key={c.id} className="flex justify-between gap-3"><span className="text-navy-500 min-w-0">{c.amount < 0 ? 'Deduction — ' : ''}{l.label}{l.detail ? <span className="text-navy-400"> · {l.detail}</span> : null}</span>
+                  <span className={`tabular-nums whitespace-nowrap ${c.amount < 0 ? 'text-emerald-700' : ''}`}>{c.amount < 0 ? '− ' : ''}{rs(Math.abs(c.amount))}</span></p>
+              ); })}
+              {f.extraCharges !== 0 && <p className="flex justify-between gap-3"><span className="text-navy-500">Other charges (not itemised)</span><span className="tabular-nums">{rs(f.extraCharges)}</span></p>}
+              {f.discount > 0 && <p className="flex justify-between gap-3"><span className="text-navy-500">Discount</span><span className="tabular-nums text-emerald-700">− {rs(f.discount)}</span></p>}
+              {offAmount > 0 && <p className="flex justify-between gap-3"><span className="text-navy-500">{offBillLabel(offBill!)} <span className="text-sky-700 font-semibold">· new</span></span><span className="tabular-nums text-emerald-700">− {rs(offAmount)}</span></p>}
+              <p className="flex justify-between gap-3 font-bold text-navy-900 border-t border-navy-100 pt-1.5 mt-1 text-[13px]"><span>Bill</span><span className="tabular-nums">{rs(bill)}</span></p>
+              {listed.length > 0 && <p className="text-[11px] text-navy-400">Fines, damage and deductions are added or removed on the Payments tab.</p>}
+            </div>
 
-              {/* 2 · what they paid, payment by payment */}
-              <div className="p-3 border-t sm:border-t-0 border-navy-100">
-                <p className="flex items-center gap-1.5 font-semibold text-navy-700 text-[13px] mb-1.5"><Step n={2} /> <Wallet size={13} /> What they paid</p>
-                {received.length === 0 ? (
-                  <p className="text-navy-400">{paidFromLog ? 'Nothing yet.' : f.paidAmount + f.advanceAmount > 0 ? 'Typed above as Paid / Advance (no payment log yet).' : 'Nothing paid yet.'}</p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {received.map((p) => {
-                      const out = p.kind === 'Refund';
-                      const isDeposit = p.kind === 'Deposit received';
-                      const fromDeposit = p.method === 'Security deposit';
-                      const undated = p.id.startsWith('legacy');
-                      const how = fromDeposit ? 'taken from the deposit' : p.method && p.method !== '—' ? `by ${p.method.toLowerCase()}` : '';
-                      return (
-                        <li key={p.id} className="flex justify-between gap-3">
-                          <span className="min-w-0">
-                            <span className="font-medium text-navy-800">{out ? 'Refund to customer' : isDeposit ? 'Deposit' : p.kind === 'Advance' ? 'Advance' : 'Payment'}</span>
-                            <span className="text-navy-500"> {how}</span>
-                            <span className={`ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ${isDeposit || fromDeposit ? 'bg-amber-100 text-amber-800' : 'bg-navy-50 text-navy-600'}`}>
-                              {out ? 'back from the bill' : isDeposit ? 'for the deposit' : 'for the bill'}
-                            </span>
-                            <span className="block text-[11px] text-navy-400">
-                              {undated ? <span className="text-amber-700">date not recorded</span> : fmtDay(p.at)}
-                              {p.by && p.by !== '—' ? ` · ${p.by}` : ''}{p.receiptNo ? ` · receipt ${p.receiptNo}` : ''}{p.note && !undated ? ` · ${p.note}` : ''}
-                            </span>
-                          </span>
-                          <span className={`tabular-nums whitespace-nowrap font-semibold ${out ? 'text-red-600' : fromDeposit ? 'text-navy-400' : 'text-emerald-700'}`}>{out ? '− ' : fromDeposit ? '' : '+ '}{rs(p.amount)}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                {/* the full amount received, then what it went to */}
-                <div className="border-t border-navy-100 pt-1.5 mt-1.5 space-y-0.5">
-                  {received.length > 0 && (
-                    <p className="flex justify-between gap-3 font-bold text-navy-900 text-[13px]"><span>Received in total</span><span className="tabular-nums">{rs(receivedTotal)}</span></p>
-                  )}
-                  <p className="flex justify-between gap-3 text-navy-700"><span>Paid for the bill{depUsed > 0 ? ` (incl. ${rs(depUsed)} from the deposit)` : ''}</span><span className="tabular-nums font-semibold text-emerald-700">{rs(f.paidAmount + f.advanceAmount)}</span></p>
-                  {depositIn > 0 && <p className="flex justify-between gap-3 text-navy-700"><span>Paid for the deposit</span><span className="tabular-nums font-semibold text-amber-800">{rs(depositIn)}</span></p>}
-                </div>
-                {paidFromLog && <p className="text-[11px] text-navy-400 mt-1">To add a payment or fix one, use <b>Record</b> or <b>Correct</b> on the Payments tab.</p>}
+            {/* 2 · what they paid — the payment log, each line editable */}
+            <div className="p-3 border-t border-navy-100">
+              <p className="flex items-center gap-1.5 font-semibold text-navy-700 text-[13px] mb-1"><Step n={2} /> <Wallet size={13} /> What they paid <span className="font-normal text-navy-400">· the payment log</span></p>
+              <p className="text-[11px] text-navy-400 mb-2">Fix the type, date, amount, method or receipt of any payment, add one that was missed, or remove one entered by mistake. The payment log is updated when you save.</p>
+              {rows.length === 0 && <p className="text-navy-400 mb-2">Nothing paid yet.</p>}
+              <div className="space-y-2">
+                {rows.map((r) => {
+                  const dep = r.kind === 'Deposit received' || r.kind === 'Deposit returned';
+                  const was = rows0.find((x) => x.key === r.key);
+                  const edited = !!was && !r.removed && (was.kind !== r.kind || was.amount !== r.amount || was.date !== r.date || was.method !== r.method || was.receiptNo !== r.receiptNo);
+                  if (r.locked) return (
+                    <div key={r.key} className="flex items-center justify-between gap-3 rounded-xl border border-navy-100 bg-navy-50/50 px-3 py-2">
+                      <span className="min-w-0 text-navy-700"><Lock size={11} className="inline -mt-0.5 mr-1 text-navy-400" />{r.kind} · {r.orig?.method} · {fmtDay(r.orig!.at)}
+                        <span className="block text-[11px] text-navy-400">{r.orig?.method === 'Security deposit' ? 'Taken from the deposit — changed by settling the deposit on the Payments tab' : 'Paid at a repair shop — changed on its breakdown'}</span></span>
+                      <span className="tabular-nums font-semibold text-navy-500">{rs(r.amount)}</span>
+                    </div>
+                  );
+                  if (r.removed) return (
+                    <div key={r.key} className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-red-200 bg-red-50/40 px-3 py-2">
+                      <span className="text-red-700 line-through">{r.kind} {rs(r.amount)}{r.date ? ` · ${r.date}` : ''}</span>
+                      <button type="button" onClick={() => setRow(r.key, { removed: false })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-navy-600 hover:text-navy-900"><RotateCcw size={12} /> Keep it</button>
+                    </div>
+                  );
+                  return (
+                    <div key={r.key} className={`rounded-xl border px-2.5 py-2 ${dep ? 'border-amber-200 bg-amber-50/50' : 'border-navy-100'} ${edited || !was ? 'ring-1 ring-sky-300' : ''}`}>
+                      <div className="grid grid-cols-2 sm:grid-cols-[10.5rem_8.5rem_7rem_7.5rem_1fr_auto] gap-2 items-center">
+                        <select aria-label="Type" className="input !py-1.5 text-sm" value={r.kind} onChange={(e) => setRow(r.key, { kind: e.target.value as DraftRow['kind'] })}>
+                          {PAY_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+                        </select>
+                        <input aria-label="Date" className={`input !py-1.5 text-sm ${r.legacy && !r.date ? '!border-amber-300 text-amber-700' : ''}`} type="date" value={r.date} onChange={(e) => setRow(r.key, { date: e.target.value })} />
+                        <input aria-label="Amount" className="input !py-1.5 text-sm" type="number" min="0" placeholder="Rs" value={r.amount || ''} onChange={(e) => setRow(r.key, { amount: numIn(e.target.value) })} />
+                        <select aria-label="Method" className="input !py-1.5 text-sm" value={r.method} onChange={(e) => setRow(r.key, { method: e.target.value })}>
+                          {[...new Set([...PAY_METHODS, r.method])].map((m) => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <input aria-label="Receipt" className="input !py-1.5 text-sm" placeholder="Receipt / ref." value={r.receiptNo} onChange={(e) => setRow(r.key, { receiptNo: e.target.value })} />
+                        <button type="button" title="Remove this payment" onClick={() => (was ? setRow(r.key, { removed: true }) : setRows((x) => x.filter((y) => y.key !== r.key)))}
+                                className="justify-self-end p-1.5 rounded-lg text-navy-400 hover:text-red-600 hover:bg-red-50"><Trash2 size={15} /></button>
+                      </div>
+                      <p className="text-[11px] mt-1 text-navy-400">
+                        {r.legacy && !r.date ? <span className="text-amber-700">Date not recorded — enter it if you know it</span>
+                          : !was ? <span className="text-sky-700 font-semibold">New payment</span>
+                          : edited ? <span className="text-sky-700 font-semibold">Changed — was {was.kind} {rs(was.amount)}{was.date ? ` on ${was.date}` : ''}</span>
+                          : <>{r.orig?.by && r.orig.by !== '—' ? `by ${r.orig.by}` : ''}{r.orig?.note ? ` · ${r.orig.note}` : ''}</>}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+              <button type="button" onClick={() => setRows((x) => [...x, blankRow()])} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-navy-700 hover:text-navy-900"><Plus size={13} /> Add a payment</button>
+
+              {/* the full amount received, then what it went to */}
+              <div className="border-t border-navy-100 pt-1.5 mt-2 space-y-0.5">
+                {payLive.length > 0 && <p className="flex justify-between gap-3 font-bold text-navy-900 text-[13px]"><span>Received in total</span><span className="tabular-nums">{rs(receivedTotal)}</span></p>}
+                <p className="flex justify-between gap-3 text-navy-700"><span>Paid for the bill{depUsed > 0 ? ` (incl. ${rs(depUsed)} from the deposit)` : ''}</span><span className="tabular-nums font-semibold text-emerald-700">{rs(totals.paid)}</span></p>
+                {depositIn > 0 && <p className="flex justify-between gap-3 text-navy-700"><span>Paid for the deposit</span><span className="tabular-nums font-semibold text-amber-800">{rs(depositIn)}</span></p>}
               </div>
             </div>
 
             {/* 3 · where that leaves the bill */}
             <div className={`px-3 py-2.5 border-t flex flex-wrap items-center justify-between gap-2 ${balance > 0 ? 'bg-red-50 border-red-100' : balance < 0 ? 'bg-amber-50 border-amber-100' : 'bg-emerald-50 border-emerald-100'}`}>
-              <p className="flex items-center gap-1.5 text-navy-600"><Step n={3} /> <span className="tabular-nums">Bill {rs(bill)} − paid {rs(f.paidAmount + f.advanceAmount)}</span></p>
+              <p className="flex items-center gap-1.5 text-navy-600"><Step n={3} /> <span className="tabular-nums">Bill {rs(bill)} − paid {rs(totals.paid)}</span></p>
               <p className={`font-bold text-[13px] ${balance > 0 ? 'text-red-700' : balance < 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
                 {balance > 0 ? `Still to pay ${rs(balance)}` : balance < 0 ? `Overpaid by ${rs(-balance)}` : 'Paid in full ✓'}
               </p>
             </div>
+            {/* the customer isn't going to pay the rest: say why, and it comes off the bill as a named line */}
+            {(balance > 0 || offBill) && (
+              <div className="px-3 py-2.5 border-t border-red-100 bg-white">
+                {!offBill ? (
+                  <>
+                    <p className="text-navy-600 mb-1.5">Not going to be paid? Say why — <b>{rs(balance)}</b> comes off the bill with that reason:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {OFF_BILL_REASONS.map((r) => (
+                        <button key={r} type="button" onClick={() => setOffBill({ reason: r, amount: balance, note: '' })}
+                                className="px-2.5 py-1 rounded-lg border border-navy-100 text-navy-700 font-semibold hover:border-navy-300">{r}</button>
+                      ))}
+                      <button type="button" onClick={() => set('creditAmount', balance)}
+                              className="px-2.5 py-1 rounded-lg border border-navy-100 text-navy-500 hover:border-navy-300">Customer still owes it (credit)</button>
+                    </div>
+                    {f.creditAmount > 0 && <p className="text-[11px] text-navy-400 mt-1.5">{rs(f.creditAmount)} is marked as credit due (box above).</p>}
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-[11rem_8rem_1fr_auto] gap-2 items-center">
+                    <select aria-label="Reason" className="input !py-1.5 text-sm" value={offBill.reason} onChange={(e) => setOffBill({ ...offBill, reason: e.target.value })}>
+                      {OFF_BILL_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <input aria-label="Amount off the bill" className="input !py-1.5 text-sm" type="number" min="0" value={offBill.amount || ''} onChange={(e) => setOffBill({ ...offBill, amount: numIn(e.target.value) })} />
+                    <input aria-label="Detail" className="input !py-1.5 text-sm col-span-2 sm:col-span-1" placeholder={offBill.reason === 'Other reason' ? 'What was it? (required)' : 'Detail (optional), e.g. first day Rs 10,000 instead of Rs 12,500'}
+                           value={offBill.note} onChange={(e) => setOffBill({ ...offBill, note: e.target.value })} />
+                    <button type="button" onClick={() => setOffBill(null)} className="text-[11px] font-semibold text-navy-500 hover:text-red-600 justify-self-end">Cancel</button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 4 · the security deposit — the customer's money, kept apart from the bill */}
-            {booking.depositType && (
+            {(booking.depositType || depositIn > 0) && (
               <div className="px-3 py-2.5 border-t border-amber-200 bg-amber-50/60">
                 <p className="flex items-center gap-1.5 font-semibold text-amber-900 text-[13px]"><Step n={4} tone="amber" /> <ShieldCheck size={13} /> Security deposit</p>
                 <p className="text-[11px] text-amber-700 ml-[22px]">The customer's money, held apart from the bill</p>
-                {booking.depositType === 'cash' ? (
+                {booking.depositType && booking.depositType !== 'cash' ? (
+                  <p className="mt-1 text-navy-700">{booking.depositType === 'vehicle' ? 'Vehicle' : 'Item'} held: {booking.depositAssetDescription?.split('|').map((s) => s.trim()).filter(Boolean).join(' · ') || 'not described'}</p>
+                ) : (
                   <>
                     <ul className="space-y-1 mt-1.5">
-                      {depositMoves.map((p) => (
-                        <li key={p.id} className="flex justify-between gap-3">
-                          <span className="min-w-0">
-                            {p.kind === 'Deposit received' ? (
-                              <span className="text-navy-800">
-                                <span className="font-medium">Kept from the payment</span>{' '}
-                                {p.id.startsWith('legacy') ? <span className="text-amber-700">(date not recorded)</span> : <>on {fmtDay(p.at)}</>}
-                                {p.method && p.method !== '—' ? <span className="text-navy-500"> · {p.method.toLowerCase()}</span> : null}
-                              </span>
-                            ) : (
-                              <span className="text-navy-800">
-                                <span className="font-medium">Given back</span>{' '}
-                                {p.id.startsWith('legacy') ? <span className="text-amber-700">(date not recorded)</span> : <>on {fmtDay(p.at)}</>}
-                                {p.method && p.method !== '—' ? <span className="text-navy-500"> · {p.method.toLowerCase()}</span> : null}
-                              </span>
-                            )}
-                            {p.by && p.by !== '—' && <span className="block text-[11px] text-navy-400">by {p.by}</span>}
+                      {payLive.filter((r) => r.kind === 'Deposit received' || r.kind === 'Deposit returned').map((r) => (
+                        <li key={r.key} className="flex justify-between gap-3">
+                          <span className="text-navy-800">
+                            <span className="font-medium">{r.kind === 'Deposit received' ? 'Kept from the payment' : 'Given back'}</span>{' '}
+                            {r.date ? <>on {fmtDay(`${r.date}T12:00:00`)}</> : <span className="text-amber-700">(date not recorded)</span>}
+                            <span className="text-navy-500"> · {r.method.toLowerCase()}</span>
                           </span>
-                          <span className="tabular-nums whitespace-nowrap font-semibold text-navy-800">{p.kind === 'Deposit received' ? '' : '− '}{rs(p.amount)}</span>
+                          <span className="tabular-nums whitespace-nowrap font-semibold text-navy-800">{r.kind === 'Deposit received' ? '' : '− '}{rs(r.amount)}</span>
                         </li>
                       ))}
                       {depUsed > 0 && <li className="flex justify-between gap-3"><span className="font-medium text-navy-800">Used to pay the bill</span><span className="tabular-nums font-semibold text-navy-800">− {rs(depUsed)}</span></li>}
@@ -506,10 +537,8 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
                       <span>{depHeld > 0 ? 'Still with us — to give back' : 'Settled'}</span><span className="tabular-nums">{rs(depHeld)}</span>
                     </p>
                   </>
-                ) : (
-                  <p className="mt-1 text-navy-700">{booking.depositType === 'vehicle' ? 'Vehicle' : 'Item'} held: {booking.depositAssetDescription?.split('|').map((s) => s.trim()).filter(Boolean).join(' · ') || 'not described'}</p>
                 )}
-                <p className="text-[11px] text-amber-700/80 mt-1">Taken, given back or kept on the Payments tab.</p>
+                <p className="text-[11px] text-amber-700/80 mt-1">Using the deposit for the bill or keeping part of it is done on the Payments tab.</p>
               </div>
             )}
           </div>
@@ -575,7 +604,7 @@ export default function EditBookingModal({ booking, onClose, onSaved }: { bookin
               {changes.map((c) => <li key={c}>• {c}</li>)}
             </ul>
           ) : <p className="text-xs text-navy-400">Nothing changed yet.</p>}
-          <input className="input mt-2" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason for the correction (optional), e.g. Entered wrong total" />
+          <input className="input mt-2" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={pay ? 'Why the payments are changed (required), e.g. advance was Rs 30,000, not Rs 10,000' : 'Reason for the correction (optional), e.g. Entered wrong total'} />
         </section>
 
         {error && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2 flex gap-2"><AlertCircle size={15} className="mt-0.5 flex-shrink-0" />{error}</p>}

@@ -30,8 +30,18 @@ export interface PriceLine {
 export const lineText = (l: PriceLine) => (l.detail ? `${l.label} — ${l.detail}` : l.label);
 
 /** A charge or deduction as a short title + detail (the notes are written by the return form) */
+/** An unpaid balance explained in Correct booking and taken off the bill: "Off the bill: First day charged less — detail" */
+export const OFF_BILL_PREFIX = 'Off the bill: ';
+export const OFF_BILL_REASONS = ['First day charged less', 'Discount given', 'Rounded off', 'Other reason'];
+export const offBillLabel = (o: { reason: string; note: string }) =>
+  o.reason === 'Other reason' ? o.note.trim() || 'Other reason' : `${o.reason}${o.note.trim() ? ` — ${o.note.trim()}` : ''}`;
+
 export function chargeLine(c: ExtraCharge): PriceLine {
   const note = c.note?.trim() ?? '';
+  if (c.amount < 0 && note.startsWith(OFF_BILL_PREFIX)) {
+    const [label, ...rest] = note.slice(OFF_BILL_PREFIX.length).split(' — ');
+    return { label, detail: rest.join(' — ') || undefined, amount: c.amount, tone: 'minus', group: 'deduction' };
+  }
   if (c.amount < 0) {
     // "Tyres paid by the customer — 2 rear tyres"; "Other paid by the customer — Fuel at the replacement"
     const m = note.match(/^(.+?) paid by the customer(?: — (.*))?$/);
